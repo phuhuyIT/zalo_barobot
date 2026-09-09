@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zalo Barobot - Quản lý Gửi Lịch Trực</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Alpine.js CDN -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen" x-data="app()" x-init="init()">
+  <!-- Top Navigation -->
+  <header class="bg-indigo-700 text-white shadow-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap justify-between items-center gap-4">
+      <div class="flex items-center space-x-3">
+        <span class="text-2xl">🤖</span>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight">Zalo Barobot</h1>
+          <p class="text-xs text-indigo-200">Hệ thống tự động gửi lịch trực cổng & phân công nhiệm vụ</p>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="flex space-x-2">
+        <button
+          @click="activeTab = 'dashboard'"
+          :class="activeTab === 'dashboard' ? 'bg-indigo-900 text-white' : 'text-indigo-100 hover:bg-indigo-600'"
+          class="px-3 py-2 rounded-md text-sm font-medium transition"
+        >
+          📋 Bảng điều khiển
+        </button>
+        <button
+          @click="activeTab = 'config'; fetchConfig()"
+          :class="activeTab === 'config' ? 'bg-indigo-900 text-white' : 'text-indigo-100 hover:bg-indigo-600'"
+          class="px-3 py-2 rounded-md text-sm font-medium transition"
+        >
+          ⚙️ Cấu hình (F9)
+        </button>
+        <button
+          @click="activeTab = 'history'; fetchHistory()"
+          :class="activeTab === 'history' ? 'bg-indigo-900 text-white' : 'text-indigo-100 hover:bg-indigo-600'"
+          class="px-3 py-2 rounded-md text-sm font-medium transition"
+        >
+          🕒 Lịch sử gửi (F11)
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Notification Toast -->
+  <div
+    x-cloak
+    x-show="toast.show"
+    x-transition
+    class="fixed top-5 right-5 z-50 max-w-sm p-4 rounded-lg shadow-lg text-white"
+    :class="toast.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'"
+  >
+    <div class="flex items-center space-x-2">
+      <span x-text="toast.type === 'error' ? '⚠️' : '✅'"></span>
+      <p class="text-sm font-medium" x-text="toast.message"></p>
+    </div>
+  </div>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- TAB 1: DASHBOARD -->
+    <div x-show="activeTab === 'dashboard'" x-cloak>
+      <div class="flex flex-wrap justify-between items-center mb-6 gap-4">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-800">Danh sách Lịch Trực</h2>
+          <p class="text-sm text-slate-500">Xem trước, kiểm tra trạng thái và kích hoạt gửi lịch đến các nhóm Zalo</p>
+        </div>
+        <div class="flex space-x-3">
+          <button
+            @click="fetchSchedules()"
+            :disabled="loading"
+            class="px-3 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg text-sm font-medium transition shadow-sm"
+          >
+            🔄 Làm mới
+          </button>
+          <button
+            @click="sendAllSchedules()"
+            :disabled="loading"
+            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition shadow flex items-center space-x-2"
+          >
+            <span>🚀 Gửi tất cả lịch trực</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading State -->
+      <div x-show="loading" class="text-center py-12 text-slate-500">
+        <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-indigo-600 border-t-transparent"></div>
+        <p class="mt-2 text-sm">Đang tải dữ liệu...</p>
+      </div>
+
+      <!-- Schedule Cards Grid -->
+      <div x-show="!loading" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <template x-for="s in schedules" :key="s.key">
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col justify-between hover:shadow-md transition">
+            <div class="p-6">
+              <div class="flex justify-between items-start gap-2">
+                <div>
+                  <span
+                    class="text-xs font-semibold px-2 py-0.5 rounded-full inline-block mb-1"
+                    :class="s.effectiveEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'"
+                    x-text="s.effectiveEnabled ? 'Đang bật tự động' : 'Tắt tự động'"
+                  ></span>
+                  <h3 class="text-lg font-bold text-slate-900" x-text="s.label"></h3>
+                  <p class="text-xs text-slate-500 font-mono mt-0.5" x-text="'Key: ' + s.key"></p>
+                </div>
+                <div class="text-right">
+                  <span class="text-xs text-slate-400 block">Giờ gửi tự động</span>
+                  <span class="text-sm font-bold text-indigo-700" x-text="s.effectiveSendTime || 'Không hẹn giờ'"></span>
+                </div>
+              </div>
+
+              <div class="mt-4 pt-4 border-t border-slate-100 space-y-2 text-sm">
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Sheet Tab:</span>
+                  <span class="font-medium text-slate-700 font-mono text-xs bg-slate-100 px-2 py-0.5 rounded" x-text="s.effectiveTabName"></span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-slate-500">Người nhận:</span>
+                  <div class="text-right">
+                    <template x-for="r in s.recipients" :key="r.recipientKey">
+                      <div class="text-xs text-slate-600">
+                        <span class="font-medium" x-text="r.recipientKey"></span>
+                        <span class="text-slate-400 font-mono" x-text="' (' + (r.chatId ? r.chatId.slice(0, 10) + '...' : 'Chưa có ID') + ')'"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-slate-500">Lần gửi gần nhất:</span>
+                  <span class="text-xs font-medium" :class="s.recipients[0]?.lastSentDate ? 'text-emerald-700' : 'text-slate-400'">
+                    <span x-text="s.recipients[0]?.lastSentDate ? s.recipients[0].lastSentDate : 'Chưa gửi hôm nay'"></span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card Actions -->
+            <div class="bg-slate-50 px-6 py-3 border-t border-slate-100 flex justify-end space-x-3">
+              <button
+                @click="openPreview(s.key)"
+                :disabled="actionLoading === s.key"
+                class="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold transition"
+              >
+                👁️ Xem trước (F10)
+              </button>
+              <button
+                @click="triggerSend(s.key)"
+                :disabled="actionLoading === s.key"
+                class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition flex items-center space-x-1"
+              >
+                <span x-show="actionLoading !== s.key">📤 Gửi ngay</span>
+                <span x-show="actionLoading === s.key" class="inline-block animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full"></span>
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- TAB 2: RUNTIME CONFIGURATION (F9) -->
+    <div x-show="activeTab === 'config'" x-cloak>
+      <div class="mb-6">
+        <h2 class="text-2xl font-bold text-slate-800">Cấu hình Vận hành (F9)</h2>
+        <p class="text-sm text-slate-500">Thay đổi tên tab Google Sheet (khi chuyển doanh trại) hoặc điều chỉnh giờ gửi tự động mà không cần deploy lại code</p>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-4xl space-y-8">
+        <!-- 1. Squad Sheet Tabs -->
+        <div>
+          <h3 class="text-base font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100 flex items-center space-x-2">
+            <span>📑</span>
+            <span>Tên Tab Google Sheet theo Tiểu đội</span>
+          </h3>
+          <div class="space-y-4">
+            <template x-for="sq in configData.squads" :key="sq.key">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+                <label class="text-sm font-medium text-slate-700">
+                  <span x-text="sq.displayName"></span>
+                  <span class="text-xs text-slate-400 block font-mono" x-text="'key: ' + sq.key"></span>
+                </label>
+                <div class="sm:col-span-2">
+                  <input
+                    type="text"
+                    x-model="sq.sheetTab"
+                    class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    placeholder="Nhập chính xác tên tab trên Google Sheet"
+                  />
+                  <p class="text-xs text-slate-400 mt-1">Mặc định: <span x-text="sq.defaultTab"></span></p>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 2. Schedules Timing & Toggle -->
+        <div>
+          <h3 class="text-base font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100 flex items-center space-x-2">
+            <span>⏰</span>
+            <span>Giờ Gửi Tự Động & Trạng Thái Theo Lịch</span>
+          </h3>
+          <div class="space-y-4">
+            <template x-for="sc in configData.schedules" :key="sc.key">
+              <div class="p-4 bg-slate-50 rounded-lg border border-slate-200 flex flex-wrap justify-between items-center gap-4">
+                <div class="min-w-[200px]">
+                  <h4 class="text-sm font-bold text-slate-800" x-text="sc.label"></h4>
+                  <p class="text-xs text-slate-500 font-mono" x-text="sc.key"></p>
+                </div>
+
+                <div class="flex items-center space-x-4">
+                  <!-- Auto send time input -->
+                  <div>
+                    <label class="text-xs text-slate-500 block mb-1">Giờ tự động gửi</label>
+                    <input
+                      type="text"
+                      x-model="sc.autoSendTime"
+                      placeholder="HH:MM (ví dụ 05:30)"
+                      class="px-2.5 py-1.5 border border-slate-300 rounded-md text-sm font-mono w-28 text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <!-- Enable/Disable Toggle -->
+                  <div>
+                    <label class="text-xs text-slate-500 block mb-1">Tự động</label>
+                    <button
+                      type="button"
+                      @click="sc.enabled = !sc.enabled"
+                      class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                      :class="sc.enabled ? 'bg-indigo-600' : 'bg-slate-300'"
+                    >
+                      <span
+                        class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                        :class="sc.enabled ? 'translate-x-5' : 'translate-x-0'"
+                      ></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Save Config Button -->
+        <div class="pt-4 border-t border-slate-100 flex justify-end">
+          <button
+            @click="saveConfig()"
+            :disabled="savingConfig"
+            class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition shadow flex items-center space-x-2"
+          >
+            <span x-show="!savingConfig">💾 Lưu Cấu Hình Ngay</span>
+            <span x-show="savingConfig">Đang lưu...</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: SEND HISTORY (F11) -->
+    <div x-show="activeTab === 'history'" x-cloak>
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-800">Lịch Sử Gửi Tin Nhắn (F11)</h2>
+          <p class="text-sm text-slate-500">Theo dõi 50 lần gửi gần nhất, kết quả gửi và tình trạng xóa tin nhắn cũ</p>
+        </div>
+        <button
+          @click="fetchHistory()"
+          class="px-3 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg text-sm font-medium transition shadow-sm"
+        >
+          🔄 Làm mới
+        </button>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-3 text-left font-semibold text-slate-600">Thời gian</th>
+                <th class="px-4 py-3 text-left font-semibold text-slate-600">Schedule Key</th>
+                <th class="px-4 py-3 text-left font-semibold text-slate-600">Chat ID</th>
+                <th class="px-4 py-3 text-center font-semibold text-slate-600">Kết quả</th>
+                <th class="px-4 py-3 text-center font-semibold text-slate-600">Xóa tin cũ (F4)</th>
+                <th class="px-4 py-3 text-left font-semibold text-slate-600">Chi tiết / Lỗi</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <template x-for="item in historyList" :key="item.id">
+                <tr class="hover:bg-slate-50 transition">
+                  <td class="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap" x-text="formatTime(item.timestamp)"></td>
+                  <td class="px-4 py-3 font-medium text-slate-800 whitespace-nowrap" x-text="item.schedule_key"></td>
+                  <td class="px-4 py-3 font-mono text-xs text-slate-600 whitespace-nowrap" x-text="item.chat_id"></td>
+                  <td class="px-4 py-3 text-center whitespace-nowrap">
+                    <span
+                      class="px-2 py-0.5 text-xs font-semibold rounded-full"
+                      :class="item.result === 'success' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'"
+                      x-text="item.result === 'success' ? 'Thành công' : 'Thất bại'"
+                    ></span>
+                  </td>
+                  <td class="px-4 py-3 text-center text-xs whitespace-nowrap">
+                    <span x-text="item.old_message_deleted ? '✅ Đã xóa' : '➖ Không'"></span>
+                  </td>
+                  <td class="px-4 py-3 text-xs text-slate-500 max-w-xs truncate" :title="item.error" x-text="item.error || '—'"></td>
+                </tr>
+              </template>
+              <tr x-show="historyList.length === 0">
+                <td colspan="6" class="px-4 py-8 text-center text-slate-400">Chưa có lịch sử gửi tin nào.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- MODAL: PREVIEW (F10) -->
+  <div
+    x-cloak
+    x-show="previewModal.open"
+    class="fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-50 flex items-center justify-center p-4"
+    @keydown.escape.window="previewModal.open = false"
+  >
+    <div
+      class="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200"
+      @click.away="previewModal.open = false"
+    >
+      <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+        <div>
+          <h3 class="font-bold text-slate-800">Xem Trước Tin Nhắn (F10)</h3>
+          <p class="text-xs text-slate-500 font-mono" x-text="'Tab: ' + previewModal.tab + ' | Ngày: ' + previewModal.date"></p>
+        </div>
+        <button @click="previewModal.open = false" class="text-slate-400 hover:text-slate-600 font-bold text-xl">&times;</button>
+      </div>
+
+      <div class="p-6">
+        <div class="bg-slate-900 text-slate-100 p-4 rounded-xl font-mono text-sm whitespace-pre-wrap max-h-96 overflow-y-auto shadow-inner" x-text="previewModal.text"></div>
+      </div>
+
+      <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+        <button
+          @click="copyPreviewText()"
+          class="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-sm font-medium transition shadow-sm"
+        >
+          <span x-text="previewModal.copied ? '✅ Đã sao chép!' : '📋 Sao chép nội dung'"></span>
+        </button>
+
+        <button
+          @click="sendFromPreview()"
+          :disabled="actionLoading === previewModal.key"
+          class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition shadow"
+        >
+          📤 Gửi ngay bây giờ
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function app() {
+      return {
+        activeTab: 'dashboard',
+        loading: false,
+        savingConfig: false,
+        actionLoading: null,
+        schedules: [],
+        configData: { squads: [], schedules: [] },
+        historyList: [],
+        toast: { show: false, message: '', type: 'success' },
+        previewModal: { open: false, key: '', text: '', date: '', tab: '', copied: false },
+
+        init() {
+          this.fetchSchedules();
+        },
+
+        showToast(msg, type = 'success') {
+          this.toast = { show: true, message: msg, type };
+          setTimeout(() => { this.toast.show = false; }, 4000);
+        },
+
+        async fetchSchedules() {
+          this.loading = true;
+          try {
+            const res = await fetch('/api/schedules');
+            const data = await res.json();
+            if (data.success) {
+              this.schedules = data.schedules;
+            } else {
+              this.showToast(data.error || 'Lỗi tải lịch', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async openPreview(key) {
+          this.actionLoading = key;
+          try {
+            const res = await fetch(`/api/schedules/${key}/preview`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+              this.previewModal = {
+                open: true,
+                key: key,
+                text: data.text,
+                date: data.lookupDate,
+                tab: data.effectiveTabName,
+                copied: false
+              };
+            } else {
+              this.showToast(data.error || 'Lỗi xem trước', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.actionLoading = null;
+          }
+        },
+
+        copyPreviewText() {
+          navigator.clipboard.writeText(this.previewModal.text);
+          this.previewModal.copied = true;
+          setTimeout(() => { this.previewModal.copied = false; }, 2000);
+        },
+
+        async sendFromPreview() {
+          const key = this.previewModal.key;
+          this.previewModal.open = false;
+          await this.triggerSend(key);
+        },
+
+        async triggerSend(key) {
+          this.actionLoading = key;
+          try {
+            const res = await fetch(`/api/schedules/${key}/send`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast(`Đã gửi thành công lịch ${key}!`);
+              await this.fetchSchedules();
+            } else {
+              this.showToast(data.error || 'Gửi thất bại', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.actionLoading = null;
+          }
+        },
+
+        async sendAllSchedules() {
+          if (!confirm('Bạn có chắc chắn muốn gửi tất cả các lịch trực bây giờ?')) return;
+          this.loading = true;
+          try {
+            // Tuần tự từng schedule theo rule #13
+            for (const s of this.schedules) {
+              await fetch(`/api/schedules/${s.key}/send`, { method: 'POST' });
+            }
+            this.showToast('Đã kích hoạt gửi tất cả lịch thành công!');
+            await this.fetchSchedules();
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async fetchConfig() {
+          try {
+            const res = await fetch('/api/config');
+            const data = await res.json();
+            if (data.success) {
+              this.configData = {
+                squads: data.squads.map(sq => ({ ...sq, sheetTab: sq.effectiveTab })),
+                schedules: data.schedules.map(sc => ({
+                  ...sc,
+                  autoSendTime: sc.effectiveSendTime || '',
+                  enabled: sc.effectiveEnabled
+                }))
+              };
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async saveConfig() {
+          this.savingConfig = true;
+          try {
+            const payload = {
+              squads: this.configData.squads.map(sq => ({ key: sq.key, sheetTab: sq.sheetTab })),
+              schedules: this.configData.schedules.map(sc => ({
+                key: sc.key,
+                autoSendTime: sc.autoSendTime,
+                enabled: sc.enabled
+              }))
+            };
+
+            const res = await fetch('/api/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('Lưu cấu hình thành công!');
+              await this.fetchConfig();
+            } else {
+              this.showToast(data.error || 'Lỗi lưu cấu hình', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.savingConfig = false;
+          }
+        },
+
+        async fetchHistory() {
+          try {
+            const res = await fetch('/api/history?limit=50');
+            const data = await res.json();
+            if (data.success) {
+              this.historyList = data.history;
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        formatTime(iso) {
+          if (!iso) return '';
+          const d = new Date(iso);
+          return d.toLocaleTimeString('vi-VN') + ' ' + d.toLocaleDateString('vi-VN');
+        }
+      };
+    }
+  </script>
+</body>
+</html>
