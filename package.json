@@ -1,0 +1,35 @@
+{
+  "name": "zalo-barobot",
+  "version": "1.0.0",
+  "description": "Automated System for Sending Squad Duty Schedules via Zalo",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "set-webhook": "tsx scripts/setWebhook.ts",
+    "delete-webhook": "tsx scripts/deleteWebhook.ts"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "googleapis": "^178.1.1",
+    "js-yaml": "^5.4.1",
+    "node-cron": "^4.6.0",
+    "node-zalo-bot": "^0.1.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^26.5.0",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}

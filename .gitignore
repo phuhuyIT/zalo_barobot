@@ -1,0 +1,11 @@
+node_modules
+dist
+data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+.env
+service-account.json
+service-account*.json
