@@ -6,6 +6,8 @@ export interface SquadConfig {
   header_style: HeaderStyle;
   overnight?: boolean;
   cutover_time?: string; // "HH:MM"
+  send_next_day?: boolean; // Nếu true: gửi lịch của ngày hôm sau vào buổi tối hôm trước
+  next_day_cutover_time?: string; // Giờ chuyển mốc sang ngày mai (mặc định "20:00")
 }
 
 export interface ScheduleConfig {
@@ -17,6 +19,8 @@ export interface ScheduleConfig {
   recipients: string[]; // recipient keys
   auto_send_time: string | null; // "HH:MM" or null
   enabled: boolean;
+  send_next_day?: boolean;
+  next_day_cutover_time?: string;
 }
 
 export interface ReminderConfig {

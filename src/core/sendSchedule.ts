@@ -115,7 +115,11 @@ export async function buildScheduleMessage(
   const now = new Date();
   const isOvernight = Boolean(squad?.overnight);
   const cutoverTime = squad?.cutover_time || '05:30';
-  const lookupDate = targetDate || resolveLookupDate(now, isOvernight, cutoverTime);
+  const sendNextDay = Boolean(schedule.send_next_day ?? squad?.send_next_day);
+  const nextDayCutoverTime = schedule.next_day_cutover_time || squad?.next_day_cutover_time || '20:00';
+  const lookupDate =
+    targetDate ||
+    resolveLookupDate(now, isOvernight, cutoverTime, sendNextDay, nextDayCutoverTime);
 
   // 2. Đọc dữ liệu từ Sheet tùy theo loại schedule
   let text = '';

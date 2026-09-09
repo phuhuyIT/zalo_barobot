@@ -4,6 +4,8 @@ squads:
     sheet_tab_gate_duty: "Lịch Trực Cổng & Phân Công Nhiệ"
     header_style: two_row_merged
     overnight: false
+    send_next_day: true          # Tự động gửi lịch ngày mai vào buổi tối hôm trước
+    next_day_cutover_time: "20:00" # Từ 20:00 tối trở đi sẽ lấy lịch của ngày mai
   culi:
     display_name: "Tiểu đội culi"
     sheet_tab_gate_duty: "Lịch trực cổng tiểu đội culi"
@@ -24,7 +26,7 @@ schedules:
     type: gate_duty
     recipients:
       - squad_main
-    auto_send_time: "05:30"
+    auto_send_time: "21:00"     # Gửi lúc 21:00 tối hôm trước
     enabled: true
 
   - key: culi_duty
@@ -42,7 +44,7 @@ schedules:
     type: gate_duty_patrol_only
     recipients:
       - platoon_leader
-    auto_send_time: "05:30"
+    auto_send_time: "21:00"     # Gửi lúc 21:00 tối hôm trước
     enabled: true
 
   - key: squad_leave
@@ -57,8 +59,8 @@ schedules:
 
 reminders:
   - schedule_key: main_duty
-    remind_before_send_minutes: 60
-    remind_if_not_sent_by: "05:40"
+    remind_before_send_minutes: 60  # Nhắc Admin lúc 20:00 (trước giờ gửi 1 tiếng)
+    remind_if_not_sent_by: "21:10"  # Cảnh báo nếu qua 21:10 chưa gửi thành công
   - schedule_key: culi_duty
     remind_before_send_minutes: 60
     remind_if_not_sent_by: "05:40"

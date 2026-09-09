@@ -60,6 +60,24 @@ describe('Date & Placeholder Utils', () => {
     const nightTime = new Date(2026, 8, 1, 22, 0);
     expect(resolveLookupDate(nightTime, true, '05:30')).toBe('01/09/2026');
   });
+
+  it('resolves lookup date for main squad sending tomorrow at 21:00 (sendNextDay = true)', () => {
+    // 21:00 on Tuesday (2026-09-01) -> should look up Wednesday (tomorrow: 02/09/2026)
+    const atEveningSend = new Date(2026, 8, 1, 21, 0);
+    expect(resolveLookupDate(atEveningSend, false, '05:30', true, '20:00')).toBe('02/09/2026');
+
+    // 20:30 on Tuesday (during heads-up window) -> should look up Wednesday (02/09/2026)
+    const duringHeadsUp = new Date(2026, 8, 1, 20, 30);
+    expect(resolveLookupDate(duringHeadsUp, false, '05:30', true, '20:00')).toBe('02/09/2026');
+
+    // 08:00 on Tuesday (daytime, before 20:00 cutover) -> should look up Tuesday (01/09/2026)
+    const daytime = new Date(2026, 8, 1, 8, 0);
+    expect(resolveLookupDate(daytime, false, '05:30', true, '20:00')).toBe('01/09/2026');
+
+    // 19:59 on Tuesday (before 20:00 cutover) -> should look up Tuesday (01/09/2026)
+    const justBeforeCutover = new Date(2026, 8, 1, 19, 59);
+    expect(resolveLookupDate(justBeforeCutover, false, '05:30', true, '20:00')).toBe('01/09/2026');
+  });
 });
 
 describe('Two-Row Merged Parser (Main Squad)', () => {
