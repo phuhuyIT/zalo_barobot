@@ -86,9 +86,7 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
       const nowDmy = formatDateDMY(now);
       const isOvernight = Boolean(effective.squad?.overnight);
       const cutoverTime = effective.squad?.cutover_time || '05:30';
-      const sendNextDay = Boolean(schedule.send_next_day ?? effective.squad?.send_next_day);
-      const nextDayCutoverTime = schedule.next_day_cutover_time || effective.squad?.next_day_cutover_time || '20:00';
-      const lookupDate = resolveLookupDate(now, isOvernight, cutoverTime, sendNextDay, nextDayCutoverTime);
+      const lookupDate = resolveLookupDate(now, isOvernight, cutoverTime, effective.effectiveSendNextDay);
 
       // 2a. Nhắc nhở TRƯỚC giờ gửi (Heads-up)
       if (effective.effectiveSendTime && rem.remind_before_send_minutes) {

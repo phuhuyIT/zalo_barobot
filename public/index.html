@@ -104,11 +104,18 @@
             <div class="p-6">
               <div class="flex justify-between items-start gap-2">
                 <div>
-                  <span
-                    class="text-xs font-semibold px-2 py-0.5 rounded-full inline-block mb-1"
-                    :class="s.effectiveEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'"
-                    x-text="s.effectiveEnabled ? 'Đang bật tự động' : 'Tắt tự động'"
-                  ></span>
+                  <div class="flex flex-wrap gap-1.5 mb-1.5">
+                    <span
+                      class="text-xs font-semibold px-2 py-0.5 rounded-full inline-block"
+                      :class="s.effectiveEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'"
+                      x-text="s.effectiveEnabled ? 'Đang bật tự động' : 'Tắt tự động'"
+                    ></span>
+                    <span
+                      class="text-xs font-semibold px-2 py-0.5 rounded-full inline-block"
+                      :class="s.effectiveSendNextDay ? 'bg-blue-100 text-blue-800 border border-blue-200' : 'bg-amber-100 text-amber-800 border border-amber-200'"
+                      x-text="s.effectiveSendNextDay ? '📅 Gửi lịch ngày mai' : '📅 Gửi lịch hôm nay'"
+                    ></span>
+                  </div>
                   <h3 class="text-lg font-bold text-slate-900" x-text="s.label"></h3>
                   <p class="text-xs text-slate-500 font-mono mt-0.5" x-text="'Key: ' + s.key"></p>
                 </div>
@@ -170,7 +177,7 @@
     <div x-show="activeTab === 'config'" x-cloak>
       <div class="mb-6">
         <h2 class="text-2xl font-bold text-slate-800">Cấu hình Vận hành (F9)</h2>
-        <p class="text-sm text-slate-500">Thay đổi tên tab Google Sheet (khi chuyển doanh trại) hoặc điều chỉnh giờ gửi tự động mà không cần deploy lại code</p>
+        <p class="text-sm text-slate-500">Thay đổi tên tab Google Sheet (khi chuyển doanh trại), bật/tắt gửi lịch ngày mai hoặc điều chỉnh giờ gửi tự động mà không cần deploy lại code</p>
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-4xl space-y-8">
@@ -205,36 +212,52 @@
         <div>
           <h3 class="text-base font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100 flex items-center space-x-2">
             <span>⏰</span>
-            <span>Giờ Gửi Tự Động & Trạng Thái Theo Lịch</span>
+            <span>Giờ Gửi Tự Động, Lịch Ngày Mai & Trạng Thái Theo Lịch</span>
           </h3>
           <div class="space-y-4">
             <template x-for="sc in configData.schedules" :key="sc.key">
               <div class="p-4 bg-slate-50 rounded-lg border border-slate-200 flex flex-wrap justify-between items-center gap-4">
-                <div class="min-w-[200px]">
+                <div class="min-w-[180px]">
                   <h4 class="text-sm font-bold text-slate-800" x-text="sc.label"></h4>
                   <p class="text-xs text-slate-500 font-mono" x-text="sc.key"></p>
                 </div>
 
-                <div class="flex items-center space-x-4">
+                <div class="flex flex-wrap items-center gap-4">
                   <!-- Auto send time input -->
                   <div>
                     <label class="text-xs text-slate-500 block mb-1">Giờ tự động gửi</label>
                     <input
                       type="text"
                       x-model="sc.autoSendTime"
-                      placeholder="HH:MM (ví dụ 05:30)"
+                      placeholder="HH:MM (ví dụ 21:00)"
                       class="px-2.5 py-1.5 border border-slate-300 rounded-md text-sm font-mono w-28 text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                     />
                   </div>
 
-                  <!-- Enable/Disable Toggle -->
-                  <div>
-                    <label class="text-xs text-slate-500 block mb-1">Tự động</label>
+                  <!-- Send Next Day Toggle -->
+                  <div class="text-center">
+                    <label class="text-xs text-slate-500 block mb-1">Gửi lịch ngày mai</label>
+                    <button
+                      type="button"
+                      @click="sc.sendNextDay = !sc.sendNextDay"
+                      class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                      :class="sc.sendNextDay ? 'bg-blue-600' : 'bg-slate-300'"
+                    >
+                      <span
+                        class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                        :class="sc.sendNextDay ? 'translate-x-5' : 'translate-x-0'"
+                      ></span>
+                    </button>
+                  </div>
+
+                  <!-- Enable/Disable Auto Send Toggle -->
+                  <div class="text-center">
+                    <label class="text-xs text-slate-500 block mb-1">Bật tự động</label>
                     <button
                       type="button"
                       @click="sc.enabled = !sc.enabled"
                       class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-                      :class="sc.enabled ? 'bg-indigo-600' : 'bg-slate-300'"
+                      :class="sc.enabled ? 'bg-emerald-600' : 'bg-slate-300'"
                     >
                       <span
                         class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
@@ -330,12 +353,29 @@
       class="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200"
       @click.away="previewModal.open = false"
     >
-      <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+      <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2">
         <div>
           <h3 class="font-bold text-slate-800">Xem Trước Tin Nhắn (F10)</h3>
-          <p class="text-xs text-slate-500 font-mono" x-text="'Tab: ' + previewModal.tab + ' | Ngày: ' + previewModal.date"></p>
+          <p class="text-xs text-slate-500 font-mono" x-text="'Tab: ' + previewModal.tab + ' | Ngày gửi: ' + previewModal.date"></p>
         </div>
-        <button @click="previewModal.open = false" class="text-slate-400 hover:text-slate-600 font-bold text-xl">&times;</button>
+        <div class="flex items-center space-x-2">
+          <span class="text-xs text-slate-400 font-medium">Xem lịch:</span>
+          <button
+            @click="switchPreviewDate('today')"
+            :class="previewModal.targetMode === 'today' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'"
+            class="px-2.5 py-1 rounded text-xs font-semibold transition"
+          >
+            Hôm nay
+          </button>
+          <button
+            @click="switchPreviewDate('tomorrow')"
+            :class="previewModal.targetMode === 'tomorrow' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'"
+            class="px-2.5 py-1 rounded text-xs font-semibold transition"
+          >
+            Ngày mai
+          </button>
+          <button @click="previewModal.open = false" class="text-slate-400 hover:text-slate-600 font-bold text-xl ml-2">&times;</button>
+        </div>
       </div>
 
       <div class="p-6">
@@ -355,7 +395,7 @@
           :disabled="actionLoading === previewModal.key"
           class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition shadow"
         >
-          📤 Gửi ngay bây giờ
+          📤 Gửi ngày này ngay
         </button>
       </div>
     </div>
@@ -372,7 +412,7 @@
         configData: { squads: [], schedules: [] },
         historyList: [],
         toast: { show: false, message: '', type: 'success' },
-        previewModal: { open: false, key: '', text: '', date: '', tab: '', copied: false },
+        previewModal: { open: false, key: '', text: '', date: '', tab: '', targetMode: '', copied: false },
 
         init() {
           this.fetchSchedules();
@@ -400,10 +440,18 @@
           }
         },
 
-        async openPreview(key) {
+        async openPreview(key, targetDateMode) {
           this.actionLoading = key;
           try {
-            const res = await fetch(`/api/schedules/${key}/preview`, { method: 'POST' });
+            const sc = this.schedules.find(s => s.key === key);
+            const mode = targetDateMode || (sc?.effectiveSendNextDay ? 'tomorrow' : 'today');
+            const body = mode ? { targetDate: mode } : {};
+
+            const res = await fetch(`/api/schedules/${key}/preview`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+            });
             const data = await res.json();
             if (data.success) {
               this.previewModal = {
@@ -412,6 +460,7 @@
                 text: data.text,
                 date: data.lookupDate,
                 tab: data.effectiveTabName,
+                targetMode: mode,
                 copied: false
               };
             } else {
@@ -424,6 +473,10 @@
           }
         },
 
+        async switchPreviewDate(mode) {
+          await this.openPreview(this.previewModal.key, mode);
+        },
+
         copyPreviewText() {
           navigator.clipboard.writeText(this.previewModal.text);
           this.previewModal.copied = true;
@@ -432,17 +485,23 @@
 
         async sendFromPreview() {
           const key = this.previewModal.key;
+          const targetDate = this.previewModal.date;
           this.previewModal.open = false;
-          await this.triggerSend(key);
+          await this.triggerSend(key, targetDate);
         },
 
-        async triggerSend(key) {
+        async triggerSend(key, targetDate) {
           this.actionLoading = key;
           try {
-            const res = await fetch(`/api/schedules/${key}/send`, { method: 'POST' });
+            const body = targetDate ? { targetDate } : {};
+            const res = await fetch(`/api/schedules/${key}/send`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+            });
             const data = await res.json();
             if (data.success) {
-              this.showToast(`Đã gửi thành công lịch ${key}!`);
+              this.showToast(`Đã gửi thành công lịch ${key} cho ngày ${data.result?.lookupDate || ''}!`);
               await this.fetchSchedules();
             } else {
               this.showToast(data.error || 'Gửi thất bại', 'error');
@@ -477,11 +536,16 @@
             const data = await res.json();
             if (data.success) {
               this.configData = {
-                squads: data.squads.map(sq => ({ ...sq, sheetTab: sq.effectiveTab })),
+                squads: data.squads.map(sq => ({
+                  ...sq,
+                  sheetTab: sq.effectiveTab,
+                  sendNextDay: sq.effectiveSendNextDay
+                })),
                 schedules: data.schedules.map(sc => ({
                   ...sc,
                   autoSendTime: sc.effectiveSendTime || '',
-                  enabled: sc.effectiveEnabled
+                  enabled: sc.effectiveEnabled,
+                  sendNextDay: sc.effectiveSendNextDay
                 }))
               };
             }
@@ -494,11 +558,16 @@
           this.savingConfig = true;
           try {
             const payload = {
-              squads: this.configData.squads.map(sq => ({ key: sq.key, sheetTab: sq.sheetTab })),
+              squads: this.configData.squads.map(sq => ({
+                key: sq.key,
+                sheetTab: sq.sheetTab,
+                sendNextDay: sq.sendNextDay
+              })),
               schedules: this.configData.schedules.map(sc => ({
                 key: sc.key,
                 autoSendTime: sc.autoSendTime,
-                enabled: sc.enabled
+                enabled: sc.enabled,
+                sendNextDay: sc.sendNextDay
               }))
             };
 
@@ -511,6 +580,7 @@
             if (data.success) {
               this.showToast('Lưu cấu hình thành công!');
               await this.fetchConfig();
+              await this.fetchSchedules();
             } else {
               this.showToast(data.error || 'Lỗi lưu cấu hình', 'error');
             }

@@ -30,7 +30,8 @@ describe('SQLite Store Layer', () => {
         config_key TEXT PRIMARY KEY,
         sheet_tab_gate_duty TEXT,
         auto_send_time TEXT,
-        enabled INTEGER
+        enabled INTEGER,
+        send_next_day INTEGER
       );
       CREATE TABLE IF NOT EXISTS send_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

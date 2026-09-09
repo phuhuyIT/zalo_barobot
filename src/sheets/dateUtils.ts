@@ -106,24 +106,15 @@ export function resolveLookupDate(
   now: Date,
   isOvernight: boolean = false,
   cutoverTime: string = '05:30',
-  sendNextDay: boolean = false,
-  nextDayCutoverTime: string = '20:00'
+  sendNextDay: boolean = false
 ): string {
-  // 1. Trường hợp gửi trước lịch ngày mai vào buổi tối hôm trước
+  // 1. Trường hợp gửi trước lịch ngày mai (sendNextDay = true):
+  // Luôn hướng đến ngày mai (now + 1 ngày) để bất kể khi nào chạy (ở mốc 21:00 hay test thủ công),
+  // hệ thống đều nhắm tới lịch của ngày mai.
   if (sendNextDay) {
-    const [cutHour, cutMinute] = nextDayCutoverTime.split(':').map(Number);
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const cutoverMinutes = cutHour * 60 + cutMinute;
-
-    if (currentMinutes >= cutoverMinutes) {
-      // Từ giờ cutover trở đi (ví dụ từ 20:00 hoặc 21:00 tối) -> lấy lịch ngày mai
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      return formatDateDMY(tomorrow);
-    } else {
-      // Ban ngày (trước giờ cutover) -> lấy lịch ngày hôm nay
-      return formatDateDMY(now);
-    }
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return formatDateDMY(tomorrow);
   }
 
   // 2. Trường hợp ca trực đêm qua ngày (culi)

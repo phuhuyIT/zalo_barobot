@@ -74,4 +74,5 @@ export interface RuntimeConfigOverride {
   sheet_tab_gate_duty?: string;
   auto_send_time?: string | null;
   enabled?: boolean;
+  send_next_day?: boolean;
 }

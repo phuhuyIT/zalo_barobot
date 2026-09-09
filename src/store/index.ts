@@ -72,9 +72,16 @@ function initTables(database: Database.Database): void {
       config_key TEXT PRIMARY KEY,
       sheet_tab_gate_duty TEXT,
       auto_send_time TEXT,
-      enabled INTEGER
+      enabled INTEGER,
+      send_next_day INTEGER
     );
   `);
+
+  try {
+    database.exec(`ALTER TABLE runtime_config ADD COLUMN send_next_day INTEGER;`);
+  } catch (_) {
+    // Cột đã tồn tại
+  }
 
   // 3. Bảng lịch sử gửi (F11 - append-only log)
   database.exec(`
@@ -218,21 +225,26 @@ export function getRuntimeConfigOverride(
   database?: Database.Database
 ): RuntimeConfigOverride | null {
   const d = database || getDatabase();
-  const row = d
-    .prepare(
-      `SELECT sheet_tab_gate_duty, auto_send_time, enabled
-       FROM runtime_config
-       WHERE config_key = ?`
-    )
-    .get(configKey) as any;
+  try {
+    const row = d
+      .prepare(
+        `SELECT sheet_tab_gate_duty, auto_send_time, enabled, send_next_day
+         FROM runtime_config
+         WHERE config_key = ?`
+      )
+      .get(configKey) as any;
 
-  if (!row) return null;
+    if (!row) return null;
 
-  return {
-    sheet_tab_gate_duty: row.sheet_tab_gate_duty ?? undefined,
-    auto_send_time: row.auto_send_time ?? undefined,
-    enabled: row.enabled !== null ? Boolean(row.enabled) : undefined,
-  };
+    return {
+      sheet_tab_gate_duty: row.sheet_tab_gate_duty ?? undefined,
+      auto_send_time: row.auto_send_time ?? undefined,
+      enabled: row.enabled !== null && row.enabled !== undefined ? Boolean(row.enabled) : undefined,
+      send_next_day: row.send_next_day !== null && row.send_next_day !== undefined ? Boolean(row.send_next_day) : undefined,
+    };
+  } catch (_) {
+    return null;
+  }
 }
 
 /**
@@ -242,17 +254,22 @@ export function getAllRuntimeConfigOverrides(
   database?: Database.Database
 ): Record<string, RuntimeConfigOverride> {
   const d = database || getDatabase();
-  const rows = d.prepare(`SELECT * FROM runtime_config`).all() as any[];
+  try {
+    const rows = d.prepare(`SELECT * FROM runtime_config`).all() as any[];
 
-  const result: Record<string, RuntimeConfigOverride> = {};
-  for (const r of rows) {
-    result[r.config_key] = {
-      sheet_tab_gate_duty: r.sheet_tab_gate_duty ?? undefined,
-      auto_send_time: r.auto_send_time ?? undefined,
-      enabled: r.enabled !== null ? Boolean(r.enabled) : undefined,
-    };
+    const result: Record<string, RuntimeConfigOverride> = {};
+    for (const r of rows) {
+      result[r.config_key] = {
+        sheet_tab_gate_duty: r.sheet_tab_gate_duty ?? undefined,
+        auto_send_time: r.auto_send_time ?? undefined,
+        enabled: r.enabled !== null && r.enabled !== undefined ? Boolean(r.enabled) : undefined,
+        send_next_day: r.send_next_day !== null && r.send_next_day !== undefined ? Boolean(r.send_next_day) : undefined,
+      };
+    }
+    return result;
+  } catch (_) {
+    return {};
   }
-  return result;
 }
 
 /**
@@ -284,13 +301,24 @@ export function saveRuntimeConfigOverride(
         ? 1
         : 0
       : null;
+  const sendNextDayVal =
+    override.send_next_day !== undefined
+      ? override.send_next_day
+        ? 1
+        : 0
+      : existing.send_next_day !== undefined
+      ? existing.send_next_day
+        ? 1
+        : 0
+      : null;
 
   d.prepare(
-    `INSERT INTO runtime_config (config_key, sheet_tab_gate_duty, auto_send_time, enabled)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO runtime_config (config_key, sheet_tab_gate_duty, auto_send_time, enabled, send_next_day)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(config_key) DO UPDATE SET
        sheet_tab_gate_duty = excluded.sheet_tab_gate_duty,
        auto_send_time = excluded.auto_send_time,
-       enabled = excluded.enabled`
-  ).run(configKey, sheetTab, sendTime, enabledVal);
+       enabled = excluded.enabled,
+       send_next_day = excluded.send_next_day`
+  ).run(configKey, sheetTab, sendTime, enabledVal, sendNextDayVal);
 }

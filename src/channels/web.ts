@@ -64,6 +64,7 @@ webRouter.get('/api/schedules', async (req: Request, res: Response) => {
         effectiveTabName: effective.effectiveTabName,
         effectiveSendTime: effective.effectiveSendTime,
         effectiveEnabled: effective.effectiveEnabled,
+        effectiveSendNextDay: effective.effectiveSendNextDay,
         recipients: recipientsInfo,
       };
     });
@@ -133,6 +134,8 @@ webRouter.get('/api/config', (req: Request, res: Response) => {
         cutoverTime: sq.cutover_time,
         defaultTab: sq.sheet_tab_gate_duty,
         effectiveTab: effective.effectiveTabName || sq.sheet_tab_gate_duty,
+        defaultSendNextDay: Boolean(sq.send_next_day),
+        effectiveSendNextDay: effective.effectiveSendNextDay,
       };
     });
 
@@ -147,6 +150,8 @@ webRouter.get('/api/config', (req: Request, res: Response) => {
         defaultEnabled: s.enabled,
         effectiveEnabled: effective.effectiveEnabled,
         effectiveTab: effective.effectiveTabName,
+        defaultSendNextDay: Boolean(s.send_next_day),
+        effectiveSendNextDay: effective.effectiveSendNextDay,
       };
     });
 
@@ -165,10 +170,15 @@ webRouter.post('/api/config', (req: Request, res: Response) => {
 
     if (squads && Array.isArray(squads)) {
       for (const sq of squads) {
-        if (sq.key && sq.sheetTab !== undefined) {
-          saveRuntimeConfigOverride(sq.key, {
-            sheet_tab_gate_duty: String(sq.sheetTab).trim(),
-          });
+        if (sq.key) {
+          const override: RuntimeConfigOverride = {};
+          if (sq.sheetTab !== undefined) {
+            override.sheet_tab_gate_duty = String(sq.sheetTab).trim();
+          }
+          if (sq.sendNextDay !== undefined) {
+            override.send_next_day = Boolean(sq.sendNextDay);
+          }
+          saveRuntimeConfigOverride(sq.key, override);
         }
       }
     }
@@ -185,6 +195,9 @@ webRouter.post('/api/config', (req: Request, res: Response) => {
           }
           if (s.sheetTab !== undefined) {
             override.sheet_tab_gate_duty = String(s.sheetTab).trim();
+          }
+          if (s.sendNextDay !== undefined) {
+            override.send_next_day = Boolean(s.sendNextDay);
           }
           saveRuntimeConfigOverride(s.key, override);
         }

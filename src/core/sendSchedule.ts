@@ -53,6 +53,7 @@ export function getEffectiveScheduleConfig(scheduleKey: string): {
   effectiveTabName: string;
   effectiveSendTime: string | null;
   effectiveEnabled: boolean;
+  effectiveSendNextDay: boolean;
 } {
   const config = getConfig();
   const schedule = getScheduleConfig(scheduleKey, config);
@@ -83,12 +84,22 @@ export function getEffectiveScheduleConfig(scheduleKey: string): {
       ? scheduleOverride.enabled
       : schedule.enabled;
 
+  const effectiveSendNextDay =
+    scheduleOverride?.send_next_day !== undefined
+      ? scheduleOverride.send_next_day
+      : squadOverride?.send_next_day !== undefined
+      ? squadOverride.send_next_day
+      : schedule.send_next_day !== undefined
+      ? schedule.send_next_day
+      : Boolean(squad?.send_next_day);
+
   return {
     schedule,
     squad,
     effectiveTabName,
     effectiveSendTime,
     effectiveEnabled,
+    effectiveSendNextDay,
   };
 }
 
@@ -100,7 +111,7 @@ export async function buildScheduleMessage(
   scheduleKey: string,
   targetDate?: string
 ): Promise<{ text: string; lookupDate: string; effectiveTabName: string }> {
-  const { schedule, squad, effectiveTabName } = getEffectiveScheduleConfig(scheduleKey);
+  const { schedule, squad, effectiveTabName, effectiveSendNextDay } = getEffectiveScheduleConfig(scheduleKey);
 
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   if (!spreadsheetId) {
@@ -115,11 +126,19 @@ export async function buildScheduleMessage(
   const now = new Date();
   const isOvernight = Boolean(squad?.overnight);
   const cutoverTime = squad?.cutover_time || '05:30';
-  const sendNextDay = Boolean(schedule.send_next_day ?? squad?.send_next_day);
-  const nextDayCutoverTime = schedule.next_day_cutover_time || squad?.next_day_cutover_time || '20:00';
-  const lookupDate =
-    targetDate ||
-    resolveLookupDate(now, isOvernight, cutoverTime, sendNextDay, nextDayCutoverTime);
+
+  let lookupDate = '';
+  if (targetDate === 'today') {
+    lookupDate = formatDateDMY(now);
+  } else if (targetDate === 'tomorrow') {
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    lookupDate = formatDateDMY(tomorrow);
+  } else if (targetDate) {
+    lookupDate = targetDate;
+  } else {
+    lookupDate = resolveLookupDate(now, isOvernight, cutoverTime, effectiveSendNextDay);
+  }
 
   // 2. Đọc dữ liệu từ Sheet tùy theo loại schedule
   let text = '';
