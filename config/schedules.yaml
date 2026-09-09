@@ -1,0 +1,64 @@
+squads:
+  main:
+    display_name: "Tiểu đội 2"
+    sheet_tab_gate_duty: "Lịch Trực Cổng & Phân Công Nhiệ"
+    header_style: two_row_merged
+    overnight: false
+  culi:
+    display_name: "Tiểu đội culi"
+    sheet_tab_gate_duty: "Lịch trực cổng tiểu đội culi"
+    header_style: single_row
+    overnight: true
+    cutover_time: "05:30"
+
+recipients:
+  admin: "$ADMIN_CHAT_ID"
+  squad_main: "$SQUAD_MAIN_CHAT_ID"
+  squad_culi: "$SQUAD_CULI_CHAT_ID"
+  platoon_leader: "$PLATOON_LEADER_CHAT_ID"
+
+schedules:
+  - key: main_duty
+    label: "Lịch trực cổng Tiểu đội 2"
+    squad: main
+    type: gate_duty
+    recipients:
+      - squad_main
+    auto_send_time: "05:30"
+    enabled: true
+
+  - key: culi_duty
+    label: "Lịch trực cổng Tiểu đội culi"
+    squad: culi
+    type: gate_duty
+    recipients:
+      - squad_culi
+    auto_send_time: "05:30"
+    enabled: true
+
+  - key: patrol_summary
+    label: "Lịch đi tuần Tiểu đội 2 (Gửi Trung đội trưởng)"
+    squad: main
+    type: gate_duty_patrol_only
+    recipients:
+      - platoon_leader
+    auto_send_time: "05:30"
+    enabled: true
+
+  - key: squad_leave
+    label: "Lịch tranh thủ Tiểu đội 2"
+    squad: main
+    type: leave_roster
+    sheet_tab: "Lịch tranh thủ tiểu đội 2"
+    recipients:
+      - squad_main
+    auto_send_time: null
+    enabled: true
+
+reminders:
+  - schedule_key: main_duty
+    remind_before_send_minutes: 60
+    remind_if_not_sent_by: "05:40"
+  - schedule_key: culi_duty
+    remind_before_send_minutes: 60
+    remind_if_not_sent_by: "05:40"
