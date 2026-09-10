@@ -18,8 +18,8 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-# Install runtime dependencies for better-sqlite3
-RUN apk add --no-cache python3 make g++
+# Install runtime dependencies for better-sqlite3 and timezone data
+RUN apk add --no-cache python3 make g++ tzdata
 
 COPY package*.json ./
 RUN npm ci --only=production && apk del python3 make g++
@@ -33,6 +33,7 @@ RUN mkdir -p /data
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV TZ=Asia/Ho_Chi_Minh
 ENV DATABASE_PATH=/data/app.db
 ENV CONFIG_PATH=./config/schedules.yaml
 

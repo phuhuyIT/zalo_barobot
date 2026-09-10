@@ -4,6 +4,7 @@ import {
   isPlaceholderOrEmpty,
   resolveLookupDate,
   formatDateDMY,
+  getVietnamTimeParts,
 } from '../src/sheets/dateUtils';
 import {
   detectTwoRowLayout,
@@ -76,6 +77,16 @@ describe('Date & Placeholder Utils', () => {
 
     // sendNextDay = false -> returns today (01/09/2026)
     expect(resolveLookupDate(morning, false, '05:30', false)).toBe('01/09/2026');
+  });
+
+  it('correctly extracts Vietnam time parts regardless of server timezone', () => {
+    // 2026-09-10 01:10:00 UTC = 2026-09-10 08:10:00 Asia/Ho_Chi_Minh
+    const utcDate = new Date('2026-09-10T01:10:00.000Z');
+    const vn = getVietnamTimeParts(utcDate);
+    expect(vn.hours).toBe(8);
+    expect(vn.minutes).toBe(10);
+    expect(vn.timeHM).toBe('08:10');
+    expect(vn.dateDMY).toBe('10/09/2026');
   });
 });
 

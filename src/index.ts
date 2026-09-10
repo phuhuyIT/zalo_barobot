@@ -17,6 +17,9 @@ import { loadConfig } from './config';
 
 dotenv.config();
 
+// Khóa cứng múi giờ chuẩn Việt Nam (Asia/Ho_Chi_Minh, UTC+7)
+process.env.TZ = process.env.TZ || 'Asia/Ho_Chi_Minh';
+
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 

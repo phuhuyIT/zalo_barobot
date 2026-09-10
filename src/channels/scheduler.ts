@@ -15,7 +15,7 @@ import { getConfig, getRecipientChatId } from '../config';
 import { getEffectiveScheduleConfig, sendSchedule } from '../core';
 import { hasSentToday, saveLastMessage } from '../store';
 import { ZaloClient } from '../core/zaloClient';
-import { formatDateDMY, resolveLookupDate } from '../sheets/dateUtils';
+import { formatDateDMY, resolveLookupDate, getVietnamTimeParts } from '../sheets/dateUtils';
 
 export const schedulerRouter = Router();
 
@@ -23,11 +23,12 @@ export const schedulerRouter = Router();
 const activeCronTasks: ScheduledTask[] = [];
 
 /**
- * Kiểm tra xem công việc có đến hạn gửi lúc này không.
+ * Kiểm tra xem công việc có đến hạn gửi lúc này không theo múi giờ Việt Nam.
  */
 function isTimeMatching(targetTimeStr: string, now: Date): boolean {
   const [targetH, targetM] = targetTimeStr.split(':').map(Number);
-  return now.getHours() === targetH && now.getMinutes() === targetM;
+  const vn = getVietnamTimeParts(now);
+  return vn.hours === targetH && vn.minutes === targetM;
 }
 
 /**
@@ -53,6 +54,7 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
   const schedulesRun: string[] = [];
   const remindersRun: string[] = [];
 
+  const vn = getVietnamTimeParts(now);
   const adminChatId = getRecipientChatId('admin', config);
   const zalo = new ZaloClient();
 
@@ -64,12 +66,12 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
     }
 
     if (isTimeMatching(effective.effectiveSendTime, now)) {
-      console.log(`[Scheduler] Đến giờ gửi tự động cho schedule '${s.key}' (${effective.effectiveSendTime})`);
+      console.log(`[Scheduler] 🚀 [${vn.timeHM} VN] Đến giờ gửi tự động cho schedule '${s.key}' (${effective.effectiveSendTime})`);
       try {
         await sendSchedule(s.key, { isAutomated: true });
         schedulesRun.push(s.key);
       } catch (err: any) {
-        console.error(`[Scheduler] Lỗi gửi schedule '${s.key}':`, err.message);
+        console.error(`[Scheduler] ❌ Lỗi gửi schedule '${s.key}':`, err.message);
       }
     }
   }
@@ -147,19 +149,29 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
 export function startScheduler(): void {
   stopScheduler();
 
-  console.log('[Scheduler] Đang khởi động internal scheduler...');
+  const vn = getVietnamTimeParts();
+  console.log(`[Scheduler] ⏰ Internal scheduler đã khởi động (Múi giờ: Asia/Ho_Chi_Minh).`);
+  console.log(`[Scheduler] 🕒 Giờ hiện tại (VN): ${vn.timeHM} ngày ${vn.dateDMY}`);
+
+  const config = getConfig();
+  for (const s of config.schedules) {
+    const effective = getEffectiveScheduleConfig(s.key);
+    if (effective.effectiveEnabled && effective.effectiveSendTime) {
+      console.log(`[Scheduler] 📌 Lịch '${s.key}': tự động gửi lúc ${effective.effectiveSendTime} (VN)`);
+    }
+  }
 
   // Chạy mỗi phút 1 lần ('* * * * *')
   const task = cron.schedule('* * * * *', async () => {
     try {
       await runDueJobs(new Date());
     } catch (err: any) {
-      console.error('[Scheduler] Lỗi thực thi runDueJobs:', err.message);
+      console.error('[Scheduler] ❌ Lỗi thực thi runDueJobs:', err.message);
     }
   });
 
   activeCronTasks.push(task);
-  console.log('[Scheduler] Scheduler đã khởi động thành công.');
+  console.log('[Scheduler] ✅ Scheduler đã sẵn sàng chạy ngầm mỗi phút.');
 }
 
 /**

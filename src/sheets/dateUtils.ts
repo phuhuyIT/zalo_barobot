@@ -5,6 +5,47 @@
  * Tuân thủ quy tắc nghiệp vụ trong mục 5.1 và quy tắc #8 (comment tiếng Việt).
  */
 
+// Đảm bảo múi giờ mặc định luôn là Giờ Việt Nam (Asia/Ho_Chi_Minh, UTC+7)
+process.env.TZ = process.env.TZ || 'Asia/Ho_Chi_Minh';
+
+/**
+ * Lấy các thành phần thời gian chuẩn theo múi giờ Việt Nam (Asia/Ho_Chi_Minh).
+ */
+export function getVietnamTimeParts(d: Date = new Date()): {
+  hours: number;
+  minutes: number;
+  seconds: number;
+  day: number;
+  month: number;
+  year: number;
+  dateDMY: string;
+  timeHM: string;
+} {
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(d);
+  let hours = 0, minutes = 0, seconds = 0, day = 0, month = 0, year = 0;
+  for (const p of parts) {
+    if (p.type === 'hour') hours = Number(p.value);
+    if (p.type === 'minute') minutes = Number(p.value);
+    if (p.type === 'second') seconds = Number(p.value);
+    if (p.type === 'day') day = Number(p.value);
+    if (p.type === 'month') month = Number(p.value);
+    if (p.type === 'year') year = Number(p.value);
+  }
+  const dateDMY = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
+  const timeHM = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  return { hours, minutes, seconds, day, month, year, dateDMY, timeHM };
+}
+
 /**
  * Kiểm tra một chuỗi có phải là placeholder rỗng hay không (-, --, N/A, khoảng trắng, ...).
  * Theo yêu cầu làm rõ của Admin: Bỏ qua các giá trị như '-', 'N/A'.
