@@ -2,170 +2,310 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#4338ca" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Barobot" />
   <title>Zalo Barobot - Quản lý Gửi Lịch Trực</title>
+
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Alpine.js CDN -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/cdn.min.js"></script>
+
   <style>
     [x-cloak] { display: none !important; }
+
+    /* Mobile Web App & Touch Optimizations */
+    * {
+      -webkit-tap-highlight-color: transparent;
+      box-sizing: border-box;
+    }
+
+    body {
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .pb-safe {
+      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+    }
+
+    /* Prevent iOS auto-zoom on input focus */
+    @media screen and (max-width: 768px) {
+      input, select, textarea {
+        font-size: 16px !important;
+      }
+    }
+
+    /* Smooth touch feedback */
+    .touch-btn {
+      touch-action: manipulation;
+      transition: transform 0.12s ease, background-color 0.15s ease, opacity 0.15s ease;
+    }
+    .touch-btn:active {
+      transform: scale(0.97);
+    }
+
+    /* Custom scrollbars */
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.3);
+      border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.4);
+      border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.7);
+    }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen" x-data="app()" x-init="init()">
-  <!-- Top Navigation -->
-  <header class="bg-indigo-700 text-white shadow-md">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap justify-between items-center gap-4">
-      <div class="flex items-center space-x-3">
-        <span class="text-2xl">🤖</span>
-        <div>
-          <h1 class="text-xl font-bold tracking-tight">Zalo Barobot</h1>
-          <p class="text-xs text-indigo-200">Hệ thống tự động gửi lịch trực cổng & phân công nhiệm vụ</p>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col font-sans antialiased select-none sm:select-auto" x-data="app()" x-init="init()">
+
+  <!-- TOP HEADER (Sticky) -->
+  <header class="sticky top-0 z-30 bg-indigo-700 text-white shadow-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex justify-between items-center gap-3">
+      <!-- Brand & Bot Status -->
+      <div class="flex items-center space-x-2.5 min-w-0">
+        <div class="w-10 h-10 rounded-xl bg-indigo-800/80 flex items-center justify-center text-2xl flex-shrink-0 shadow-inner">
+          🤖
+        </div>
+        <div class="truncate">
+          <div class="flex items-center space-x-2">
+            <h1 class="text-lg sm:text-xl font-bold tracking-tight leading-tight truncate">Zalo Barobot</h1>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-200 border border-emerald-400/30">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse"></span> Sẵn sàng
+            </span>
+          </div>
+          <p class="text-[11px] text-indigo-200 truncate hidden sm:block">Hệ thống tự động gửi lịch trực cổng & phân công nhiệm vụ</p>
         </div>
       </div>
 
-      <!-- Navigation Tabs -->
-      <nav class="flex space-x-2">
+      <!-- Desktop Navigation Tabs -->
+      <nav class="hidden md:flex space-x-1.5 bg-indigo-800/60 p-1 rounded-xl border border-indigo-600/50">
         <button
-          @click="activeTab = 'dashboard'"
-          :class="activeTab === 'dashboard' ? 'bg-indigo-900 text-white' : 'text-indigo-100 hover:bg-indigo-600'"
-          class="px-3 py-2 rounded-md text-sm font-medium transition"
+          @click="selectTab('dashboard')"
+          :class="activeTab === 'dashboard' ? 'bg-white text-indigo-800 shadow' : 'text-indigo-100 hover:bg-indigo-700/60'"
+          class="px-3.5 py-1.5 rounded-lg text-sm font-semibold transition flex items-center space-x-1.5"
         >
-          📋 Bảng điều khiển
+          <span>📋</span>
+          <span>Bảng điều khiển</span>
         </button>
         <button
-          @click="activeTab = 'config'; fetchConfig()"
-          :class="activeTab === 'config' ? 'bg-indigo-900 text-white' : 'text-indigo-100 hover:bg-indigo-600'"
-          class="px-3 py-2 rounded-md text-sm font-medium transition"
+          @click="selectTab('config')"
+          :class="activeTab === 'config' ? 'bg-white text-indigo-800 shadow' : 'text-indigo-100 hover:bg-indigo-700/60'"
+          class="px-3.5 py-1.5 rounded-lg text-sm font-semibold transition flex items-center space-x-1.5"
         >
-          ⚙️ Cấu hình (F9)
+          <span>⚙️</span>
+          <span>Cấu hình (F9)</span>
         </button>
         <button
-          @click="activeTab = 'history'; fetchHistory()"
-          :class="activeTab === 'history' ? 'bg-indigo-900 text-white' : 'text-indigo-100 hover:bg-indigo-600'"
-          class="px-3 py-2 rounded-md text-sm font-medium transition"
+          @click="selectTab('history')"
+          :class="activeTab === 'history' ? 'bg-white text-indigo-800 shadow' : 'text-indigo-100 hover:bg-indigo-700/60'"
+          class="px-3.5 py-1.5 rounded-lg text-sm font-semibold transition flex items-center space-x-1.5"
         >
-          🕒 Lịch sử gửi (F11)
+          <span>🕒</span>
+          <span>Lịch sử gửi (F11)</span>
         </button>
       </nav>
+
+      <!-- Header Quick Actions (Mobile & Desktop) -->
+      <div class="flex items-center space-x-2 flex-shrink-0">
+        <!-- Quick Refresh Button -->
+        <button
+          @click="refreshCurrentTab()"
+          :disabled="loading"
+          class="touch-btn p-2 rounded-xl bg-indigo-800 hover:bg-indigo-600 active:bg-indigo-900 text-white transition flex items-center justify-center border border-indigo-500/40 shadow-sm"
+          title="Làm mới dữ liệu"
+          aria-label="Làm mới"
+        >
+          <svg class="w-5 h-5" :class="loading ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+        </button>
+
+        <!-- Save button in header on mobile when in Config tab -->
+        <button
+          x-show="activeTab === 'config'"
+          x-cloak
+          @click="saveConfig()"
+          :disabled="savingConfig"
+          class="md:hidden touch-btn px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-sm flex items-center space-x-1"
+        >
+          <span x-show="!savingConfig">💾 Lưu</span>
+          <span x-show="savingConfig" class="inline-block animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full"></span>
+        </button>
+      </div>
     </div>
   </header>
 
-  <!-- Notification Toast -->
+  <!-- NOTIFICATION TOAST -->
   <div
     x-cloak
     x-show="toast.show"
-    x-transition
-    class="fixed top-5 right-5 z-50 max-w-sm p-4 rounded-lg shadow-lg text-white"
+    x-transition:enter="transition ease-out duration-300 transform"
+    x-transition:enter-start="opacity-0 -translate-y-4 scale-95"
+    x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+    x-transition:leave="transition ease-in duration-200 transform"
+    x-transition:leave-start="opacity-100 translate-y-0 scale-100"
+    x-transition:leave-end="opacity-0 -translate-y-4 scale-95"
+    class="fixed top-4 inset-x-4 sm:inset-x-auto sm:right-5 sm:top-5 z-50 max-w-sm mx-auto sm:mx-0 p-3.5 rounded-2xl shadow-xl text-white flex items-start space-x-3 border border-white/20"
     :class="toast.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'"
+    @click="toast.show = false"
   >
-    <div class="flex items-center space-x-2">
+    <div class="text-xl flex-shrink-0 pt-0.5">
       <span x-text="toast.type === 'error' ? '⚠️' : '✅'"></span>
-      <p class="text-sm font-medium" x-text="toast.message"></p>
     </div>
+    <div class="flex-1 text-sm font-medium leading-snug" x-text="toast.message"></div>
+    <button @click.stop="toast.show = false" class="text-white/80 hover:text-white text-lg font-bold leading-none p-1">&times;</button>
   </div>
 
-  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-    <!-- TAB 1: DASHBOARD -->
-    <div x-show="activeTab === 'dashboard'" x-cloak>
-      <div class="flex flex-wrap justify-between items-center mb-6 gap-4">
+  <!-- MAIN CONTENT AREA -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-3.5 sm:px-6 lg:px-8 py-4 sm:py-8 pb-28 md:pb-12">
+
+    <!-- ========================================== -->
+    <!-- TAB 1: DASHBOARD (LỊCH TRỰC) -->
+    <!-- ========================================== -->
+    <div x-show="activeTab === 'dashboard'" x-cloak class="space-y-4 sm:space-y-6">
+      
+      <!-- Top Action & Overview Card -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 class="text-2xl font-bold text-slate-800">Danh sách Lịch Trực</h2>
-          <p class="text-sm text-slate-500">Xem trước, kiểm tra trạng thái và kích hoạt gửi lịch đến các nhóm Zalo</p>
+          <div class="flex items-center space-x-2">
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800">Danh Sách Lịch Trực</h2>
+            <span class="bg-indigo-100 text-indigo-800 text-xs font-semibold px-2.5 py-0.5 rounded-full" x-text="schedules.length + ' lịch'"></span>
+          </div>
+          <p class="text-xs sm:text-sm text-slate-500 mt-1">
+            Đang bật tự động: <span class="font-bold text-emerald-600" x-text="activeSchedulesCount"></span> / <span x-text="schedules.length"></span> lịch
+          </p>
         </div>
-        <div class="flex space-x-3">
-          <button
-            @click="fetchSchedules()"
-            :disabled="loading"
-            class="px-3 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg text-sm font-medium transition shadow-sm"
-          >
-            🔄 Làm mới
-          </button>
-          <button
-            @click="sendAllSchedules()"
-            :disabled="loading"
-            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition shadow flex items-center space-x-2"
-          >
-            <span>🚀 Gửi tất cả lịch trực</span>
-          </button>
-        </div>
+
+        <!-- Action Button: Send All -->
+        <button
+          @click="confirmSendAllModal = true"
+          :disabled="loading || schedules.length === 0"
+          class="w-full sm:w-auto touch-btn px-4 py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-semibold transition shadow-md shadow-indigo-600/20 flex items-center justify-center space-x-2"
+        >
+          <span class="text-base">🚀</span>
+          <span>Gửi tất cả lịch trực</span>
+        </button>
       </div>
 
       <!-- Loading State -->
-      <div x-show="loading" class="text-center py-12 text-slate-500">
-        <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-indigo-600 border-t-transparent"></div>
-        <p class="mt-2 text-sm">Đang tải dữ liệu...</p>
+      <div x-show="loading && schedules.length === 0" class="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
+        <div class="inline-block animate-spin rounded-full h-9 w-9 border-4 border-indigo-600 border-t-transparent"></div>
+        <p class="mt-3 text-sm font-medium text-slate-500">Đang tải dữ liệu lịch trực...</p>
       </div>
 
       <!-- Schedule Cards Grid -->
-      <div x-show="!loading" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div x-show="schedules.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
         <template x-for="s in schedules" :key="s.key">
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col justify-between hover:shadow-md transition">
-            <div class="p-6">
-              <div class="flex justify-between items-start gap-2">
-                <div>
-                  <div class="flex flex-wrap gap-1.5 mb-1.5">
-                    <span
-                      class="text-xs font-semibold px-2 py-0.5 rounded-full inline-block"
-                      :class="s.effectiveEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'"
-                      x-text="s.effectiveEnabled ? 'Đang bật tự động' : 'Tắt tự động'"
-                    ></span>
-                    <span
-                      class="text-xs font-semibold px-2 py-0.5 rounded-full inline-block"
-                      :class="s.effectiveSendNextDay ? 'bg-blue-100 text-blue-800 border border-blue-200' : 'bg-amber-100 text-amber-800 border border-amber-200'"
-                      x-text="s.effectiveSendNextDay ? '📅 Gửi lịch ngày mai' : '📅 Gửi lịch hôm nay'"
-                    ></span>
-                  </div>
-                  <h3 class="text-lg font-bold text-slate-900" x-text="s.label"></h3>
-                  <p class="text-xs text-slate-500 font-mono mt-0.5" x-text="'Key: ' + s.key"></p>
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200/90 overflow-hidden flex flex-col justify-between hover:shadow-md transition duration-200">
+            
+            <!-- Card Body -->
+            <div class="p-4 sm:p-5 space-y-3.5">
+              <!-- Badges & Auto-Send Time Header -->
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <!-- Enabled badge -->
+                  <span
+                    class="text-[11px] font-semibold px-2.5 py-0.5 rounded-full inline-flex items-center space-x-1"
+                    :class="s.effectiveEnabled ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-600 border border-slate-200'"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full" :class="s.effectiveEnabled ? 'bg-emerald-500' : 'bg-slate-400'"></span>
+                    <span x-text="s.effectiveEnabled ? 'Tự động: BẬT' : 'Tự động: TẮT'"></span>
+                  </span>
+
+                  <!-- Next day badge -->
+                  <span
+                    class="text-[11px] font-semibold px-2.5 py-0.5 rounded-full border"
+                    :class="s.effectiveSendNextDay ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-amber-50 text-amber-700 border-amber-200'"
+                    x-text="s.effectiveSendNextDay ? '📅 Gửi Ngày Mai' : '📅 Gửi Hôm Nay'"
+                  ></span>
                 </div>
-                <div class="text-right">
-                  <span class="text-xs text-slate-400 block">Giờ gửi tự động</span>
-                  <span class="text-sm font-bold text-indigo-700" x-text="s.effectiveSendTime || 'Không hẹn giờ'"></span>
+
+                <!-- Send Time Pill -->
+                <div class="text-right flex-shrink-0">
+                  <span class="inline-block bg-indigo-50 border border-indigo-100 text-indigo-700 px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold" x-text="s.effectiveSendTime || 'Chưa hẹn giờ'"></span>
                 </div>
               </div>
 
-              <div class="mt-4 pt-4 border-t border-slate-100 space-y-2 text-sm">
-                <div class="flex justify-between">
-                  <span class="text-slate-500">Sheet Tab:</span>
-                  <span class="font-medium text-slate-700 font-mono text-xs bg-slate-100 px-2 py-0.5 rounded" x-text="s.effectiveTabName"></span>
+              <!-- Title & Key -->
+              <div>
+                <h3 class="text-base sm:text-lg font-bold text-slate-900 leading-snug" x-text="s.label"></h3>
+                <div class="flex items-center space-x-1.5 mt-0.5">
+                  <span class="text-[11px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded" x-text="s.key"></span>
+                  <span class="text-slate-300">•</span>
+                  <span class="text-xs text-slate-500 capitalize" x-text="s.type || 'Lịch trực'"></span>
                 </div>
-                <div class="flex justify-between items-center">
-                  <span class="text-slate-500">Người nhận:</span>
-                  <div class="text-right">
+              </div>
+
+              <!-- Metadata Details Table / List -->
+              <div class="bg-slate-50/80 rounded-xl p-3 border border-slate-100 space-y-2 text-xs">
+                <!-- Sheet Tab -->
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-slate-500 flex items-center space-x-1">
+                    <span>📑</span>
+                    <span>Sheet Tab:</span>
+                  </span>
+                  <span class="font-mono font-medium text-slate-800 bg-white px-2 py-0.5 rounded border border-slate-200 truncate max-w-[200px]" x-text="s.effectiveTabName"></span>
+                </div>
+
+                <!-- Recipient Info -->
+                <div class="flex items-start justify-between gap-2">
+                  <span class="text-slate-500 flex items-center space-x-1 flex-shrink-0">
+                    <span>👥</span>
+                    <span>Nhóm nhận:</span>
+                  </span>
+                  <div class="text-right min-w-0">
                     <template x-for="r in s.recipients" :key="r.recipientKey">
-                      <div class="text-xs text-slate-600">
-                        <span class="font-medium" x-text="r.recipientKey"></span>
-                        <span class="text-slate-400 font-mono" x-text="' (' + (r.chatId ? r.chatId.slice(0, 10) + '...' : 'Chưa có ID') + ')'"></span>
+                      <div class="truncate">
+                        <span class="font-semibold text-slate-700" x-text="r.recipientKey"></span>
+                        <span class="font-mono text-[11px] text-slate-400" x-text="r.chatId ? '(' + r.chatId.slice(0, 10) + '...)' : '(Chưa có ID)'"></span>
                       </div>
                     </template>
                   </div>
                 </div>
-                <div class="flex justify-between items-center">
-                  <span class="text-slate-500">Lần gửi gần nhất:</span>
-                  <span class="text-xs font-medium" :class="s.recipients[0]?.lastSentDate ? 'text-emerald-700' : 'text-slate-400'">
-                    <span x-text="s.recipients[0]?.lastSentDate ? s.recipients[0].lastSentDate : 'Chưa gửi hôm nay'"></span>
+
+                <!-- Last Sent Info -->
+                <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/60">
+                  <span class="text-slate-500 flex items-center space-x-1">
+                    <span>🕒</span>
+                    <span>Lần gửi gần nhất:</span>
                   </span>
+                  <span
+                    class="font-medium"
+                    :class="s.recipients[0]?.lastSentDate ? 'text-emerald-700' : 'text-slate-400'"
+                    x-text="s.recipients[0]?.lastSentDate ? s.recipients[0].lastSentDate : 'Chưa gửi hôm nay'"
+                  ></span>
                 </div>
               </div>
             </div>
 
-            <!-- Card Actions -->
-            <div class="bg-slate-50 px-6 py-3 border-t border-slate-100 flex justify-end space-x-3">
+            <!-- Card Touch-Optimized Actions -->
+            <div class="bg-slate-50 px-4 py-3 border-t border-slate-100 grid grid-cols-2 gap-2.5">
               <button
                 @click="openPreview(s.key)"
                 :disabled="actionLoading === s.key"
-                class="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold transition"
+                class="touch-btn min-h-[44px] py-2.5 px-3 bg-white border border-slate-300 hover:bg-slate-100 active:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center space-x-1.5 shadow-sm"
               >
-                👁️ Xem trước (F10)
+                <span>👁️</span>
+                <span>Xem trước</span>
               </button>
+              
               <button
                 @click="triggerSend(s.key)"
                 :disabled="actionLoading === s.key"
-                class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition flex items-center space-x-1"
+                class="touch-btn min-h-[44px] py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center justify-center space-x-1.5 shadow-sm shadow-indigo-600/20"
               >
                 <span x-show="actionLoading !== s.key">📤 Gửi ngay</span>
-                <span x-show="actionLoading === s.key" class="inline-block animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full"></span>
+                <span x-show="actionLoading === s.key" class="inline-block animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
               </button>
             </div>
           </div>
@@ -173,155 +313,340 @@
       </div>
     </div>
 
+    <!-- ========================================== -->
     <!-- TAB 2: RUNTIME CONFIGURATION (F9) -->
-    <div x-show="activeTab === 'config'" x-cloak>
-      <div class="mb-6">
-        <h2 class="text-2xl font-bold text-slate-800">Cấu hình Vận hành (F9)</h2>
-        <p class="text-sm text-slate-500">Thay đổi tên tab Google Sheet (khi chuyển doanh trại), bật/tắt gửi lịch ngày mai hoặc điều chỉnh giờ gửi tự động mà không cần deploy lại code</p>
-      </div>
-
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-4xl space-y-8">
-        <!-- 1. Squad Sheet Tabs -->
-        <div>
-          <h3 class="text-base font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100 flex items-center space-x-2">
-            <span>📑</span>
-            <span>Tên Tab Google Sheet theo Tiểu đội</span>
-          </h3>
-          <div class="space-y-4">
-            <template x-for="sq in configData.squads" :key="sq.key">
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
-                <label class="text-sm font-medium text-slate-700">
-                  <span x-text="sq.displayName"></span>
-                  <span class="text-xs text-slate-400 block font-mono" x-text="'key: ' + sq.key"></span>
-                </label>
-                <div class="sm:col-span-2">
-                  <input
-                    type="text"
-                    x-model="sq.sheetTab"
-                    class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                    placeholder="Nhập chính xác tên tab trên Google Sheet"
-                  />
-                  <p class="text-xs text-slate-400 mt-1">Mặc định: <span x-text="sq.defaultTab"></span></p>
-                </div>
-              </div>
-            </template>
+    <!-- ========================================== -->
+    <div x-show="activeTab === 'config'" x-cloak class="space-y-4 sm:space-y-6 max-w-4xl mx-auto">
+      
+      <!-- Top Overview & Info Card -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="text-2xl">⚙️</span>
+              <h2 class="text-xl sm:text-2xl font-bold text-slate-800">Cấu Hình Vận Hành (F9)</h2>
+            </div>
+            <p class="text-xs sm:text-sm text-slate-500 mt-1">
+              Đổi tab Sheet, giờ gửi và chế độ ngày mai. Cập nhật tức thì không cần redeploy.
+            </p>
           </div>
-        </div>
 
-        <!-- 2. Schedules Timing & Toggle -->
-        <div>
-          <h3 class="text-base font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100 flex items-center space-x-2">
-            <span>⏰</span>
-            <span>Giờ Gửi Tự Động, Lịch Ngày Mai & Trạng Thái Theo Lịch</span>
-          </h3>
-          <div class="space-y-4">
-            <template x-for="sc in configData.schedules" :key="sc.key">
-              <div class="p-4 bg-slate-50 rounded-lg border border-slate-200 flex flex-wrap justify-between items-center gap-4">
-                <div class="min-w-[180px]">
-                  <h4 class="text-sm font-bold text-slate-800" x-text="sc.label"></h4>
-                  <p class="text-xs text-slate-500 font-mono" x-text="sc.key"></p>
-                </div>
-
-                <div class="flex flex-wrap items-center gap-4">
-                  <!-- Auto send time input -->
-                  <div>
-                    <label class="text-xs text-slate-500 block mb-1">Giờ tự động gửi</label>
-                    <input
-                      type="text"
-                      x-model="sc.autoSendTime"
-                      placeholder="HH:MM (ví dụ 21:00)"
-                      class="px-2.5 py-1.5 border border-slate-300 rounded-md text-sm font-mono w-28 text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                    />
-                  </div>
-
-                  <!-- Send Next Day Toggle -->
-                  <div class="text-center">
-                    <label class="text-xs text-slate-500 block mb-1">Gửi lịch ngày mai</label>
-                    <button
-                      type="button"
-                      @click="sc.sendNextDay = !sc.sendNextDay"
-                      class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-                      :class="sc.sendNextDay ? 'bg-blue-600' : 'bg-slate-300'"
-                    >
-                      <span
-                        class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-                        :class="sc.sendNextDay ? 'translate-x-5' : 'translate-x-0'"
-                      ></span>
-                    </button>
-                  </div>
-
-                  <!-- Enable/Disable Auto Send Toggle -->
-                  <div class="text-center">
-                    <label class="text-xs text-slate-500 block mb-1">Bật tự động</label>
-                    <button
-                      type="button"
-                      @click="sc.enabled = !sc.enabled"
-                      class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-                      :class="sc.enabled ? 'bg-emerald-600' : 'bg-slate-300'"
-                    >
-                      <span
-                        class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-                        :class="sc.enabled ? 'translate-x-5' : 'translate-x-0'"
-                      ></span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- Save Config Button -->
-        <div class="pt-4 border-t border-slate-100 flex justify-end">
+          <!-- Desktop Save Button -->
           <button
             @click="saveConfig()"
             :disabled="savingConfig"
-            class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition shadow flex items-center space-x-2"
+            class="hidden sm:flex touch-btn px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-sm font-semibold transition shadow-md shadow-emerald-600/20 items-center space-x-2 flex-shrink-0"
           >
             <span x-show="!savingConfig">💾 Lưu Cấu Hình Ngay</span>
+            <span x-show="savingConfig" class="inline-block animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
             <span x-show="savingConfig">Đang lưu...</span>
           </button>
         </div>
       </div>
-    </div>
 
-    <!-- TAB 3: SEND HISTORY (F11) -->
-    <div x-show="activeTab === 'history'" x-cloak>
-      <div class="flex justify-between items-center mb-6">
-        <div>
-          <h2 class="text-2xl font-bold text-slate-800">Lịch Sử Gửi Tin Nhắn (F11)</h2>
-          <p class="text-sm text-slate-500">Theo dõi 50 lần gửi gần nhất, kết quả gửi và tình trạng xóa tin nhắn cũ</p>
+      <!-- Section 1: Google Sheet Tabs for Squads -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
+        <div class="pb-3 border-b border-slate-100 flex items-center space-x-2">
+          <span class="text-lg">📑</span>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">Tên Tab Google Sheet Theo Tiểu Đội</h3>
+            <p class="text-xs text-slate-500">Cần khớp chính xác 100% với tên tab trên Google Sheet (phân biệt dấu cách, hoa/thường)</p>
+          </div>
         </div>
+
+        <div class="space-y-4">
+          <template x-for="sq in configData.squads" :key="sq.key">
+            <div class="bg-slate-50 rounded-xl p-3.5 sm:p-4 border border-slate-200/80 space-y-2.5">
+              <div class="flex justify-between items-center">
+                <label class="text-sm font-bold text-slate-800" x-text="sq.displayName"></label>
+                <span class="text-[11px] font-mono text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200" x-text="'key: ' + sq.key"></span>
+              </div>
+
+              <!-- Input text-base to prevent iOS zoom -->
+              <div>
+                <input
+                  type="text"
+                  x-model="sq.sheetTab"
+                  class="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-base sm:text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:outline-none shadow-sm"
+                  placeholder="Nhập tên tab Sheet..."
+                />
+              </div>
+
+              <div class="flex justify-between items-center text-xs text-slate-400 pt-0.5">
+                <span>Mặc định: <strong class="text-slate-600 font-mono" x-text="sq.defaultTab"></strong></span>
+                <button
+                  type="button"
+                  @click="resetSquadTab(sq)"
+                  class="text-indigo-600 hover:text-indigo-800 text-[11px] font-medium"
+                >
+                  Khôi phục mặc định
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Section 2: Schedules Timing & Toggles -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
+        <div class="pb-3 border-b border-slate-100 flex items-center space-x-2">
+          <span class="text-lg">⏰</span>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">Giờ Gửi Tự Động & Chế Độ Lịch</h3>
+            <p class="text-xs text-slate-500">Cài đặt giờ hẹn, chọn gửi lịch hôm nay/ngày mai và bật/tắt tự động</p>
+          </div>
+        </div>
+
+        <div class="space-y-4">
+          <template x-for="sc in configData.schedules" :key="sc.key">
+            <div class="bg-slate-50 rounded-xl p-4 border border-slate-200/80 space-y-4">
+              <!-- Schedule Title Header -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <h4 class="text-sm sm:text-base font-bold text-slate-900" x-text="sc.label"></h4>
+                  <span class="text-[11px] font-mono text-slate-500" x-text="'key: ' + sc.key"></span>
+                </div>
+                <span
+                  class="text-xs font-semibold px-2.5 py-0.5 rounded-full"
+                  :class="sc.enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'"
+                  x-text="sc.enabled ? 'Đang bật' : 'Đang tắt'"
+                ></span>
+              </div>
+
+              <!-- Time Config & Quick Preset Chips -->
+              <div class="bg-white rounded-xl p-3 border border-slate-200/70 space-y-2">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <label class="text-xs font-semibold text-slate-700 flex items-center space-x-1">
+                    <span>🕒</span>
+                    <span>Giờ tự động gửi (HH:MM):</span>
+                  </label>
+                  <input
+                    type="text"
+                    x-model="sc.autoSendTime"
+                    placeholder="21:00"
+                    class="w-full sm:w-32 px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm font-mono text-center font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+
+                <!-- Quick Presets for Mobile Typing Convenience -->
+                <div class="flex items-center gap-1.5 pt-1 overflow-x-auto">
+                  <span class="text-[11px] text-slate-400 flex-shrink-0">Gợi ý:</span>
+                  <button
+                    type="button"
+                    @click="setTimePreset(sc, '06:00')"
+                    class="touch-btn text-[11px] font-mono px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                  >06:00</button>
+                  <button
+                    type="button"
+                    @click="setTimePreset(sc, '11:30')"
+                    class="touch-btn text-[11px] font-mono px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                  >11:30</button>
+                  <button
+                    type="button"
+                    @click="setTimePreset(sc, '19:30')"
+                    class="touch-btn text-[11px] font-mono px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                  >19:30</button>
+                  <button
+                    type="button"
+                    @click="setTimePreset(sc, '21:00')"
+                    class="touch-btn text-[11px] font-mono px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                  >21:00</button>
+                </div>
+              </div>
+
+              <!-- Switches Rows -->
+              <div class="space-y-3 pt-1">
+                <!-- Toggle 1: Send Next Day -->
+                <div
+                  @click="sc.sendNextDay = !sc.sendNextDay"
+                  class="touch-btn bg-white rounded-xl p-3 border border-slate-200/70 flex items-center justify-between cursor-pointer"
+                >
+                  <div class="pr-3">
+                    <p class="text-xs sm:text-sm font-semibold text-slate-800">Gửi lịch ngày mai</p>
+                    <p class="text-[11px] text-slate-500">Bật: gửi lịch ngày kế tiếp (+1). Tắt: gửi lịch hôm nay.</p>
+                  </div>
+                  <div
+                    class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                    :class="sc.sendNextDay ? 'bg-blue-600' : 'bg-slate-300'"
+                  >
+                    <span
+                      class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                      :class="sc.sendNextDay ? 'translate-x-5' : 'translate-x-0'"
+                    ></span>
+                  </div>
+                </div>
+
+                <!-- Toggle 2: Enable/Disable Auto Send -->
+                <div
+                  @click="sc.enabled = !sc.enabled"
+                  class="touch-btn bg-white rounded-xl p-3 border border-slate-200/70 flex items-center justify-between cursor-pointer"
+                >
+                  <div class="pr-3">
+                    <p class="text-xs sm:text-sm font-semibold text-slate-800">Kích hoạt tự động gửi</p>
+                    <p class="text-[11px] text-slate-500">Tự động kích hoạt bot theo đúng giờ đã cài đặt mỗi ngày.</p>
+                  </div>
+                  <div
+                    class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                    :class="sc.enabled ? 'bg-emerald-600' : 'bg-slate-300'"
+                  >
+                    <span
+                      class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                      :class="sc.enabled ? 'translate-x-5' : 'translate-x-0'"
+                    ></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Desktop Bottom Save Button -->
+        <div class="pt-4 border-t border-slate-100 flex justify-end">
+          <button
+            @click="saveConfig()"
+            :disabled="savingConfig"
+            class="w-full sm:w-auto touch-btn px-6 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-sm font-semibold transition shadow-md shadow-emerald-600/20 flex items-center justify-center space-x-2"
+          >
+            <span x-show="!savingConfig">💾 Lưu Cấu Hình Ngay</span>
+            <span x-show="savingConfig" class="inline-block animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
+            <span x-show="savingConfig">Đang lưu thay đổi...</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Mobile Sticky Save Bar (Right Above Bottom Nav) -->
+      <div class="md:hidden fixed bottom-[4.75rem] inset-x-3 z-30 pointer-events-auto">
         <button
-          @click="fetchHistory()"
-          class="px-3 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg text-sm font-medium transition shadow-sm"
+          @click="saveConfig()"
+          :disabled="savingConfig"
+          class="w-full touch-btn py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-sm rounded-2xl shadow-xl border border-emerald-400/40 flex items-center justify-center space-x-2"
         >
-          🔄 Làm mới
+          <span x-show="!savingConfig">💾 Lưu Cấu Hình Ngay</span>
+          <span x-show="savingConfig" class="inline-block animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
+          <span x-show="savingConfig">Đang lưu dữ liệu...</span>
         </button>
       </div>
 
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+    </div>
+
+    <!-- ========================================== -->
+    <!-- TAB 3: SEND HISTORY (LỊCH SỬ GỬI F11) -->
+    <!-- ========================================== -->
+    <div x-show="activeTab === 'history'" x-cloak class="space-y-4 sm:space-y-6">
+      
+      <!-- Top Action & Filter Header -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="text-2xl">🕒</span>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800">Lịch Sử Gửi Tin Nhắn (F11)</h2>
+          </div>
+          <p class="text-xs sm:text-sm text-slate-500 mt-1">Theo dõi 50 lần gửi gần nhất, kết quả gửi và xóa tin cũ (F4)</p>
+        </div>
+
+        <!-- Filter Segmented Control -->
+        <div class="w-full sm:w-auto flex items-center justify-between sm:justify-end gap-2">
+          <div class="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+            <button
+              @click="historyFilter = 'all'"
+              :class="historyFilter === 'all' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600'"
+              class="px-2.5 py-1.5 rounded-lg transition"
+            >
+              Tất cả
+            </button>
+            <button
+              @click="historyFilter = 'success'"
+              :class="historyFilter === 'success' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600'"
+              class="px-2.5 py-1.5 rounded-lg transition"
+            >
+              Thành công
+            </button>
+            <button
+              @click="historyFilter = 'failure'"
+              :class="historyFilter === 'failure' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600'"
+              class="px-2.5 py-1.5 rounded-lg transition"
+            >
+              Lỗi
+            </button>
+          </div>
+
+          <button
+            @click="fetchHistory()"
+            class="touch-btn px-3 py-2 bg-white border border-slate-300 hover:bg-slate-100 active:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition shadow-sm flex items-center space-x-1"
+          >
+            <span>🔄</span>
+            <span class="hidden sm:inline">Làm mới</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- MOBILE VIEW: Card List (< md screens) -->
+      <div class="md:hidden space-y-3">
+        <template x-for="item in filteredHistory" :key="item.id">
+          <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200/90 space-y-2.5">
+            <!-- Top Row: Result Badge & Time -->
+            <div class="flex items-center justify-between">
+              <span
+                class="px-2.5 py-0.5 text-xs font-bold rounded-full inline-flex items-center space-x-1"
+                :class="item.result === 'success' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'"
+              >
+                <span x-text="item.result === 'success' ? '✅ Thành công' : '❌ Thất bại'"></span>
+              </span>
+              <span class="font-mono text-[11px] text-slate-400" x-text="formatTime(item.timestamp)"></span>
+            </div>
+
+            <!-- Middle Row: Schedule Key & Chat ID -->
+            <div>
+              <p class="text-sm font-bold text-slate-900" x-text="item.schedule_key"></p>
+              <p class="text-xs font-mono text-slate-500 mt-0.5 truncate" x-text="'Chat ID: ' + item.chat_id"></p>
+            </div>
+
+            <!-- Bottom Row: Delete Old Message Status (F4) -->
+            <div class="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+              <span class="text-slate-400">Thu hồi tin cũ (F4):</span>
+              <span
+                class="font-medium px-2 py-0.5 rounded text-[11px]"
+                :class="item.old_message_deleted ? 'bg-slate-100 text-emerald-700 font-semibold' : 'text-slate-400'"
+                x-text="item.old_message_deleted ? '🗑️ Đã xóa' : '➖ Không'"
+              ></span>
+            </div>
+
+            <!-- Error Box if Failed -->
+            <div x-show="item.error" class="bg-rose-50 border border-rose-200 rounded-xl p-2.5 text-xs text-rose-700 font-mono break-words">
+              <strong>Lỗi:</strong> <span x-text="item.error"></span>
+            </div>
+          </div>
+        </template>
+
+        <!-- Empty State Mobile -->
+        <div x-show="filteredHistory.length === 0" class="bg-white rounded-2xl p-8 text-center text-slate-400 border border-slate-200">
+          Chưa có bản ghi lịch sử nào.
+        </div>
+      </div>
+
+      <!-- DESKTOP VIEW: Data Table (>= md screens) -->
+      <div class="hidden md:block bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div class="overflow-x-auto">
           <table class="min-w-full divide-y divide-slate-200 text-sm">
             <thead class="bg-slate-50">
               <tr>
-                <th class="px-4 py-3 text-left font-semibold text-slate-600">Thời gian</th>
-                <th class="px-4 py-3 text-left font-semibold text-slate-600">Schedule Key</th>
-                <th class="px-4 py-3 text-left font-semibold text-slate-600">Chat ID</th>
-                <th class="px-4 py-3 text-center font-semibold text-slate-600">Kết quả</th>
-                <th class="px-4 py-3 text-center font-semibold text-slate-600">Xóa tin cũ (F4)</th>
-                <th class="px-4 py-3 text-left font-semibold text-slate-600">Chi tiết / Lỗi</th>
+                <th class="px-4 py-3.5 text-left font-semibold text-slate-600">Thời gian</th>
+                <th class="px-4 py-3.5 text-left font-semibold text-slate-600">Schedule Key</th>
+                <th class="px-4 py-3.5 text-left font-semibold text-slate-600">Chat ID</th>
+                <th class="px-4 py-3.5 text-center font-semibold text-slate-600">Kết quả</th>
+                <th class="px-4 py-3.5 text-center font-semibold text-slate-600">Xóa tin cũ (F4)</th>
+                <th class="px-4 py-3.5 text-left font-semibold text-slate-600">Chi tiết / Lỗi</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
-              <template x-for="item in historyList" :key="item.id">
-                <tr class="hover:bg-slate-50 transition">
+              <template x-for="item in filteredHistory" :key="item.id">
+                <tr class="hover:bg-slate-50/80 transition">
                   <td class="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap" x-text="formatTime(item.timestamp)"></td>
-                  <td class="px-4 py-3 font-medium text-slate-800 whitespace-nowrap" x-text="item.schedule_key"></td>
+                  <td class="px-4 py-3 font-semibold text-slate-800 whitespace-nowrap" x-text="item.schedule_key"></td>
                   <td class="px-4 py-3 font-mono text-xs text-slate-600 whitespace-nowrap" x-text="item.chat_id"></td>
                   <td class="px-4 py-3 text-center whitespace-nowrap">
                     <span
-                      class="px-2 py-0.5 text-xs font-semibold rounded-full"
+                      class="px-2.5 py-0.5 text-xs font-semibold rounded-full"
                       :class="item.result === 'success' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'"
                       x-text="item.result === 'success' ? 'Thành công' : 'Thất bại'"
                     ></span>
@@ -332,75 +657,182 @@
                   <td class="px-4 py-3 text-xs text-slate-500 max-w-xs truncate" :title="item.error" x-text="item.error || '—'"></td>
                 </tr>
               </template>
-              <tr x-show="historyList.length === 0">
+              <tr x-show="filteredHistory.length === 0">
                 <td colspan="6" class="px-4 py-8 text-center text-slate-400">Chưa có lịch sử gửi tin nào.</td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
+
     </div>
+
   </main>
 
-  <!-- MODAL: PREVIEW (F10) -->
+  <!-- ========================================== -->
+  <!-- MOBILE BOTTOM NAVIGATION BAR (md:hidden) -->
+  <!-- ========================================== -->
+  <nav class="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-[0_-4px_12px_rgba(0,0,0,0.05)] pb-safe">
+    <div class="grid grid-cols-3 h-16">
+      
+      <!-- Tab 1: Dashboard -->
+      <button
+        @click="selectTab('dashboard')"
+        class="touch-btn flex flex-col items-center justify-center space-y-1 transition duration-150 relative"
+        :class="activeTab === 'dashboard' ? 'text-indigo-600 font-bold' : 'text-slate-500 hover:text-slate-700'"
+      >
+        <span class="text-xl">📋</span>
+        <span class="text-[11px] leading-none">Lịch Trực</span>
+        <span x-show="activeTab === 'dashboard'" class="absolute top-1 w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+      </button>
+
+      <!-- Tab 2: Config -->
+      <button
+        @click="selectTab('config')"
+        class="touch-btn flex flex-col items-center justify-center space-y-1 transition duration-150 relative"
+        :class="activeTab === 'config' ? 'text-indigo-600 font-bold' : 'text-slate-500 hover:text-slate-700'"
+      >
+        <span class="text-xl">⚙️</span>
+        <span class="text-[11px] leading-none">Cấu Hình</span>
+        <span x-show="activeTab === 'config'" class="absolute top-1 w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+      </button>
+
+      <!-- Tab 3: History -->
+      <button
+        @click="selectTab('history')"
+        class="touch-btn flex flex-col items-center justify-center space-y-1 transition duration-150 relative"
+        :class="activeTab === 'history' ? 'text-indigo-600 font-bold' : 'text-slate-500 hover:text-slate-700'"
+      >
+        <span class="text-xl">🕒</span>
+        <span class="text-[11px] leading-none">Lịch Sử</span>
+        <span x-show="activeTab === 'history'" class="absolute top-1 w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+      </button>
+
+    </div>
+  </nav>
+
+  <!-- ========================================== -->
+  <!-- MODAL: PREVIEW (F10) - Responsive Sheet -->
+  <!-- ========================================== -->
   <div
     x-cloak
     x-show="previewModal.open"
-    class="fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-50 flex items-center justify-center p-4"
+    class="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
     @keydown.escape.window="previewModal.open = false"
   >
     <div
-      class="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200"
+      class="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col overflow-hidden border border-slate-200 transform transition-all"
       @click.away="previewModal.open = false"
     >
-      <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2">
-        <div>
-          <h3 class="font-bold text-slate-800">Xem Trước Tin Nhắn (F10)</h3>
-          <p class="text-xs text-slate-500 font-mono" x-text="'Tab: ' + previewModal.tab + ' | Ngày gửi: ' + previewModal.date"></p>
+      <!-- Mobile Drag Grabber Bar -->
+      <div class="sm:hidden pt-3 pb-1 flex justify-center bg-slate-50">
+        <div class="w-12 h-1.5 rounded-full bg-slate-300"></div>
+      </div>
+
+      <!-- Modal Header -->
+      <div class="px-4 sm:px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center gap-2">
+        <div class="truncate">
+          <h3 class="font-bold text-slate-900 text-base sm:text-lg">Xem Trước Tin Nhắn (F10)</h3>
+          <p class="text-[11px] sm:text-xs text-slate-500 font-mono truncate" x-text="'Tab: ' + previewModal.tab + ' • ' + previewModal.date"></p>
         </div>
-        <div class="flex items-center space-x-2">
-          <span class="text-xs text-slate-400 font-medium">Xem lịch:</span>
+
+        <button
+          @click="previewModal.open = false"
+          class="touch-btn text-slate-400 hover:text-slate-600 p-1.5 rounded-lg text-xl leading-none font-bold"
+          aria-label="Đóng"
+        >
+          &times;
+        </button>
+      </div>
+
+      <!-- Segmented Date Control in Preview Modal -->
+      <div class="px-4 sm:px-6 py-2.5 bg-slate-100/80 border-b border-slate-200 flex items-center justify-between">
+        <span class="text-xs font-semibold text-slate-600">Xem lịch ngày:</span>
+        <div class="inline-flex bg-white p-1 rounded-xl border border-slate-200 text-xs font-semibold shadow-sm">
           <button
             @click="switchPreviewDate('today')"
-            :class="previewModal.targetMode === 'today' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'"
-            class="px-2.5 py-1 rounded text-xs font-semibold transition"
+            :class="previewModal.targetMode === 'today' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'"
+            class="touch-btn px-3 py-1 rounded-lg transition"
           >
             Hôm nay
           </button>
           <button
             @click="switchPreviewDate('tomorrow')"
-            :class="previewModal.targetMode === 'tomorrow' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'"
-            class="px-2.5 py-1 rounded text-xs font-semibold transition"
+            :class="previewModal.targetMode === 'tomorrow' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'"
+            class="touch-btn px-3 py-1 rounded-lg transition"
           >
             Ngày mai
           </button>
-          <button @click="previewModal.open = false" class="text-slate-400 hover:text-slate-600 font-bold text-xl ml-2">&times;</button>
         </div>
       </div>
 
-      <div class="p-6">
-        <div class="bg-slate-900 text-slate-100 p-4 rounded-xl font-mono text-sm whitespace-pre-wrap max-h-96 overflow-y-auto shadow-inner" x-text="previewModal.text"></div>
+      <!-- Modal Body (Preview Message Container) -->
+      <div class="p-4 sm:p-6 overflow-y-auto flex-1">
+        <div class="bg-slate-900 text-slate-100 p-4 rounded-2xl font-mono text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words max-h-[50vh] overflow-y-auto custom-scrollbar shadow-inner border border-slate-800 select-text" x-text="previewModal.text"></div>
       </div>
 
-      <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+      <!-- Modal Touch-Optimized Actions Footer -->
+      <div class="px-4 sm:px-6 py-3.5 bg-slate-50 border-t border-slate-200 grid grid-cols-2 gap-3 pb-safe">
         <button
           @click="copyPreviewText()"
-          class="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-sm font-medium transition shadow-sm"
+          class="touch-btn min-h-[44px] px-3 py-2.5 bg-white border border-slate-300 hover:bg-slate-100 active:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-semibold transition shadow-sm flex items-center justify-center space-x-1"
         >
-          <span x-text="previewModal.copied ? '✅ Đã sao chép!' : '📋 Sao chép nội dung'"></span>
+          <span x-text="previewModal.copied ? '✅ Đã chép!' : '📋 Sao chép'"></span>
         </button>
 
         <button
           @click="sendFromPreview()"
           :disabled="actionLoading === previewModal.key"
-          class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition shadow"
+          class="touch-btn min-h-[44px] px-3 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs sm:text-sm font-semibold transition shadow-sm shadow-indigo-600/20 flex items-center justify-center space-x-1"
         >
-          📤 Gửi ngày này ngay
+          <span x-show="actionLoading !== previewModal.key">📤 Gửi ngày này ngay</span>
+          <span x-show="actionLoading === previewModal.key" class="inline-block animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
         </button>
       </div>
     </div>
   </div>
 
+  <!-- ========================================== -->
+  <!-- MODAL: CONFIRM SEND ALL (Safe Confirm) -->
+  <!-- ========================================== -->
+  <div
+    x-cloak
+    x-show="confirmSendAllModal"
+    class="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+    @keydown.escape.window="confirmSendAllModal = false"
+  >
+    <div
+      class="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl max-w-md w-full p-5 sm:p-6 border border-slate-200 text-center space-y-4"
+      @click.away="confirmSendAllModal = false"
+    >
+      <div class="w-12 h-12 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-2xl mx-auto">
+        🚀
+      </div>
+      <div>
+        <h3 class="text-lg font-bold text-slate-900">Xác Nhận Gửi Tất Cả</h3>
+        <p class="text-xs sm:text-sm text-slate-500 mt-1">
+          Hệ thống sẽ tuần tự gửi tất cả các lịch trực đến các nhóm Zalo tương ứng. Bạn có chắc chắn muốn gửi ngay?
+        </p>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 pt-2 pb-safe sm:pb-0">
+        <button
+          @click="confirmSendAllModal = false"
+          class="touch-btn min-h-[44px] py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm rounded-xl transition"
+        >
+          Hủy bỏ
+        </button>
+        <button
+          @click="confirmAndSendAll()"
+          class="touch-btn min-h-[44px] py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold text-sm rounded-xl transition shadow-md shadow-indigo-600/20"
+        >
+          Đồng ý gửi
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP STATE SCRIPT -->
   <script>
     function app() {
       return {
@@ -411,6 +843,8 @@
         schedules: [],
         configData: { squads: [], schedules: [] },
         historyList: [],
+        historyFilter: 'all',
+        confirmSendAllModal: false,
         toast: { show: false, message: '', type: 'success' },
         previewModal: { open: false, key: '', text: '', date: '', tab: '', targetMode: '', copied: false },
 
@@ -423,6 +857,36 @@
           setTimeout(() => { this.toast.show = false; }, 4000);
         },
 
+        get activeSchedulesCount() {
+          return this.schedules.filter(s => s.effectiveEnabled).length;
+        },
+
+        get filteredHistory() {
+          if (this.historyFilter === 'all') return this.historyList;
+          return this.historyList.filter(item => item.result === this.historyFilter);
+        },
+
+        selectTab(tab) {
+          this.activeTab = tab;
+          if (tab === 'dashboard') {
+            this.fetchSchedules();
+          } else if (tab === 'config') {
+            this.fetchConfig();
+          } else if (tab === 'history') {
+            this.fetchHistory();
+          }
+        },
+
+        refreshCurrentTab() {
+          if (this.activeTab === 'dashboard') {
+            this.fetchSchedules();
+          } else if (this.activeTab === 'config') {
+            this.fetchConfig();
+          } else if (this.activeTab === 'history') {
+            this.fetchHistory();
+          }
+        },
+
         async fetchSchedules() {
           this.loading = true;
           try {
@@ -431,7 +895,7 @@
             if (data.success) {
               this.schedules = data.schedules;
             } else {
-              this.showToast(data.error || 'Lỗi tải lịch', 'error');
+              this.showToast(data.error || 'Lỗi tải danh sách lịch', 'error');
             }
           } catch (e) {
             this.showToast(e.message, 'error');
@@ -447,7 +911,7 @@
             const mode = targetDateMode || (sc?.effectiveSendNextDay ? 'tomorrow' : 'today');
             const body = mode ? { targetDate: mode } : {};
 
-            const res = await fetch(`/api/schedules/${key}/preview`, {
+            const res = await fetch('/api/schedules/' + key + '/preview', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body)
@@ -464,7 +928,7 @@
                 copied: false
               };
             } else {
-              this.showToast(data.error || 'Lỗi xem trước', 'error');
+              this.showToast(data.error || 'Lỗi xem trước lịch', 'error');
             }
           } catch (e) {
             this.showToast(e.message, 'error');
@@ -478,8 +942,18 @@
         },
 
         copyPreviewText() {
-          navigator.clipboard.writeText(this.previewModal.text);
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(this.previewModal.text);
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = this.previewModal.text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
           this.previewModal.copied = true;
+          this.showToast('Đã sao chép nội dung tin nhắn!');
           setTimeout(() => { this.previewModal.copied = false; }, 2000);
         },
 
@@ -494,17 +968,17 @@
           this.actionLoading = key;
           try {
             const body = targetDate ? { targetDate } : {};
-            const res = await fetch(`/api/schedules/${key}/send`, {
+            const res = await fetch('/api/schedules/' + key + '/send', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body)
             });
             const data = await res.json();
             if (data.success) {
-              this.showToast(`Đã gửi thành công lịch ${key} cho ngày ${data.result?.lookupDate || ''}!`);
+              this.showToast('Đã gửi thành công lịch ' + key + ' cho ngày ' + (data.result?.lookupDate || '') + '!');
               await this.fetchSchedules();
             } else {
-              this.showToast(data.error || 'Gửi thất bại', 'error');
+              this.showToast(data.error || 'Gửi lịch thất bại', 'error');
             }
           } catch (e) {
             this.showToast(e.message, 'error');
@@ -513,13 +987,12 @@
           }
         },
 
-        async sendAllSchedules() {
-          if (!confirm('Bạn có chắc chắn muốn gửi tất cả các lịch trực bây giờ?')) return;
+        async confirmAndSendAll() {
+          this.confirmSendAllModal = false;
           this.loading = true;
           try {
-            // Tuần tự từng schedule theo rule #13
             for (const s of this.schedules) {
-              await fetch(`/api/schedules/${s.key}/send`, { method: 'POST' });
+              await fetch('/api/schedules/' + s.key + '/send', { method: 'POST' });
             }
             this.showToast('Đã kích hoạt gửi tất cả lịch thành công!');
             await this.fetchSchedules();
@@ -554,6 +1027,14 @@
           }
         },
 
+        setTimePreset(sc, time) {
+          sc.autoSendTime = time;
+        },
+
+        resetSquadTab(sq) {
+          sq.sheetTab = sq.defaultTab;
+        },
+
         async saveConfig() {
           this.savingConfig = true;
           try {
@@ -578,7 +1059,7 @@
             });
             const data = await res.json();
             if (data.success) {
-              this.showToast('Lưu cấu hình thành công!');
+              this.showToast('Đã lưu cấu hình thành công!');
               await this.fetchConfig();
               await this.fetchSchedules();
             } else {
@@ -604,9 +1085,9 @@
         },
 
         formatTime(iso) {
-          if (!iso) return '';
+          if (!iso) return '—';
           const d = new Date(iso);
-          return d.toLocaleTimeString('vi-VN') + ' ' + d.toLocaleDateString('vi-VN');
+          return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + d.toLocaleDateString('vi-VN');
         }
       };
     }
