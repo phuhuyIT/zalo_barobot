@@ -11,7 +11,7 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
-import { SendHistoryEntry, RuntimeConfigOverride } from '../types';
+import { SendHistoryEntry, RuntimeConfigOverride, Recipient } from '../types';
 import { formatDateDMY } from '../sheets/dateUtils';
 
 let db: Database.Database | null = null;
@@ -53,7 +53,7 @@ export function closeDatabase(): void {
 /**
  * Khởi tạo cấu trúc các bảng.
  */
-function initTables(database: Database.Database): void {
+export function initTables(database: Database.Database): void {
   // 1. Bảng lưu tin nhắn gần nhất theo (schedule_key, chat_id)
   database.exec(`
     CREATE TABLE IF NOT EXISTS last_message (
@@ -66,14 +66,15 @@ function initTables(database: Database.Database): void {
     );
   `);
 
-  // 2. Bảng ghi đè cấu hình runtime (F9)
+  // 2. Bảng ghi đè cấu hình runtime (F9 & F12)
   database.exec(`
     CREATE TABLE IF NOT EXISTS runtime_config (
       config_key TEXT PRIMARY KEY,
       sheet_tab_gate_duty TEXT,
       auto_send_time TEXT,
       enabled INTEGER,
-      send_next_day INTEGER
+      send_next_day INTEGER,
+      recipients TEXT
     );
   `);
 
@@ -83,7 +84,24 @@ function initTables(database: Database.Database): void {
     // Cột đã tồn tại
   }
 
-  // 3. Bảng lịch sử gửi (F11 - append-only log)
+  try {
+    database.exec(`ALTER TABLE runtime_config ADD COLUMN recipients TEXT;`);
+  } catch (_) {
+    // Cột đã tồn tại
+  }
+
+  // 3. Bảng người nhận lịch runtime (F12)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS recipients (
+      key TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  // 4. Bảng lịch sử gửi (F11 - append-only log)
   database.exec(`
     CREATE TABLE IF NOT EXISTS send_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -228,7 +246,7 @@ export function getRuntimeConfigOverride(
   try {
     const row = d
       .prepare(
-        `SELECT sheet_tab_gate_duty, auto_send_time, enabled, send_next_day
+        `SELECT sheet_tab_gate_duty, auto_send_time, enabled, send_next_day, recipients
          FROM runtime_config
          WHERE config_key = ?`
       )
@@ -236,11 +254,19 @@ export function getRuntimeConfigOverride(
 
     if (!row) return null;
 
+    let recipientsParsed: string[] | undefined = undefined;
+    if (row.recipients) {
+      try {
+        recipientsParsed = JSON.parse(row.recipients);
+      } catch (_) {}
+    }
+
     return {
       sheet_tab_gate_duty: row.sheet_tab_gate_duty ?? undefined,
       auto_send_time: row.auto_send_time ?? undefined,
       enabled: row.enabled !== null && row.enabled !== undefined ? Boolean(row.enabled) : undefined,
       send_next_day: row.send_next_day !== null && row.send_next_day !== undefined ? Boolean(row.send_next_day) : undefined,
+      recipients: recipientsParsed,
     };
   } catch (_) {
     return null;
@@ -259,11 +285,19 @@ export function getAllRuntimeConfigOverrides(
 
     const result: Record<string, RuntimeConfigOverride> = {};
     for (const r of rows) {
+      let recipientsParsed: string[] | undefined = undefined;
+      if (r.recipients) {
+        try {
+          recipientsParsed = JSON.parse(r.recipients);
+        } catch (_) {}
+      }
+
       result[r.config_key] = {
         sheet_tab_gate_duty: r.sheet_tab_gate_duty ?? undefined,
         auto_send_time: r.auto_send_time ?? undefined,
         enabled: r.enabled !== null && r.enabled !== undefined ? Boolean(r.enabled) : undefined,
         send_next_day: r.send_next_day !== null && r.send_next_day !== undefined ? Boolean(r.send_next_day) : undefined,
+        recipients: recipientsParsed,
       };
     }
     return result;
@@ -273,7 +307,7 @@ export function getAllRuntimeConfigOverrides(
 }
 
 /**
- * Lưu cấu hình runtime override (F9).
+ * Lưu cấu hình runtime override (F9 & F12).
  */
 export function saveRuntimeConfigOverride(
   configKey: string,
@@ -311,14 +345,141 @@ export function saveRuntimeConfigOverride(
         ? 1
         : 0
       : null;
+  const recipientsVal =
+    override.recipients !== undefined
+      ? JSON.stringify(override.recipients)
+      : existing.recipients !== undefined
+      ? JSON.stringify(existing.recipients)
+      : null;
 
   d.prepare(
-    `INSERT INTO runtime_config (config_key, sheet_tab_gate_duty, auto_send_time, enabled, send_next_day)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO runtime_config (config_key, sheet_tab_gate_duty, auto_send_time, enabled, send_next_day, recipients)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(config_key) DO UPDATE SET
        sheet_tab_gate_duty = excluded.sheet_tab_gate_duty,
        auto_send_time = excluded.auto_send_time,
        enabled = excluded.enabled,
-       send_next_day = excluded.send_next_day`
-  ).run(configKey, sheetTab, sendTime, enabledVal, sendNextDayVal);
+       send_next_day = excluded.send_next_day,
+       recipients = excluded.recipients`
+  ).run(configKey, sheetTab, sendTime, enabledVal, sendNextDayVal, recipientsVal);
+}
+
+/**
+ * Lấy tất cả danh sách người nhận (F12).
+ */
+export function getAllRecipients(database?: Database.Database): Recipient[] {
+  const d = database || getDatabase();
+  try {
+    const rows = d.prepare(`SELECT key, display_name, chat_id, created_at, updated_at FROM recipients ORDER BY display_name ASC`).all() as any[];
+    return rows.map((r) => ({
+      key: r.key,
+      display_name: r.display_name,
+      chat_id: r.chat_id,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    }));
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Lấy thông tin 1 người nhận theo key (F12).
+ */
+export function getRecipient(key: string, database?: Database.Database): Recipient | null {
+  const d = database || getDatabase();
+  try {
+    const row = d.prepare(`SELECT key, display_name, chat_id, created_at, updated_at FROM recipients WHERE key = ?`).get(key) as any;
+    if (!row) return null;
+    return {
+      key: row.key,
+      display_name: row.display_name,
+      chat_id: row.chat_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Thêm hoặc cập nhật người nhận (F12).
+ */
+export function saveRecipient(
+  recipient: { key: string; display_name: string; chat_id: string },
+  database?: Database.Database
+): void {
+  const d = database || getDatabase();
+  const now = new Date().toISOString();
+  const existing = getRecipient(recipient.key, d);
+
+  const createdAt = existing?.created_at || now;
+  const updatedAt = now;
+
+  d.prepare(
+    `INSERT INTO recipients (key, display_name, chat_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET
+       display_name = excluded.display_name,
+       chat_id = excluded.chat_id,
+       updated_at = excluded.updated_at`
+  ).run(recipient.key.trim(), recipient.display_name.trim(), recipient.chat_id.trim(), createdAt, updatedAt);
+}
+
+/**
+ * Xóa người nhận và tự động gỡ khỏi các schedule đang gán (F12).
+ * Tránh để lại recipient_key rác gây lỗi khi gửi.
+ */
+export function deleteRecipient(
+  key: string,
+  database?: Database.Database
+): { deletedKey: string; affectedSchedules: string[] } {
+  const d = database || getDatabase();
+  const affectedSchedules: string[] = [];
+
+  // Tìm các schedule trong runtime_config đang gán recipient này
+  const rows = d.prepare(`SELECT config_key, recipients FROM runtime_config WHERE recipients IS NOT NULL`).all() as any[];
+  for (const r of rows) {
+    try {
+      const recList = JSON.parse(r.recipients) as string[];
+      if (Array.isArray(recList) && recList.includes(key)) {
+        const updatedList = recList.filter((k) => k !== key);
+        d.prepare(`UPDATE runtime_config SET recipients = ? WHERE config_key = ?`).run(
+          JSON.stringify(updatedList),
+          r.config_key
+        );
+        affectedSchedules.push(r.config_key);
+      }
+    } catch (_) {
+      // Bỏ qua lỗi parse
+    }
+  }
+
+  // Xóa khỏi bảng recipients
+  d.prepare(`DELETE FROM recipients WHERE key = ?`).run(key);
+
+  return { deletedKey: key, affectedSchedules };
+}
+
+/**
+ * Seed danh sách người nhận ban đầu nếu bảng recipients chưa có dữ liệu (F12).
+ */
+export function seedDefaultRecipients(
+  defaults: { key: string; display_name: string; chat_id: string }[],
+  database?: Database.Database
+): void {
+  const d = database || getDatabase();
+  try {
+    const countRow = d.prepare(`SELECT COUNT(*) as count FROM recipients`).get() as any;
+    if (countRow?.count === 0) {
+      for (const item of defaults) {
+        if (item.key && item.chat_id) {
+          saveRecipient(item, d);
+        }
+      }
+    }
+  } catch (_) {
+    // Không làm gián đoạn nếu bảng chưa sẵn sàng
+  }
 }

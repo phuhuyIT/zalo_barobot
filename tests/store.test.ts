@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
+  initTables,
   saveLastMessage,
   getLastMessageId,
   hasSentToday,
@@ -9,6 +10,11 @@ import {
   saveRuntimeConfigOverride,
   getRuntimeConfigOverride,
   getAllRuntimeConfigOverrides,
+  getAllRecipients,
+  getRecipient,
+  saveRecipient,
+  deleteRecipient,
+  seedDefaultRecipients,
 } from '../src/store';
 
 describe('SQLite Store Layer', () => {
@@ -16,33 +22,7 @@ describe('SQLite Store Layer', () => {
 
   beforeEach(() => {
     db = new Database(':memory:');
-    // Init tables
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS last_message (
-        schedule_key TEXT NOT NULL,
-        chat_id TEXT NOT NULL,
-        message_id TEXT NOT NULL,
-        sent_date TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (schedule_key, chat_id)
-      );
-      CREATE TABLE IF NOT EXISTS runtime_config (
-        config_key TEXT PRIMARY KEY,
-        sheet_tab_gate_duty TEXT,
-        auto_send_time TEXT,
-        enabled INTEGER,
-        send_next_day INTEGER
-      );
-      CREATE TABLE IF NOT EXISTS send_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL,
-        schedule_key TEXT NOT NULL,
-        chat_id TEXT NOT NULL,
-        result TEXT NOT NULL,
-        error TEXT,
-        old_message_deleted INTEGER NOT NULL DEFAULT 0
-      );
-    `);
+    initTables(db);
   });
 
   afterEach(() => {
@@ -130,5 +110,72 @@ describe('SQLite Store Layer', () => {
     expect(all['main'].sheet_tab_gate_duty).toBe('Tab Mới Tháng 10');
     expect(all['main_duty'].auto_send_time).toBe('06:00');
     expect(all['main_duty'].enabled).toBe(false);
+  });
+
+  it('manages recipients CRUD and schedule assignment override (F12)', () => {
+    // 1. Ban đầu danh sách rỗng
+    expect(getAllRecipients(db)).toHaveLength(0);
+    expect(getRecipient('group_test', db)).toBeNull();
+
+    // 2. Thêm mới recipient
+    saveRecipient(
+      {
+        key: 'group_test',
+        display_name: 'Nhóm Test',
+        chat_id: 'chat_9999',
+      },
+      db
+    );
+
+    const r1 = getRecipient('group_test', db);
+    expect(r1).not.toBeNull();
+    expect(r1?.display_name).toBe('Nhóm Test');
+    expect(r1?.chat_id).toBe('chat_9999');
+
+    // 3. Cập nhật recipient
+    saveRecipient(
+      {
+        key: 'group_test',
+        display_name: 'Nhóm Test Đổi Tên',
+        chat_id: 'chat_8888',
+      },
+      db
+    );
+    const r2 = getRecipient('group_test', db);
+    expect(r2?.display_name).toBe('Nhóm Test Đổi Tên');
+    expect(r2?.chat_id).toBe('chat_8888');
+
+    // 4. Gán recipient vào schedule qua runtime_config override
+    saveRuntimeConfigOverride(
+      'main_duty',
+      {
+        recipients: ['group_test', 'admin'],
+      },
+      db
+    );
+
+    const override = getRuntimeConfigOverride('main_duty', db);
+    expect(override?.recipients).toEqual(['group_test', 'admin']);
+
+    // 5. Xóa recipient -> tự động gỡ khỏi schedule gán
+    const delRes = deleteRecipient('group_test', db);
+    expect(delRes.deletedKey).toBe('group_test');
+    expect(delRes.affectedSchedules).toContain('main_duty');
+    expect(getRecipient('group_test', db)).toBeNull();
+
+    // Kiểm tra schedule đã tự gỡ group_test
+    const updatedOverride = getRuntimeConfigOverride('main_duty', db);
+    expect(updatedOverride?.recipients).toEqual(['admin']);
+    expect(updatedOverride?.recipients).not.toContain('group_test');
+
+    // 6. Test seedDefaultRecipients
+    seedDefaultRecipients(
+      [
+        { key: 'admin', display_name: 'Admin', chat_id: '123' },
+        { key: 'main', display_name: 'Tiểu đội', chat_id: '456' },
+      ],
+      db
+    );
+    expect(getAllRecipients(db)).toHaveLength(2);
   });
 });

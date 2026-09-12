@@ -70,9 +70,33 @@ export interface SendHistoryEntry {
   old_message_deleted: boolean;
 }
 
+export interface Recipient {
+  key: string;
+  display_name: string;
+  chat_id: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MemberLeaveStat {
+  name: string;
+  leaveCount: number; // Số lần đã được về
+  missedCount: number; // Số lần mất lượt
+  lastLeaveDate: string | null; // Ngày gần nhất được về (dd/mm/yyyy), null nếu chưa từng về
+  turnsSinceLastLeave: number | null; // Số lượt kể từ lần gần nhất được về, null nếu chưa từng về
+}
+
+export interface LeaveStatsData {
+  unit?: string;
+  totalTurns: number;
+  latestTurnDate?: string;
+  stats: MemberLeaveStat[];
+}
+
 export interface RuntimeConfigOverride {
   sheet_tab_gate_duty?: string;
   auto_send_time?: string | null;
   enabled?: boolean;
   send_next_day?: boolean;
+  recipients?: string[];
 }

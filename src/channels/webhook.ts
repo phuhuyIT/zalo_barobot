@@ -10,7 +10,7 @@
 
 import { Router, Request, Response } from 'express';
 import { getConfig, getRecipientChatId } from '../config';
-import { sendSchedule } from '../core';
+import { sendSchedule, getEffectiveScheduleConfig } from '../core';
 
 export const webhookRouter = Router();
 
@@ -56,7 +56,8 @@ webhookRouter.post('/webhook/zalo', async (req: Request, res: Response) => {
       const matchedSchedules: { scheduleKey: string; recipientKey: string }[] = [];
 
       for (const s of config.schedules) {
-        for (const rKey of s.recipients) {
+        const { effectiveRecipients } = getEffectiveScheduleConfig(s.key);
+        for (const rKey of effectiveRecipients) {
           const mappedChatId = getRecipientChatId(rKey, config);
           if (mappedChatId === chatId) {
             matchedSchedules.push({ scheduleKey: s.key, recipientKey: rKey });

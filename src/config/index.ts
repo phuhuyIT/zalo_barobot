@@ -3,6 +3,7 @@ import path from 'path';
 import * as jsYaml from 'js-yaml';
 import dotenv from 'dotenv';
 import { AppConfig, SquadConfig, ScheduleConfig } from '../types';
+import { getRecipient, seedDefaultRecipients } from '../store';
 
 dotenv.config();
 
@@ -51,6 +52,24 @@ export function loadConfig(configPath?: string): AppConfig {
     reminders: rawConfig.reminders || [],
   };
 
+  // Seed default recipients vào store nếu chưa có (F12)
+  try {
+    const defaultLabels: Record<string, string> = {
+      admin: 'Admin',
+      squad_main: 'Tiểu đội 2',
+      squad_culi: 'Tiểu đội culi',
+      platoon_leader: 'Trung đội trưởng',
+    };
+    const seedList = Object.entries(resolvedRecipients).map(([key, chatId]) => ({
+      key,
+      display_name: defaultLabels[key] || key,
+      chat_id: chatId,
+    }));
+    seedDefaultRecipients(seedList);
+  } catch (_) {
+    // Bỏ qua nếu store chưa sẵn sàng
+  }
+
   cachedConfig = config;
   return config;
 }
@@ -67,6 +86,14 @@ export function reloadConfig(configPath?: string): AppConfig {
 }
 
 export function getRecipientChatId(recipientKey: string, config?: AppConfig): string {
+  try {
+    const fromStore = getRecipient(recipientKey);
+    if (fromStore && fromStore.chat_id) {
+      return fromStore.chat_id;
+    }
+  } catch (_) {
+    // Bỏ qua lỗi store khi chạy test độc lập
+  }
   const currentConfig = config || getConfig();
   return currentConfig.recipients[recipientKey] || recipientKey;
 }
