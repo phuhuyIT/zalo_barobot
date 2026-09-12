@@ -3,9 +3,10 @@ import {
   formatGateDutyMessage,
   formatPatrolOnlyMessage,
   formatLeaveRosterMessage,
+  formatLeaveStatsMessage,
   formatMessage,
 } from '../src/formatters';
-import { DailyDuty, LeaveEntry } from '../src/types';
+import { DailyDuty, LeaveEntry, LeaveStatsData } from '../src/types';
 
 describe('Message Formatters', () => {
   const sampleDayDuty: DailyDuty = {
@@ -104,5 +105,51 @@ describe('Message Formatters', () => {
     expect(formatGateDutyMessage(null, '01/09/2026')).toBe(
       'Không có dữ liệu lịch trực cổng cho ngày 01/09/2026'
     );
+  });
+
+  it('formats leave stats schedule (F13)', () => {
+    const sampleStats: LeaveStatsData = {
+      unit: 'Đơn vị: Tiểu đội 2 - Trung đội 1',
+      totalTurns: 3,
+      latestTurnDate: '11/09/2026',
+      stats: [
+        {
+          name: 'Lương Văn Tài',
+          leaveCount: 0,
+          missedCount: 1,
+          lastLeaveDate: null,
+          turnsSinceLastLeave: null,
+        },
+        {
+          name: 'Bùi Thanh Lộc',
+          leaveCount: 1,
+          missedCount: 0,
+          lastLeaveDate: '28/08/2026',
+          turnsSinceLastLeave: 2,
+        },
+        {
+          name: 'Mai Đức Tính',
+          leaveCount: 1,
+          missedCount: 0,
+          lastLeaveDate: '11/09/2026',
+          turnsSinceLastLeave: 0,
+        },
+      ],
+    };
+
+    const text = formatLeaveStatsMessage(sampleStats);
+    expect(text).toContain('📊 THỐNG KÊ TẦN SUẤT TRANH THỦ');
+    expect(text).toContain('Đơn vị: Tiểu đội 2 - Trung đội 1');
+    expect(text).toContain('Tính đến đợt: 11/09/2026 - Tổng cộng: 3 đợt');
+    expect(text).toContain('🔹 Lương Văn Tài: Về 0 lần | Mất lượt: 1 | Chưa từng về');
+    expect(text).toContain('🔹 Bùi Thanh Lộc: Về 1 lần | Mất lượt: 0 | Gần nhất: 28/08/2026 | Cách: 2 lượt');
+    expect(text).toContain('🔹 Mai Đức Tính: Về 1 lần | Mất lượt: 0 | Gần nhất: 11/09/2026 (Vừa về đợt mới nhất)');
+
+    // Test registry dispatch
+    const registryText = formatMessage('leave_roster_stats', sampleStats);
+    expect(registryText).toContain('📊 THỐNG KÊ TẦN SUẤT TRANH THỦ');
+
+    // Test empty data
+    expect(formatLeaveStatsMessage(null)).toBe('Không có dữ liệu thống kê tranh thủ.');
   });
 });

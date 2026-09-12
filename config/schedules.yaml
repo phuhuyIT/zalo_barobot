@@ -57,6 +57,16 @@ schedules:
     auto_send_time: null
     enabled: true
 
+  - key: leave_stats
+    label: "Thống kê tranh thủ Tiểu đội 2"
+    squad: main
+    type: leave_roster_stats
+    sheet_tab: "Lịch tranh thủ tiểu đội 2"
+    recipients:
+      - squad_main
+    auto_send_time: null
+    enabled: true
+
 reminders:
   - schedule_key: main_duty
     remind_before_send_minutes: 60  # Nhắc Admin lúc 20:00 (trước giờ gửi 1 tiếng)

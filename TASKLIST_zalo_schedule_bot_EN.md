@@ -108,3 +108,16 @@ without waiting for everything else to be finished.
 - [ ] End-to-end manual testing: F1 (wait until the send time, or set the
       send time close to now to test quickly), F2, F3, F5, F9, F10, F11,
       both types of F6.
+
+**Phase 10 — Recipient Management (F12) & Leave Statistics (F13)**
+- [x] F12 - Store: `recipients` table, CRUD methods (`getAllRecipients`, `getRecipient`, `saveRecipient`, `deleteRecipient`), seed defaults from YAML/env, automatic de-assignment on deletion.
+- [x] F12 - Runtime config: `recipients` array column in `runtime_config`, `getEffectiveScheduleConfig` overrides YAML recipients with runtime values.
+- [x] F12 - Config lookup: `getRecipientChatId()` checks store first before fallback.
+- [x] F12 - Sequential send: preserve 1-by-1 sending constraint in `sendSchedule` for all assigned recipients.
+- [x] F12 - Web UI: dedicated "Quản lý người nhận" tab with CRUD modals, schedule assignment badges, safe deletion warning, and multi-select pill checkboxes in "Cấu hình" tab.
+- [x] F13 - Parser & computation: pure `computeLeaveStats(roster)` calculates 4 metrics (`leaveCount`, `missedCount`, `lastLeaveDate`, `turnsSinceLastLeave`), chronological ordering, default sort descending by turns since last leave.
+- [x] F13 - Formatter: pure `formatLeaveStatsMessage()` compliant with template and emojis, registered as `leave_roster_stats` in Formatter Registry.
+- [x] F13 - Schedule integration: `leave_stats` registered in `config/schedules.yaml`, supported by `buildScheduleMessage` and single send point `sendSchedule`.
+- [x] F13 - Web UI: dedicated "Thống kê tranh thủ" tab with summary metrics cards, data table, message draft preview modal, and manual send button.
+- [x] Automated unit & integration tests for F12 & F13 store, parsers, formatters, core, and web API endpoints (total 36 passing tests).
+

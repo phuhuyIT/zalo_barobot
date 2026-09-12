@@ -55,11 +55,11 @@ export function isPlaceholderOrEmpty(val: unknown): boolean {
   const s = String(val).trim();
   if (s === '') return true;
   const lower = s.toLowerCase();
-  return ['-', '--', '---', 'n/a', 'na', 'none'].includes(lower);
+  return ['-', '--', '---', 'n/a', 'na', 'none', 'x', 'k', 'ko', 'không', 'khong', 'trống', 'chưa có'].includes(lower);
 }
 
 /**
- * Chuẩn hóa giá trị ngày từ Google Sheets (có thể là chuỗi dd/mm/yyyy, yyyy-mm-dd, hoặc số serial của Excel)
+ * Chuẩn hóa giá trị ngày từ Google Sheets (có thể là chuỗi dd/mm/yyyy, yyyy-mm-dd, dd/mm/yy, dd/mm, hoặc số serial của Excel)
  * về chuỗi chuẩn 'DD/MM/YYYY'.
  */
 export function normalizeDate(val: unknown): string | null {
@@ -67,17 +67,8 @@ export function normalizeDate(val: unknown): string | null {
   const s = String(val).trim();
   if (!s) return null;
 
-  // Trường hợp là chuỗi ngày dạng dd/mm/yyyy hoặc d/m/yyyy hoặc dd-mm-yyyy
-  const dmyMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (dmyMatch) {
-    const day = dmyMatch[1].padStart(2, '0');
-    const month = dmyMatch[2].padStart(2, '0');
-    const year = dmyMatch[3];
-    return `${day}/${month}/${year}`;
-  }
-
-  // Trường hợp là chuỗi ngày dạng yyyy-mm-dd
-  const ymdMatch = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  // 1. Trường hợp là chuỗi ngày dạng yyyy-mm-dd
+  const ymdMatch = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
   if (ymdMatch) {
     const year = ymdMatch[1];
     const month = ymdMatch[2].padStart(2, '0');
@@ -85,7 +76,21 @@ export function normalizeDate(val: unknown): string | null {
     return `${day}/${month}/${year}`;
   }
 
-  // Trường hợp là số serial của Excel (ví dụ 46266 hoặc 46266.0)
+  // 2. Trường hợp là chuỗi ngày dạng dd/mm/yyyy hoặc dd/mm/yy hoặc dd/mm (kể cả có tiền tố như Thứ 6, 28/08)
+  const dmyMatch = s.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
+    let year = dmyMatch[3];
+    if (!year) {
+      year = String(new Date().getFullYear());
+    } else if (year.length === 2) {
+      year = `20${year}`;
+    }
+    return `${day}/${month}/${year}`;
+  }
+
+  // 3. Trường hợp là số serial của Excel (ví dụ 46266 hoặc 46266.0)
   const num = Number(s);
   if (!isNaN(num) && num > 30000 && num < 60000) {
     // Excel epoch tính từ ngày 30/12/1899 (bù trừ lỗi năm nhuận 1900 của Lotus 1-2-3)

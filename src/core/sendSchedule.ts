@@ -7,7 +7,7 @@
  */
 
 import { getConfig, getRecipientChatId, getScheduleConfig, getSquadConfig } from '../config';
-import { fetchDutySchedule, fetchLeaveRoster } from '../sheets';
+import { fetchDutySchedule, fetchLeaveRoster, fetchLeaveStats } from '../sheets';
 import { resolveLookupDate, formatDateDMY } from '../sheets/dateUtils';
 import { formatMessage } from '../formatters';
 import { ZaloClient } from './zaloClient';
@@ -45,7 +45,7 @@ export interface SendScheduleOptions {
 }
 
 /**
- * Lấy thông tin cấu hình thực tế (đã áp dụng runtime overrides từ F9).
+ * Lấy thông tin cấu hình thực tế (đã áp dụng runtime overrides từ F9 & F12).
  */
 export function getEffectiveScheduleConfig(scheduleKey: string): {
   schedule: ScheduleConfig;
@@ -54,6 +54,7 @@ export function getEffectiveScheduleConfig(scheduleKey: string): {
   effectiveSendTime: string | null;
   effectiveEnabled: boolean;
   effectiveSendNextDay: boolean;
+  effectiveRecipients: string[];
 } {
   const config = getConfig();
   const schedule = getScheduleConfig(scheduleKey, config);
@@ -67,10 +68,15 @@ export function getEffectiveScheduleConfig(scheduleKey: string): {
   const squadOverride = schedule.squad ? getRuntimeConfigOverride(schedule.squad) : null;
   const scheduleOverride = getRuntimeConfigOverride(schedule.key);
 
+  // Thứ tự ưu tiên Tên Tab Google Sheet:
+  // 1. Runtime override của chính schedule (nếu có)
+  // 2. Tên sheet_tab khai báo riêng của schedule trong YAML (ví dụ: "Lịch tranh thủ tiểu đội 2")
+  // 3. Runtime override của squad (nếu có)
+  // 4. Tên sheet_tab_gate_duty mặc định của squad trong YAML
   const effectiveTabName =
-    squadOverride?.sheet_tab_gate_duty ||
     scheduleOverride?.sheet_tab_gate_duty ||
     schedule.sheet_tab ||
+    squadOverride?.sheet_tab_gate_duty ||
     squad?.sheet_tab_gate_duty ||
     '';
 
@@ -87,11 +93,18 @@ export function getEffectiveScheduleConfig(scheduleKey: string): {
   const effectiveSendNextDay =
     scheduleOverride?.send_next_day !== undefined
       ? scheduleOverride.send_next_day
-      : squadOverride?.send_next_day !== undefined
-      ? squadOverride.send_next_day
       : schedule.send_next_day !== undefined
       ? schedule.send_next_day
+      : schedule.type === 'leave_roster' || schedule.type === 'leave_roster_stats'
+      ? false
+      : squadOverride?.send_next_day !== undefined
+      ? squadOverride.send_next_day
       : Boolean(squad?.send_next_day);
+
+  const effectiveRecipients =
+    scheduleOverride?.recipients !== undefined
+      ? scheduleOverride.recipients
+      : schedule.recipients;
 
   return {
     schedule,
@@ -100,6 +113,7 @@ export function getEffectiveScheduleConfig(scheduleKey: string): {
     effectiveSendTime,
     effectiveEnabled,
     effectiveSendNextDay,
+    effectiveRecipients,
   };
 }
 
@@ -145,6 +159,9 @@ export async function buildScheduleMessage(
   if (schedule.type === 'leave_roster') {
     const leaveData = await fetchLeaveRoster(spreadsheetId, effectiveTabName, lookupDate);
     text = formatMessage(schedule.type, leaveData, lookupDate);
+  } else if (schedule.type === 'leave_roster_stats') {
+    const leaveStatsData = await fetchLeaveStats(spreadsheetId, effectiveTabName);
+    text = formatMessage(schedule.type, leaveStatsData, lookupDate);
   } else {
     const headerStyle = squad?.header_style || 'two_row_merged';
     const dutyData = await fetchDutySchedule(spreadsheetId, effectiveTabName, headerStyle, lookupDate);
@@ -165,7 +182,7 @@ export async function sendSchedule(
   scheduleKey: string,
   options: SendScheduleOptions = {}
 ): Promise<SendScheduleResult> {
-  const { schedule } = getEffectiveScheduleConfig(scheduleKey);
+  const { schedule, effectiveRecipients } = getEffectiveScheduleConfig(scheduleKey);
   const zalo = options.zaloClient || new ZaloClient();
 
   // 1. Xây dựng tin nhắn
@@ -174,7 +191,7 @@ export async function sendSchedule(
   // 2. Xác định danh sách recipient cần gửi
   const recipientKeys = options.recipientKey
     ? [options.recipientKey]
-    : schedule.recipients;
+    : effectiveRecipients;
 
   const results: RecipientSendResult[] = [];
 

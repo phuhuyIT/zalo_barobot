@@ -18,6 +18,7 @@ import {
   parseLeaveRoster,
   resolveTargetLeaveEntry,
 } from '../src/sheets/leaveRosterParser';
+import { computeLeaveStats } from '../src/sheets/leaveStats';
 
 describe('Date & Placeholder Utils', () => {
   it('identifies placeholders and empty values correctly', () => {
@@ -319,5 +320,58 @@ describe('Leave Roster Parser', () => {
     // Ngày 15/09/2026 (vượt quá các ngày trong sheet) -> trả về ngày cuối cùng (11/09/2026)
     const pastAll = resolveTargetLeaveEntry(roster.entries, new Date(2026, 8, 15));
     expect(pastAll?.date).toBe('11/09/2026');
+  });
+
+  it('computes leave statistics correctly with proper sorting (F13)', () => {
+    const roster = parseLeaveRoster(mockLeaveSheet);
+    const statsData = computeLeaveStats(roster);
+
+    expect(statsData.totalTurns).toBe(3);
+    expect(statsData.latestTurnDate).toBe('11/09/2026');
+    expect(statsData.stats.length).toBeGreaterThan(0);
+
+    // Người chưa từng về ("Lương Văn Tài" chỉ có ở cột mất lượt) phải đứng đầu danh sách
+    const firstMember = statsData.stats[0];
+    expect(firstMember.name).toBe('Lương Văn Tài');
+    expect(firstMember.leaveCount).toBe(0);
+    expect(firstMember.missedCount).toBe(1);
+    expect(firstMember.lastLeaveDate).toBeNull();
+    expect(firstMember.turnsSinceLastLeave).toBeNull();
+
+    // Tìm "Bùi Thanh Lộc" (về đợt 28/08, index 0 -> cách 2 lượt: 04/09 và 11/09)
+    const loc = statsData.stats.find((s) => s.name === 'Bùi Thanh Lộc');
+    expect(loc).toBeDefined();
+    expect(loc?.leaveCount).toBe(1);
+    expect(loc?.missedCount).toBe(0);
+    expect(loc?.lastLeaveDate).toBe('28/08/2026');
+    expect(loc?.turnsSinceLastLeave).toBe(2);
+
+    // Tìm "Phạm Hữu Luân" (về 2 đợt: 28/08 và 04/09, đợt gần nhất là 04/09 -> cách 1 lượt)
+    const luan = statsData.stats.find((s) => s.name === 'Phạm Hữu Luân');
+    expect(luan).toBeDefined();
+    expect(luan?.leaveCount).toBe(2);
+    expect(luan?.missedCount).toBe(0);
+    expect(luan?.lastLeaveDate).toBe('04/09/2026');
+    expect(luan?.turnsSinceLastLeave).toBe(1);
+
+    // Tìm "Mai Đức Tính" (về đợt 11/09, đợt mới nhất -> cách 0 lượt)
+    const tinh = statsData.stats.find((s) => s.name === 'Mai Đức Tính');
+    expect(tinh).toBeDefined();
+    expect(tinh?.leaveCount).toBe(1);
+    expect(tinh?.lastLeaveDate).toBe('11/09/2026');
+    expect(tinh?.turnsSinceLastLeave).toBe(0);
+
+    // Kiểm tra thứ tự giảm dần của turnsSinceLastLeave:
+    // null (chưa từng về) -> 2 -> 1 -> 0
+    const turns = statsData.stats.map((s) => s.turnsSinceLastLeave);
+    expect(turns[0]).toBeNull();
+    // Các phần tử tiếp theo phải là số và giảm dần hoặc bằng
+    for (let i = 2; i < turns.length; i++) {
+      const prev = turns[i - 1];
+      const curr = turns[i];
+      if (prev !== null && curr !== null) {
+        expect(prev).toBeGreaterThanOrEqual(curr);
+      }
+    }
   });
 });

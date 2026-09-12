@@ -53,20 +53,25 @@ export function parseLeaveRoster(rows: any[][]): LeaveRoster {
 
   // 3. Thu thập danh sách cột sau cột "Ngày"
   const colHeaders: { index: number; name: string }[] = [];
+  let lastHeader = '';
   for (let c = dateColIndex + 1; c < headerRow.length; c++) {
     const h = String(headerRow[c] || '').trim();
-    if (h === '') break;
-    colHeaders.push({ index: c, name: h });
+    if (h !== '') {
+      lastHeader = h;
+      colHeaders.push({ index: c, name: h });
+    } else if (lastHeader !== '') {
+      // Ô tiêu đề bị merge ngang trên Google Sheets
+      colHeaders.push({ index: c, name: lastHeader });
+    }
   }
 
-  // 4. Đọc các hàng dữ liệu cho đến khi gặp hàng hoàn toàn rỗng
+  // 4. Đọc các hàng dữ liệu (bỏ qua hàng hoàn toàn rỗng hoặc không có ngày)
   const entries: LeaveEntry[] = [];
   for (let r = headerRowIndex + 1; r < rows.length; r++) {
     const row = rows[r] || [];
     const isRowEmpty = row.every((cell) => String(cell || '').trim() === '');
     if (isRowEmpty) {
-      // Gặp hàng hoàn toàn rỗng -> kết thúc bảng
-      break;
+      continue;
     }
 
     const dateVal = row[dateColIndex];
@@ -80,14 +85,26 @@ export function parseLeaveRoster(rows: any[][]): LeaveRoster {
     for (const col of colHeaders) {
       const cellVal = row[col.index];
       if (!isPlaceholderOrEmpty(cellVal)) {
-        const name = String(cellVal).trim();
-        rawColumns[col.name] = name;
+        // Hỗ trợ trường hợp ô chứa nhiều tên (ngăn cách bởi dấu phẩy, chấm phẩy hoặc xuống dòng)
+        const names = String(cellVal)
+          .split(/[\n,;]+/)
+          .map((n) => n.trim())
+          .filter((n) => n && !isPlaceholderOrEmpty(n));
 
         const headerLower = col.name.toLowerCase();
-        if (headerLower.includes('mất lượt') || headerLower.includes('mat luot')) {
-          missedTurn.push(name);
-        } else {
-          onLeave.push(name);
+        const isMissed =
+          headerLower.includes('mất lượt') ||
+          headerLower.includes('mat luot') ||
+          headerLower.includes('bù gác') ||
+          headerLower.includes('bu gac');
+
+        for (const name of names) {
+          rawColumns[col.name] = name;
+          if (isMissed) {
+            missedTurn.push(name);
+          } else {
+            onLeave.push(name);
+          }
         }
       }
     }

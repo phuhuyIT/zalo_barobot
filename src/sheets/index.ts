@@ -15,6 +15,7 @@ export * from './dateUtils';
 export * from './gateDutyTwoRowParser';
 export * from './gateDutySingleRowParser';
 export * from './leaveRosterParser';
+export * from './leaveStats';
 export * from './sheetsClient';
 
 /**

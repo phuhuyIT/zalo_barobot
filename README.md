@@ -34,6 +34,8 @@ Hệ thống tự động hóa đọc lịch trực cổng, phân công nhiệm 
 - **F9 - Cấu hình Runtime trên Web không cần redeploy**: Đổi tên tab Google Sheet (khi chuyển doanh trại), bật/tắt gửi lịch ngày mai, đổi giờ gửi trực tiếp trên giao diện web.
 - **F10 - Xem trước tin nhắn (Preview)**: Xem trước văn bản sẽ gửi, chuyển đổi nhanh giữa *Hôm nay* và *Ngày mai*, sao chép nội dung hoặc bấm gửi ngay.
 - **F11 - Nhật ký gửi tin**: Lưu lại 50 lần gửi gần nhất kèm trạng thái thành công/thất bại và chi tiết lỗi.
+- **F12 - Quản lý đối tượng nhận lịch (Recipients) qua Web UI**: Quản lý CRUD danh sách người nhận (Mã, Tên hiển thị, Chat ID) lưu trong SQLite. Gán multi-select đối tượng nhận cho từng lịch trực tiếp trên Web UI không cần sửa code hay redeploy. Tự động de-assign an toàn khi xóa người nhận.
+- **F13 - Thống kê tần suất tranh thủ & Soạn tin nhắn gửi nhóm**: Tự động tính toán 4 chỉ số (Số lần đã về, Số lần mất lượt, Lần gần nhất được về, Đang cách bao nhiêu lượt chưa về), sắp xếp ưu tiên người chờ lâu nhất. Soạn tin nhắn trực quan chuẩn mẫu kèm emoji và gửi tới nhóm qua `send_schedule()`.
 
 ---
 
@@ -101,7 +103,7 @@ zalo_barobot/
 │   ├── store/               # Lưu trữ SQLite (better-sqlite3)
 │   ├── types/               # TypeScript interfaces
 │   └── index.ts             # Điểm khởi động chính của ứng dụng
-├── tests/                   # 24 bài kiểm thử tự động (Vitest)
+├── tests/                   # 36 bài kiểm thử tự động (Vitest)
 ├── .env.example             # Mẫu biến môi trường
 ├── Dockerfile               # Dockerfile triển khai Node.js process duy nhất
 └── getChatID.js             # Tiện ích lấy Chat ID người dùng/nhóm qua Polling

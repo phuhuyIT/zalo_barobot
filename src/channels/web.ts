@@ -17,7 +17,12 @@ import {
   saveRuntimeConfigOverride,
   getLastMessageId,
   getDatabase,
+  getAllRecipients,
+  getRecipient,
+  saveRecipient,
+  deleteRecipient,
 } from '../store';
+import { fetchLeaveStats } from '../sheets';
 import { RuntimeConfigOverride } from '../types';
 
 let schedulerRefreshCallback: (() => void) | null = null;
@@ -40,8 +45,10 @@ webRouter.get('/api/schedules', async (req: Request, res: Response) => {
       const effective = getEffectiveScheduleConfig(s.key);
 
       // Lấy thông tin gửi gần nhất cho từng recipient
-      const recipientsInfo = s.recipients.map((rKey) => {
-        const chatId = getRecipientChatId(rKey, config);
+      const recipientsInfo = effective.effectiveRecipients.map((rKey) => {
+        const recipient = getRecipient(rKey, db);
+        const chatId = recipient?.chat_id || getRecipientChatId(rKey, config);
+        const displayName = recipient?.display_name || rKey;
         const lastMsg = db
           .prepare(
             `SELECT message_id, sent_date, updated_at FROM last_message WHERE schedule_key = ? AND chat_id = ?`
@@ -50,6 +57,7 @@ webRouter.get('/api/schedules', async (req: Request, res: Response) => {
 
         return {
           recipientKey: rKey,
+          displayName,
           chatId,
           lastSentDate: lastMsg?.sent_date || null,
           lastUpdatedAt: lastMsg?.updated_at || null,
@@ -139,30 +147,36 @@ webRouter.get('/api/config', (req: Request, res: Response) => {
       };
     });
 
+    const recipients = getAllRecipients();
     const schedules = config.schedules.map((s) => {
       const effective = getEffectiveScheduleConfig(s.key);
+      const defaultTab = s.sheet_tab || (s.squad && config.squads[s.squad]?.sheet_tab_gate_duty) || '';
       return {
         key: s.key,
         label: s.label,
         squad: s.squad,
+        type: s.type,
+        defaultTab,
+        effectiveTab: effective.effectiveTabName,
         defaultSendTime: s.auto_send_time,
         effectiveSendTime: effective.effectiveSendTime,
         defaultEnabled: s.enabled,
         effectiveEnabled: effective.effectiveEnabled,
-        effectiveTab: effective.effectiveTabName,
         defaultSendNextDay: Boolean(s.send_next_day),
         effectiveSendNextDay: effective.effectiveSendNextDay,
+        defaultRecipients: s.recipients,
+        effectiveRecipients: effective.effectiveRecipients,
       };
     });
 
-    res.json({ success: true, squads, schedules });
+    res.json({ success: true, squads, schedules, recipients });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 /**
- * POST /api/config - Lưu ghi đè cấu hình runtime (F9)
+ * POST /api/config - Lưu ghi đè cấu hình runtime (F9 & F12)
  */
 webRouter.post('/api/config', (req: Request, res: Response) => {
   try {
@@ -199,6 +213,9 @@ webRouter.post('/api/config', (req: Request, res: Response) => {
           if (s.sendNextDay !== undefined) {
             override.send_next_day = Boolean(s.sendNextDay);
           }
+          if (s.recipients !== undefined && Array.isArray(s.recipients)) {
+            override.recipients = s.recipients.map((r: any) => String(r).trim()).filter(Boolean);
+          }
           saveRuntimeConfigOverride(s.key, override);
         }
       }
@@ -210,6 +227,165 @@ webRouter.post('/api/config', (req: Request, res: Response) => {
     }
 
     res.json({ success: true, message: 'Cấu hình đã được lưu thành công.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/recipients - Lấy danh sách tất cả người nhận và các lịch đang gán (F12)
+ */
+webRouter.get('/api/recipients', (req: Request, res: Response) => {
+  try {
+    const config = getConfig();
+    const recipients = getAllRecipients();
+
+    // Tính xem từng recipient đang được gán cho các schedule nào
+    const data = recipients.map((r) => {
+      const assignedSchedules = config.schedules
+        .filter((s) => {
+          const effective = getEffectiveScheduleConfig(s.key);
+          return effective.effectiveRecipients.includes(r.key);
+        })
+        .map((s) => ({
+          key: s.key,
+          label: s.label,
+        }));
+
+      return {
+        ...r,
+        assignedSchedules,
+      };
+    });
+
+    res.json({ success: true, recipients: data });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/recipients - Thêm người nhận mới (F12)
+ */
+webRouter.post('/api/recipients', (req: Request, res: Response) => {
+  try {
+    const { key, display_name, chat_id } = req.body || {};
+    if (!key || !display_name || !chat_id) {
+      res.status(400).json({
+        success: false,
+        error: 'Vui lòng cung cấp đầy đủ: Mã (key), Tên hiển thị (display_name), và Chat ID (chat_id).',
+      });
+      return;
+    }
+
+    const cleanKey = String(key).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    saveRecipient({
+      key: cleanKey,
+      display_name: String(display_name).trim(),
+      chat_id: String(chat_id).trim(),
+    });
+
+    res.json({
+      success: true,
+      message: `Đã lưu người nhận '${cleanKey}' thành công.`,
+      recipient: {
+        key: cleanKey,
+        display_name: String(display_name).trim(),
+        chat_id: String(chat_id).trim(),
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * PUT /api/recipients/:key - Cập nhật thông tin người nhận (F12)
+ */
+webRouter.put('/api/recipients/:key', (req: Request, res: Response) => {
+  try {
+    const key = String(req.params.key).trim();
+    const { display_name, chat_id } = req.body || {};
+    if (!display_name || !chat_id) {
+      res.status(400).json({
+        success: false,
+        error: 'Vui lòng cung cấp đầy đủ Tên hiển thị và Chat ID.',
+      });
+      return;
+    }
+
+    saveRecipient({
+      key,
+      display_name: String(display_name).trim(),
+      chat_id: String(chat_id).trim(),
+    });
+
+    res.json({
+      success: true,
+      message: `Đã cập nhật thông tin người nhận '${key}'.`,
+      recipient: {
+        key,
+        display_name: String(display_name).trim(),
+        chat_id: String(chat_id).trim(),
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/recipients/:key - Xóa người nhận (F12)
+ * Tự động gỡ khỏi các schedule đang gán để tránh lỗi rác.
+ */
+webRouter.delete('/api/recipients/:key', (req: Request, res: Response) => {
+  try {
+    const key = String(req.params.key).trim();
+    const result = deleteRecipient(key);
+    res.json({
+      success: true,
+      message: `Đã xóa người nhận '${key}' thành công.`,
+      affectedSchedules: result.affectedSchedules,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/leave-stats - Thống kê tần suất tranh thủ (F13)
+ */
+webRouter.get('/api/leave-stats', async (req: Request, res: Response) => {
+  try {
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    if (!spreadsheetId) {
+      throw new Error('Biến môi trường GOOGLE_SHEET_ID chưa được cấu hình.');
+    }
+
+    let tabName = req.query.tabName ? String(req.query.tabName).trim() : '';
+    if (!tabName) {
+      try {
+        const statsEff = getEffectiveScheduleConfig('leave_stats');
+        tabName = statsEff.effectiveTabName;
+      } catch (_) {
+        try {
+          const leaveEff = getEffectiveScheduleConfig('squad_leave');
+          tabName = leaveEff.effectiveTabName;
+        } catch (_) {}
+      }
+    }
+
+    if (!tabName) {
+      tabName = 'Lịch tranh thủ tiểu đội 2';
+    }
+
+    const data = await fetchLeaveStats(spreadsheetId, tabName);
+    res.json({
+      success: true,
+      tabName,
+      data,
+      scheduleKey: 'leave_stats',
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

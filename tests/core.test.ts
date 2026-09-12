@@ -11,32 +11,7 @@ describe('Core send_schedule()', () => {
 
   beforeEach(() => {
     mockDb = new Database(':memory:');
-    mockDb.exec(`
-      CREATE TABLE IF NOT EXISTS last_message (
-        schedule_key TEXT NOT NULL,
-        chat_id TEXT NOT NULL,
-        message_id TEXT NOT NULL,
-        sent_date TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (schedule_key, chat_id)
-      );
-      CREATE TABLE IF NOT EXISTS runtime_config (
-        config_key TEXT PRIMARY KEY,
-        sheet_tab_gate_duty TEXT,
-        auto_send_time TEXT,
-        enabled INTEGER,
-        send_next_day INTEGER
-      );
-      CREATE TABLE IF NOT EXISTS send_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL,
-        schedule_key TEXT NOT NULL,
-        chat_id TEXT NOT NULL,
-        result TEXT NOT NULL,
-        error TEXT,
-        old_message_deleted INTEGER NOT NULL DEFAULT 0
-      );
-    `);
+    storeModule.initTables(mockDb);
 
     // Set store db
     storeModule.setDatabase(mockDb);
@@ -56,6 +31,7 @@ describe('Core send_schedule()', () => {
       },
       recipients: {
         squad_main: 'chat_group_123',
+        platoon_leader: 'chat_group_456',
       },
       schedules: [
         {
@@ -65,6 +41,16 @@ describe('Core send_schedule()', () => {
           type: 'gate_duty',
           recipients: ['squad_main'],
           auto_send_time: '05:30',
+          enabled: true,
+        },
+        {
+          key: 'leave_stats',
+          label: 'Thống kê tranh thủ Tiểu đội 2',
+          squad: 'main',
+          type: 'leave_roster_stats',
+          sheet_tab: 'Tab_Leave',
+          recipients: ['squad_main'],
+          auto_send_time: null,
           enabled: true,
         },
       ],
@@ -79,6 +65,29 @@ describe('Core send_schedule()', () => {
       tasks: [
         { taskName: 'Ca 1', assignee: 'Nguyễn Văn A' },
         { taskName: 'Ca 2', assignee: 'Trần Văn B' },
+      ],
+    });
+
+    // Mock fetchLeaveStats (F13)
+    vi.spyOn(sheetsModule, 'fetchLeaveStats').mockResolvedValue({
+      unit: 'Đơn vị: Tiểu đội 2',
+      totalTurns: 2,
+      latestTurnDate: '11/09/2026',
+      stats: [
+        {
+          name: 'Lương Văn Tài',
+          leaveCount: 0,
+          missedCount: 1,
+          lastLeaveDate: null,
+          turnsSinceLastLeave: null,
+        },
+        {
+          name: 'Mai Đức Tính',
+          leaveCount: 1,
+          missedCount: 0,
+          lastLeaveDate: '11/09/2026',
+          turnsSinceLastLeave: 0,
+        },
       ],
     });
   });
@@ -140,5 +149,55 @@ describe('Core send_schedule()', () => {
 
     expect(sendRes.results[0].skippedDueToIdempotency).toBe(true);
     expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it('sends to overridden recipients sequentially (F12)', async () => {
+    // Override recipients for main_duty in store
+    storeModule.saveRuntimeConfigOverride(
+      'main_duty',
+      {
+        recipients: ['squad_main', 'platoon_leader'],
+      },
+      mockDb
+    );
+
+    const mockZalo = new ZaloClient('dummy_token');
+    const sendSpy = vi.spyOn(mockZalo, 'sendMessage').mockResolvedValue({
+      messageId: 'msg_test',
+      raw: { ok: true },
+    });
+
+    const sendRes = await sendSchedule('main_duty', {
+      targetDate: '01/09/2026',
+      zaloClient: mockZalo,
+    });
+
+    expect(sendRes.results).toHaveLength(2);
+    expect(sendRes.results[0].recipientKey).toBe('squad_main');
+    expect(sendRes.results[0].chatId).toBe('chat_group_123');
+    expect(sendRes.results[1].recipientKey).toBe('platoon_leader');
+    expect(sendRes.results[1].chatId).toBe('chat_group_456');
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('builds and sends leave_roster_stats message (F13)', async () => {
+    const preview = await buildScheduleMessage('leave_stats');
+    expect(preview.text).toContain('📊 THỐNG KÊ TẦN SUẤT TRANH THỦ');
+    expect(preview.text).toContain('Lương Văn Tài: Về 0 lần | Mất lượt: 1 | Chưa từng về');
+
+    const mockZalo = new ZaloClient('dummy_token');
+    const sendSpy = vi.spyOn(mockZalo, 'sendMessage').mockResolvedValue({
+      messageId: 'msg_stats_1',
+      raw: { ok: true },
+    });
+
+    const sendRes = await sendSchedule('leave_stats', {
+      zaloClient: mockZalo,
+    });
+
+    expect(sendRes.scheduleKey).toBe('leave_stats');
+    expect(sendRes.results).toHaveLength(1);
+    expect(sendRes.results[0].success).toBe(true);
+    expect(sendSpy).toHaveBeenCalled();
   });
 });

@@ -8,10 +8,12 @@
 import { formatGateDutyMessage } from './gateDutyFormatter';
 import { formatPatrolOnlyMessage } from './patrolOnlyFormatter';
 import { formatLeaveRosterMessage } from './leaveRosterFormatter';
+import { formatLeaveStatsMessage } from './leaveStatsFormatter';
 
 export * from './gateDutyFormatter';
 export * from './patrolOnlyFormatter';
 export * from './leaveRosterFormatter';
+export * from './leaveStatsFormatter';
 
 export type FormatterFn = (data: any, targetDate?: string) => string;
 
@@ -21,6 +23,7 @@ const formatterRegistry: Map<string, FormatterFn> = new Map();
 registerFormatter('gate_duty', formatGateDutyMessage);
 registerFormatter('gate_duty_patrol_only', formatPatrolOnlyMessage);
 registerFormatter('leave_roster', formatLeaveRosterMessage);
+registerFormatter('leave_roster_stats', formatLeaveStatsMessage);
 
 export function registerFormatter(type: string, fn: FormatterFn): void {
   formatterRegistry.set(type, fn);
