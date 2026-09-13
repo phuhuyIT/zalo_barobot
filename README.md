@@ -11,9 +11,11 @@ Hệ thống tự động hóa đọc lịch trực cổng, phân công nhiệm 
 4. [Hướng dẫn thiết lập Google Sheets API](#4-hướng-dẫn-thiết-lập-google-sheets-api)
 5. [Hướng dẫn lấy Chat ID cá nhân và nhóm Zalo](#5-hướng-dẫn-lấy-chat-id-cá-nhân-và-nhóm-zalo)
 6. [Hướng dẫn cấu hình Webhook Zalo Bot](#6-hướng-dẫn-cấu-hình-webhook-zalo-bot)
-7. [Hướng dẫn thêm Tiểu đội / Lịch trực mới (Mở rộng bằng Cấu hình)](#7-hướng-dẫn-thêm-tiểu-đội--lịch-trực-mới-mở-rộng-bằng-cấu-hình)
-8. [Hướng dẫn triển khai lên Railway (Production)](#8-hướng-dẫn-triển-khai-lên-railway-production)
-9. [Ghi chú kỹ thuật về tính năng xóa tin nhắn cũ (F4)](#9-ghi-chú-kỹ-thuật-về-tính-năng-xóa-tin-nhắn-cũ-f4)
+7. [Hướng dẫn sử dụng Web Dashboard Quản trị](#7-hướng-dẫn-sử-dụng-web-dashboard-quản-trị)
+8. [Hướng dẫn thêm Tiểu đội / Lịch trực mới (Mở rộng bằng Cấu hình)](#8-hướng-dẫn-thêm-tiểu-đội--lịch-trực-mới-mở-rộng-bằng-cấu-hình)
+9. [Hướng dẫn triển khai lên Railway (Production)](#9-hướng-dẫn-triển-khai-lên-railway-production)
+10. [Ghi chú kỹ thuật về tính năng xóa tin nhắn cũ (F4)](#10-ghi-chú-kỹ-thuật-về-tính-năng-xóa-tin-nhắn-cũ-f4)
+11. [Giấy phép & Tác giả](#11-giấy-phép--tác-giả)
 
 ---
 
@@ -31,7 +33,11 @@ Hệ thống tự động hóa đọc lịch trực cổng, phân công nhiệm 
   - Cảnh báo quá hạn: Nếu quá giờ mà lịch chưa được gửi thành công, bot sẽ gửi tin nhắn báo động cho Admin (ví dụ lúc 21:10).
 - **F7 - Đa dạng định dạng người nhận**: Trích xuất riêng các ca đi tuần từ bảng lịch chung để gửi tóm tắt cho Trung đội trưởng.
 - **F8 - Mở rộng linh hoạt**: Thêm tiểu đội, bảng tính hoặc người nhận mới hoàn toàn qua file `config/schedules.yaml`, không sửa code lõi.
-- **F9 - Cấu hình Runtime trên Web không cần redeploy**: Đổi tên tab Google Sheet (khi chuyển doanh trại), bật/tắt gửi lịch ngày mai, đổi giờ gửi trực tiếp trên giao diện web.
+- **F9 - Cấu hình Runtime trên Web không cần redeploy**: Đổi tên tab Google Sheet (khi chuyển doanh trại/tháng mới), bật/tắt gửi lịch ngày mai, cài đặt giờ tự động gửi với gợi ý nhanh và gán nhóm nhận trực tiếp trên giao diện web. Giao diện được tối ưu hóa chuyên sâu:
+  - **Phân chia Section trực quan**: Phần 1 (Tên tab Google Sheet - Emerald theme) và Phần 2 (Cấu hình lịch trực & tự động hóa - Indigo theme) hoàn toàn tách bạch.
+  - **Thu gọn / Mở rộng (Accordion)**: Từng lịch trực có thể thu gọn giúp màn hình luôn gọn gàng, vẫn hiển thị đủ thông số tóm tắt khi thu gọn.
+  - **Lịch chính tối ưu mặc định**: Lịch trực chính (`main_duty` - Tiểu đội 2) luôn được **Mở rộng (Maximize)** mặc định kèm nhãn `⭐ LỊCH CHÍNH`.
+  - **Thanh công cụ**: Phím bấm *Mở rộng tất cả* và *Thu gọn tất cả* tiện lợi.
 - **F10 - Xem trước tin nhắn (Preview)**: Xem trước văn bản sẽ gửi, chuyển đổi nhanh giữa *Hôm nay* và *Ngày mai*, sao chép nội dung hoặc bấm gửi ngay.
 - **F11 - Nhật ký gửi tin**: Lưu lại 50 lần gửi gần nhất kèm trạng thái thành công/thất bại và chi tiết lỗi.
 - **F12 - Quản lý đối tượng nhận lịch (Recipients) qua Web UI**: Quản lý CRUD danh sách người nhận (Mã, Tên hiển thị, Chat ID) lưu trong SQLite. Gán multi-select đối tượng nhận cho từng lịch trực tiếp trên Web UI không cần sửa code hay redeploy. Tự động de-assign an toàn khi xóa người nhận.
@@ -103,7 +109,7 @@ zalo_barobot/
 │   ├── store/               # Lưu trữ SQLite (better-sqlite3)
 │   ├── types/               # TypeScript interfaces
 │   └── index.ts             # Điểm khởi động chính của ứng dụng
-├── tests/                   # 36 bài kiểm thử tự động (Vitest)
+├── tests/                   # 39 bài kiểm thử tự động (Vitest)
 ├── .env.example             # Mẫu biến môi trường
 ├── Dockerfile               # Dockerfile triển khai Node.js process duy nhất
 └── getChatID.js             # Tiện ích lấy Chat ID người dùng/nhóm qua Polling
@@ -232,7 +238,51 @@ npm run delete-webhook
 
 ---
 
-## 7. Hướng dẫn thêm Tiểu đội / Lịch trực mới (Mở rộng bằng Cấu hình)
+## 7. Hướng dẫn sử dụng Web Dashboard Quản trị
+
+Giao diện Web UI được xây dựng với kiến trúc nhẹ, phản hồi tức thì (Tailwind CSS + Alpine.js), hỗ trợ đầy đủ trên máy tính và thiết bị di động với menu điều hướng nhanh và các thao tác chạm mượt mà:
+
+### 7.1. 📋 Bảng điều khiển (Dashboard - F2, F10)
+- **Danh sách lịch trực**: Hiển thị tổng quan toàn bộ lịch (trực cổng, đi tuần, tranh thủ), trạng thái bật/tắt tự động, giờ gửi, nhóm nhận và lần gửi thành công gần nhất.
+- **Xem trước tin nhắn (F10)**: Bấm nút **👁️ Xem trước** để kiểm tra nội dung bảng lịch, chuyển đổi linh hoạt giữa ngày *Hôm nay* và *Ngày mai*, sao chép văn bản vào clipboard hoặc bấm gửi ngay.
+- **Gửi ngay theo yêu cầu (F2)**: Bấm nút **📤 Gửi ngay** để bot đọc dữ liệu Google Sheet mới nhất và phát tin nhắn tức thì tới nhóm Zalo đã cấu hình.
+- **Gửi tất cả lịch trực**: Nút tiện ích gửi đồng loạt toàn bộ các lịch đang kích hoạt kèm hộp thoại xác nhận an toàn.
+
+### 7.2. 📊 Thống kê tranh thủ (F13)
+- **Tự động trích xuất & tính toán**: Đọc lịch sử các đợt tranh thủ từ Google Sheet và tính toán 4 chỉ số cốt lõi:
+  - *Tổng số lượt đã được về*.
+  - *Số lượt bị mất/hoãn*.
+  - *Ngày đợt về gần nhất*.
+  - *Số lượt đang cách/chờ chưa được về*.
+- **Ưu tiên công bằng**: Tự động xếp hạng ưu tiên những đồng chí lâu chưa về lên đầu danh sách.
+- **Soạn & Gửi tin nhắn**: Xem trước mẫu báo cáo thống kê kèm huy hiệu trực quan và gửi trực tiếp tới nhóm Zalo với 1 cú nhấp chuột.
+
+### 7.3. 👥 Quản lý người nhận (F12)
+- **Quản lý danh sách người nhận (CRUD)**: Thêm mới, chỉnh sửa và xóa đối tượng nhận tin (Mã nhóm/cá nhân, Tên hiển thị, Chat ID Zalo).
+- **Lưu trữ SQLite bền vững**: Mọi thay đổi lưu trực tiếp vào cơ sở dữ liệu `app.db`, có hiệu lực ngay lập tức không cần khởi động lại bot.
+- **Cơ chế xóa an toàn (Safe De-assignment)**: Khi xóa người nhận, hệ thống kiểm tra và tự động gỡ người nhận đó khỏi tất cả các lịch trực liên quan để tránh lỗi gián đoạn tiến trình gửi.
+
+### 7.4. ⚙️ Cấu hình vận hành (F9)
+Giao diện cấu hình runtime được thiết kế phân tầng trực quan và thông minh:
+- **Phân chia Phân vùng (Session) rõ ràng**:
+  - **Phần 1: Google Sheet Tabs (Emerald Theme)**: Quản lý tên tab dữ liệu Google Sheet cho từng tiểu đội (`Tiểu đội 2`, `Tiểu đội culi`). Tự động phát hiện trạng thái đã tùy biến và hỗ trợ nút *Khôi phục mặc định*.
+  - **Phần 2: Lịch Trực & Tự Động Hóa (Indigo Theme)**: Quản lý giờ hẹn gửi tự động, chế độ ngày mai và phân công người nhận cho từng lịch.
+- **Thu gọn / Mở rộng thông minh (Accordion Collapsible)**:
+  - **Lịch chính (`main_duty` - Tiểu đội 2)**: Luôn được **Mở rộng (Maximize)** mặc định, nổi bật với huy hiệu `⭐ LỊCH CHÍNH (Tiểu đội 2)` và viền sáng indigo.
+  - **Các lịch khác**: Mặc định **Thu gọn (Minimize)** để tối ưu không gian hiển thị. Khi thu gọn vẫn xem được toàn bộ thông số tóm tắt (Bật/Tắt, Giờ gửi, Ngày mai, Nhóm nhận).
+  - **Thanh công cụ**: Hỗ trợ 2 nút thao tác nhanh `⤢ Mở rộng tất cả` và `⤡ Thu gọn tất cả`.
+- **Phím tắt giờ hẹn & Gửi ngày mai**: Nút chọn nhanh giờ phổ biến (`06:00`, `11:30`, `19:30`, `21:00`) và công tắc chuyển đổi ngày gửi có giải thích chi tiết.
+- **Gán người nhận đa chọn (Multi-select)**: Bấm chọn/bỏ chọn từng nhóm nhận dạng chip có nhãn trực quan.
+- **Lưu cấu hình đa nền tảng**: Nút lưu trên máy tính và thanh lưu nổi cố định (sticky floating bar) trên điện thoại.
+
+### 7.5. 🕒 Lịch sử gửi tin (F11)
+- **Nhật ký 50 lần gửi gần nhất**: Theo dõi thời gian gửi, tên lịch, nhóm nhận, ngày lịch trích xuất và kết quả gửi Zalo.
+- **Bộ lọc kết quả**: Lọc nhanh giữa *Tất cả*, *Thành công* và *Thất bại*.
+- **Chi tiết lỗi**: Hiển thị thông báo lỗi cụ thể từ API Zalo hoặc Google Sheet nếu quá trình gửi gặp sự cố.
+
+---
+
+## 8. Hướng dẫn thêm Tiểu đội / Lịch trực mới (Mở rộng bằng Cấu hình)
 
 Hệ thống tuân thủ **Quy tắc #11 & Tính năng F8**: Không dùng enum fix cứng, mọi mở rộng đều thực hiện thông qua file [`config/schedules.yaml`](file:///workspaces/zalo_barobot/config/schedules.yaml) mà không cần viết lại mã nguồn.
 
@@ -281,7 +331,7 @@ Sau khi lưu file, server sẽ tự động nhận diện lịch mới trên Web
 
 ---
 
-## 8. Hướng dẫn triển khai lên Railway (Production)
+## 9. Hướng dẫn triển khai lên Railway (Production)
 
 Railway là nền tảng máy chủ phù hợp nhất nhờ tính năng Volume bền vững và không bị ngủ (auto-sleep) như Render free tier.
 
@@ -336,7 +386,7 @@ npm run set-webhook https://<ten-mien-cua-ban>.up.railway.app/webhook/zalo
 
 ---
 
-## 9. Ghi chú kỹ thuật về tính năng xóa tin nhắn cũ (F4)
+## 10. Ghi chú kỹ thuật về tính năng xóa tin nhắn cũ (F4)
 
 - **Cơ chế hoạt động**: Hàm `send_schedule` luôn thực hiện theo cơ chế **Best-effort**:
   1. Kiểm tra trong bảng `last_message` xem nhóm này trước đó đã nhận tin nhắn nào chưa.
@@ -347,5 +397,5 @@ npm run set-webhook https://<ten-mien-cua-ban>.up.railway.app/webhook/zalo
 
 ---
 
-## 10. Giấy phép & Tác giả
+## 11. Giấy phép & Tác giả
 Dự án được phát triển phục vụ công tác quản lý lịch trực ban và phân công nhiệm vụ nội bộ. Mọi thông tin xác thực phải được lưu trữ an toàn trong biến môi trường và tuyệt đối không đưa lên kho mã nguồn công khai.
