@@ -643,19 +643,26 @@
     <!-- ========================================== -->
     <!-- TAB 4: RUNTIME CONFIGURATION (F9) -->
     <!-- ========================================== -->
-    <div x-show="activeTab === 'config'" x-cloak class="space-y-4 sm:space-y-6 max-w-4xl mx-auto">
+    <div x-show="activeTab === 'config'" x-cloak class="space-y-5 sm:space-y-7 max-w-4xl mx-auto">
       
       <!-- Top Overview & Info Card -->
       <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div class="flex items-center space-x-2">
-              <span class="text-2xl">⚙️</span>
-              <h2 class="text-xl sm:text-2xl font-bold text-slate-800">Cấu Hình Vận Hành (F9)</h2>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div class="flex items-start sm:items-center space-x-3">
+            <div class="w-11 h-11 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-2xl flex-shrink-0 shadow-inner">
+              ⚙️
             </div>
-            <p class="text-xs sm:text-sm text-slate-500 mt-1">
-              Đổi tab Sheet, giờ gửi và chế độ ngày mai. Cập nhật tức thì không cần redeploy.
-            </p>
+            <div>
+              <div class="flex items-center space-x-2">
+                <h2 class="text-xl sm:text-2xl font-bold text-slate-800 tracking-tight">Cấu Hình Vận Hành (F9)</h2>
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800">
+                  Runtime Hot-Reload
+                </span>
+              </div>
+              <p class="text-xs sm:text-sm text-slate-500 mt-1">
+                Tùy biến tên Sheet tab, giờ gửi tự động, chế độ ngày mai và người nhận. Cập nhật có hiệu lực tức thì.
+              </p>
+            </div>
           </div>
 
           <!-- Desktop Save Button -->
@@ -669,42 +676,106 @@
             <span x-show="savingConfig">Đang lưu...</span>
           </button>
         </div>
-      </div>
 
-      <!-- Section 1: Google Sheet Tabs for Squads -->
-      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
-        <div class="pb-3 border-b border-slate-100 flex items-center space-x-2">
-          <span class="text-lg">📑</span>
-          <div>
-            <h3 class="text-base font-bold text-slate-900">Tên Tab Google Sheet Theo Tiểu Đội</h3>
-            <p class="text-xs text-slate-500">Cần khớp chính xác 100% với tên tab trên Google Sheet (phân biệt dấu cách, hoa/thường)</p>
+        <!-- Quick Metrics Overview Strip -->
+        <div class="mt-4 pt-3.5 border-t border-slate-100 flex flex-wrap items-center gap-2 text-xs">
+          <div class="inline-flex items-center space-x-1.5 bg-emerald-50/70 border border-emerald-200/80 px-3 py-1 rounded-xl text-emerald-800">
+            <span class="text-sm">📑</span>
+            <span>Tiểu đội: <strong class="font-mono font-bold" x-text="(configData.squads || []).length + ' đơn vị'"></strong></span>
+          </div>
+          <div class="inline-flex items-center space-x-1.5 bg-indigo-50/70 border border-indigo-200/80 px-3 py-1 rounded-xl text-indigo-800">
+            <span class="text-sm">⏰</span>
+            <span>Lịch tự động: <strong class="font-mono font-bold" x-text="configActiveCount + ' / ' + (configData.schedules || []).length + ' đang bật'"></strong></span>
+          </div>
+          <div class="inline-flex items-center space-x-1.5 bg-blue-50/70 border border-blue-200/80 px-3 py-1 rounded-xl text-blue-800">
+            <span class="text-sm">👥</span>
+            <span>Người nhận Zalo: <strong class="font-mono font-bold" x-text="(configData.recipients || []).length + ' nhóm/cá nhân'"></strong></span>
           </div>
         </div>
+      </div>
 
-        <div class="space-y-4">
+      <!-- ========================================== -->
+      <!-- SESSION 1: GOOGLE SHEET TABS FOR SQUADS -->
+      <!-- ========================================== -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 border-l-4 border-l-emerald-500 space-y-4">
+        <!-- Session Header -->
+        <div class="pb-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                📑 Phần 1: Google Sheet Tabs
+              </span>
+            </div>
+            <h3 class="text-base sm:text-lg font-bold text-slate-900 mt-1.5">Tên Tab Google Sheet Theo Tiểu Đội</h3>
+            <p class="text-xs text-slate-500 mt-0.5">
+              Khớp chính xác 100% với tên tab trên Google Sheet (phân biệt khoảng cách và chữ hoa/thường) để bot trích xuất dữ liệu đúng.
+            </p>
+          </div>
+          <span class="text-xs font-mono text-slate-400 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 self-start sm:self-center">
+            <span x-text="(configData.squads || []).length"></span> đơn vị cấu hình
+          </span>
+        </div>
+
+        <!-- Squad Cards Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <template x-for="sq in configData.squads" :key="sq.key">
-            <div class="bg-slate-50 rounded-xl p-3.5 sm:p-4 border border-slate-200/80 space-y-2.5">
-              <div class="flex justify-between items-center">
-                <label class="text-sm font-bold text-slate-800" x-text="sq.displayName"></label>
-                <span class="text-[11px] font-mono text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200" x-text="'key: ' + sq.key"></span>
+            <div class="bg-gradient-to-b from-slate-50 to-white rounded-xl p-4 border border-slate-200/90 shadow-xs flex flex-col justify-between space-y-3 hover:border-emerald-300 transition duration-150">
+              
+              <!-- Squad Title & Key -->
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center space-x-2.5">
+                  <div
+                    class="w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0 shadow-2xs"
+                    :class="sq.key === 'main' ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 'bg-slate-100 text-slate-700 border border-slate-200'"
+                  >
+                    <span x-text="sq.key === 'main' ? '🛡️' : '🛠️'"></span>
+                  </div>
+                  <div>
+                    <h4 class="text-sm font-bold text-slate-900" x-text="sq.displayName"></h4>
+                    <span class="text-[11px] font-mono text-slate-400" x-text="'key: ' + sq.key"></span>
+                  </div>
+                </div>
+
+                <template x-if="sq.key === 'main'">
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    Tiểu đội chính
+                  </span>
+                </template>
               </div>
 
-              <!-- Input text-base to prevent iOS zoom -->
-              <div>
+              <!-- Input Tab Name -->
+              <div class="space-y-1.5">
+                <label class="text-xs font-semibold text-slate-700 flex items-center justify-between">
+                  <span class="flex items-center space-x-1">
+                    <span>📑</span>
+                    <span>Tên tab Sheet:</span>
+                  </span>
+                  <span
+                    x-show="sq.sheetTab && sq.sheetTab !== sq.defaultTab"
+                    class="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200"
+                  >
+                    Đã tùy chỉnh
+                  </span>
+                </label>
                 <input
                   type="text"
                   x-model="sq.sheetTab"
-                  class="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-base sm:text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:outline-none shadow-sm"
-                  placeholder="Nhập tên tab Sheet..."
+                  class="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-base sm:text-sm font-mono focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none shadow-sm transition"
+                  placeholder="Nhập chính xác tên tab Sheet..."
                 />
               </div>
 
-              <div class="flex justify-between items-center text-xs text-slate-400 pt-0.5">
-                <span>Mặc định: <strong class="text-slate-600 font-mono" x-text="sq.defaultTab"></strong></span>
+              <!-- Default comparison & reset action -->
+              <div class="flex items-center justify-between text-xs pt-1.5 border-t border-slate-100 text-slate-500">
+                <div class="truncate max-w-[65%]">
+                  <span class="text-[11px] text-slate-400">Mặc định: </span>
+                  <span class="font-mono text-[11px] text-slate-700 font-semibold truncate" x-text="sq.defaultTab"></span>
+                </div>
                 <button
                   type="button"
                   @click="resetSquadTab(sq)"
-                  class="text-indigo-600 hover:text-indigo-800 text-[11px] font-medium"
+                  class="touch-btn text-emerald-600 hover:text-emerald-800 text-[11px] font-semibold py-1 px-2 rounded-lg hover:bg-emerald-50 transition flex-shrink-0"
+                  title="Khôi phục lại tên tab mặc định"
                 >
                   Khôi phục mặc định
                 </button>
@@ -714,144 +785,313 @@
         </div>
       </div>
 
-      <!-- Section 2: Schedules Timing & Toggles -->
-      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
-        <div class="pb-3 border-b border-slate-100 flex items-center space-x-2">
-          <span class="text-lg">⏰</span>
+      <!-- ========================================== -->
+      <!-- SESSION 2: SCHEDULES & TIMING CONFIGURATION -->
+      <!-- ========================================== -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 border-l-4 border-l-indigo-600 space-y-4">
+        <!-- Session Header & Expand/Collapse All Toolbar -->
+        <div class="pb-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 class="text-base font-bold text-slate-900">Giờ Gửi Tự Động & Chế Độ Lịch</h3>
-            <p class="text-xs text-slate-500">Cài đặt giờ hẹn, chọn gửi lịch hôm nay/ngày mai và bật/tắt tự động</p>
+            <div class="flex items-center space-x-2">
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 border border-indigo-200">
+                ⏰ Phần 2: Lịch Trực & Tự Động Hóa
+              </span>
+            </div>
+            <h3 class="text-base sm:text-lg font-bold text-slate-900 mt-1.5">Cấu Hình Chi Tiết Từng Lịch Trực</h3>
+            <p class="text-xs text-slate-500 mt-0.5">
+              Cài đặt giờ gửi tự động, chọn ngày lấy lịch (hôm nay / ngày mai) và gán người nhận. Nhấp vào từng lịch để thu gọn hoặc mở rộng.
+            </p>
+          </div>
+
+          <!-- Quick Accordion Controls -->
+          <div class="flex items-center space-x-2 self-start sm:self-center flex-shrink-0">
+            <button
+              type="button"
+              @click="expandAllSchedules()"
+              class="touch-btn px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-xs font-semibold rounded-xl border border-slate-200 transition flex items-center space-x-1 shadow-2xs"
+              title="Mở rộng tất cả các thẻ lịch"
+            >
+              <span>⤢</span>
+              <span>Mở rộng tất cả</span>
+            </button>
+            <button
+              type="button"
+              @click="collapseAllSchedules()"
+              class="touch-btn px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-xs font-semibold rounded-xl border border-slate-200 transition flex items-center space-x-1 shadow-2xs"
+              title="Thu gọn tất cả các thẻ lịch"
+            >
+              <span>⤡</span>
+              <span>Thu gọn tất cả</span>
+            </button>
           </div>
         </div>
 
-        <div class="space-y-4">
+        <!-- Schedule Accordions List -->
+        <div class="space-y-3.5">
           <template x-for="sc in configData.schedules" :key="sc.key">
-            <div class="bg-slate-50 rounded-xl p-4 border border-slate-200/80 space-y-4">
-              <!-- Schedule Title Header -->
-              <div class="flex items-center justify-between">
-                <div>
-                  <h4 class="text-sm sm:text-base font-bold text-slate-900" x-text="sc.label"></h4>
-                  <span class="text-[11px] font-mono text-slate-500" x-text="'key: ' + sc.key"></span>
-                </div>
-                <span
-                  class="text-xs font-semibold px-2.5 py-0.5 rounded-full"
-                  :class="sc.enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'"
-                  x-text="sc.enabled ? 'Đang bật' : 'Đang tắt'"
-                ></span>
-              </div>
-
-              <!-- Sheet Tab Input -->
-              <div class="bg-white rounded-xl p-3 border border-slate-200/70 space-y-1.5">
-                <div class="flex items-center justify-between">
-                  <label class="text-xs font-semibold text-slate-700 flex items-center space-x-1">
-                    <span>📑</span>
-                    <span>Tên Tab Google Sheet:</span>
-                  </label>
-                  <button
-                    type="button"
-                    @click="sc.sheetTab = sc.defaultTab"
-                    class="text-indigo-600 hover:text-indigo-800 text-[11px] font-medium"
-                  >
-                    Khôi phục mặc định
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  x-model="sc.sheetTab"
-                  class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  :placeholder="sc.defaultTab || 'Nhập tên tab Sheet...'"
-                />
-                <div class="flex items-center justify-between text-[11px] text-slate-400">
-                  <span>Mặc định: <strong class="text-slate-600 font-mono" x-text="sc.defaultTab"></strong></span>
-                </div>
-              </div>
-
-              <!-- Automated vs Manual Notice & Timing -->
-              <template x-if="sc.type === 'leave_roster' || sc.type === 'leave_roster_stats'">
-                <div class="bg-blue-50/70 rounded-xl p-3 border border-blue-200/60 flex items-center space-x-2 text-xs text-blue-700">
-                  <span class="text-base">ℹ️</span>
-                  <span>Lịch này gửi <strong>thủ công theo nhu cầu</strong> qua Web UI hoặc lệnh bot (không chạy theo giờ hẹn tự động).</span>
-                </div>
-              </template>
-
-              <template x-if="sc.type !== 'leave_roster' && sc.type !== 'leave_roster_stats'">
-                <div class="space-y-3">
-                  <!-- Time Config & Quick Preset Chips -->
-                  <div class="bg-white rounded-xl p-3 border border-slate-200/70 space-y-2">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <label class="text-xs font-semibold text-slate-700 flex items-center space-x-1">
-                        <span>🕒</span>
-                        <span>Giờ tự động gửi (HH:MM):</span>
-                      </label>
-                      <input
-                        type="text"
-                        x-model="sc.autoSendTime"
-                        placeholder="21:00"
-                        class="w-full sm:w-32 px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm font-mono text-center font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                      />
-                    </div>
-
-                    <!-- Quick Presets for Mobile Typing Convenience -->
-                    <div class="flex items-center gap-1.5 pt-1 overflow-x-auto">
-                      <span class="text-[11px] text-slate-400 flex-shrink-0">Gợi ý:</span>
-                      <button
-                        type="button"
-                        @click="setTimePreset(sc, '06:00')"
-                        class="touch-btn text-[11px] font-mono px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
-                      >06:00</button>
-                      <button
-                        type="button"
-                        @click="setTimePreset(sc, '11:30')"
-                        class="touch-btn text-[11px] font-mono px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
-                      >11:30</button>
-                      <button
-                        type="button"
-                        @click="setTimePreset(sc, '19:30')"
-                        class="touch-btn text-[11px] font-mono px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
-                      >19:30</button>
-                      <button
-                        type="button"
-                        @click="setTimePreset(sc, '21:00')"
-                        class="touch-btn text-[11px] font-mono px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
-                      >21:00</button>
-                    </div>
-                  </div>
-
-                  <!-- Toggle 1: Send Next Day -->
-                  <div
-                    @click="sc.sendNextDay = !sc.sendNextDay"
-                    class="touch-btn bg-white rounded-xl p-3 border border-slate-200/70 flex items-center justify-between cursor-pointer"
-                  >
-                    <div class="pr-3">
-                      <p class="text-xs sm:text-sm font-semibold text-slate-800">Gửi lịch ngày mai</p>
-                      <p class="text-[11px] text-slate-500">Bật: gửi lịch ngày kế tiếp (+1). Tắt: gửi lịch hôm nay.</p>
-                    </div>
+            <div
+              class="rounded-2xl border transition duration-200 overflow-hidden shadow-xs"
+              :class="[
+                sc.key === 'main_duty' 
+                  ? 'border-indigo-300 ring-1 ring-indigo-200/80 bg-white' 
+                  : 'border-slate-200 hover:border-slate-300 bg-white'
+              ]"
+            >
+              <!-- Accordion Card Header (Click to minimize/maximize) -->
+              <div
+                @click="toggleScheduleExpand(sc.key)"
+                class="cursor-pointer touch-btn p-3.5 sm:p-4.5 transition duration-150 select-none"
+                :class="[
+                  isScheduleExpanded(sc.key) 
+                    ? (sc.key === 'main_duty' ? 'bg-indigo-50/40 border-b border-indigo-200/80' : 'bg-slate-50 border-b border-slate-200/80') 
+                    : 'bg-white hover:bg-slate-50/60'
+                ]"
+              >
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  
+                  <!-- Left: Chevron Icon + Title + Badges -->
+                  <div class="flex items-center space-x-2.5 min-w-0">
+                    <!-- Rotating Chevron Icon -->
                     <div
-                      class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-                      :class="sc.sendNextDay ? 'bg-blue-600' : 'bg-slate-300'"
+                      class="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform duration-200 shadow-2xs"
+                      :class="[
+                        isScheduleExpanded(sc.key) 
+                          ? 'rotate-180 bg-indigo-600 text-white shadow-xs' 
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      ]"
                     >
-                      <span
-                        class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-                        :class="sc.sendNextDay ? 'translate-x-5' : 'translate-x-0'"
-                      ></span>
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                      </svg>
+                    </div>
+
+                    <div class="min-w-0">
+                      <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                        <h4 class="text-sm sm:text-base font-bold text-slate-900 leading-snug truncate" x-text="sc.label"></h4>
+                        
+                        <!-- Main Duty Standout Badge (Maximize by default) -->
+                        <template x-if="sc.key === 'main_duty'">
+                          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                            ⭐ LỊCH CHÍNH (Tiểu đội 2)
+                          </span>
+                        </template>
+                      </div>
+
+                      <div class="flex items-center space-x-1.5 mt-0.5 text-xs text-slate-500 flex-wrap">
+                        <span class="font-mono text-[11px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200" x-text="'key: ' + sc.key"></span>
+                        <template x-if="sc.squad">
+                          <span class="text-[11px] text-slate-400" x-text="'• ' + getSquadDisplayName(sc.squad)"></span>
+                        </template>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </template>
 
-              <!-- Switches Rows -->
-              <div class="space-y-3 pt-1">
-                <!-- Toggle 2: Enable/Disable Auto Send -->
+                  <!-- Right: Summary Status Badges (Always visible at a glance) -->
+                  <div class="flex flex-wrap items-center gap-1.5 sm:gap-2 flex-shrink-0 justify-between md:justify-end">
+                    <!-- Status Badge (Enabled / Disabled) -->
+                    <span
+                      class="text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center space-x-1"
+                      :class="sc.enabled ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-600 border border-slate-200'"
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full" :class="sc.enabled ? 'bg-emerald-500' : 'bg-slate-400'"></span>
+                      <span x-text="sc.enabled ? 'BẬT' : 'TẮT'"></span>
+                    </span>
+
+                    <!-- Time or Manual Pill -->
+                    <template x-if="sc.type === 'leave_roster' || sc.type === 'leave_roster_stats'">
+                      <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                        ✋ Thủ công
+                      </span>
+                    </template>
+                    <template x-if="sc.type !== 'leave_roster' && sc.type !== 'leave_roster_stats'">
+                      <span class="text-[11px] font-mono font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center space-x-1">
+                        <span>🕒</span>
+                        <span x-text="sc.autoSendTime || 'Chưa hẹn'"></span>
+                      </span>
+                    </template>
+
+                    <!-- Send Next Day / Today Pill -->
+                    <template x-if="sc.type !== 'leave_roster' && sc.type !== 'leave_roster_stats'">
+                      <span
+                        class="text-[11px] font-semibold px-2 py-0.5 rounded-full border hidden sm:inline-flex"
+                        :class="sc.sendNextDay ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-amber-50 text-amber-700 border-amber-200'"
+                        x-text="sc.sendNextDay ? '📅 Ngày Mai' : '📅 Hôm Nay'"
+                      ></span>
+                    </template>
+
+                    <!-- Recipients Summary Pill -->
+                    <span class="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 hidden sm:inline-flex items-center space-x-1">
+                      <span>👥</span>
+                      <span x-text="(sc.recipients || []).length + ' nhóm'"></span>
+                    </span>
+
+                    <!-- Expand / Minimize Action Button -->
+                    <button
+                      type="button"
+                      class="touch-btn text-xs font-semibold px-2.5 py-1 rounded-xl border transition flex items-center space-x-1"
+                      :class="isScheduleExpanded(sc.key) ? 'bg-white text-indigo-700 border-indigo-200 shadow-2xs' : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'"
+                    >
+                      <span x-text="isScheduleExpanded(sc.key) ? 'Thu gọn' : 'Chi tiết'"></span>
+                      <span x-text="isScheduleExpanded(sc.key) ? '▲' : '▼'" class="text-[9px]"></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Accordion Card Body (Shown when maximized/expanded) -->
+              <div
+                x-show="isScheduleExpanded(sc.key)"
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0 -translate-y-2"
+                x-transition:enter-end="opacity-100 translate-y-0"
+                class="p-4 sm:p-5 space-y-4 bg-white"
+              >
+                <!-- Form Field 1: Sheet Tab for this Schedule -->
+                <div class="bg-slate-50/80 rounded-xl p-3.5 border border-slate-200/80 space-y-2">
+                  <div class="flex items-center justify-between">
+                    <label class="text-xs font-bold text-slate-700 flex items-center space-x-1">
+                      <span>📑</span>
+                      <span>Tên Tab Google Sheet (Riêng Cho Lịch Này):</span>
+                    </label>
+                    <button
+                      type="button"
+                      @click="sc.sheetTab = sc.defaultTab"
+                      class="text-indigo-600 hover:text-indigo-800 text-[11px] font-semibold hover:underline"
+                    >
+                      Khôi phục mặc định
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    x-model="sc.sheetTab"
+                    class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-base sm:text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:outline-none shadow-sm transition"
+                    :placeholder="sc.defaultTab || 'Nhập tên tab Sheet...'"
+                  />
+                  <div class="flex items-center justify-between text-[11px] text-slate-400">
+                    <span>Mặc định: <strong class="text-slate-600 font-mono" x-text="sc.defaultTab || '(Theo tiểu đội)'"></strong></span>
+                    <span x-show="sc.sheetTab && sc.sheetTab !== sc.defaultTab" class="text-amber-600 font-medium">⚠️ Đang dùng tab tùy biến</span>
+                  </div>
+                </div>
+
+                <!-- Form Field 2: Automated Schedule (Time & Next Day) OR Manual Dispatch Notice -->
+                <template x-if="sc.type === 'leave_roster' || sc.type === 'leave_roster_stats'">
+                  <div class="bg-blue-50/80 rounded-xl p-3.5 border border-blue-200 flex items-start space-x-2.5 text-xs text-blue-800">
+                    <span class="text-lg flex-shrink-0">ℹ️</span>
+                    <div>
+                      <p class="font-bold">Lịch gửi thủ công theo nhu cầu</p>
+                      <p class="text-blue-700 mt-0.5">
+                        Lịch này không cấu hình giờ gửi tự động. Quản trị viên có thể gửi trực tiếp từ tab <strong>Bảng điều khiển</strong> hoặc tab <strong>Thống kê tranh thủ (F13)</strong>.
+                      </p>
+                    </div>
+                  </div>
+                </template>
+
+                <template x-if="sc.type !== 'leave_roster' && sc.type !== 'leave_roster_stats'">
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                    <!-- Send Time & Preset Chips -->
+                    <div class="bg-slate-50/80 rounded-xl p-3.5 border border-slate-200/80 space-y-2 flex flex-col justify-between">
+                      <div>
+                        <label class="text-xs font-bold text-slate-700 flex items-center space-x-1">
+                          <span>🕒</span>
+                          <span>Giờ Tự Động Gửi (HH:MM):</span>
+                        </label>
+                        <p class="text-[11px] text-slate-500 mt-0.5">Định dạng 24h (ví dụ 21:00 hoặc 05:30)</p>
+                      </div>
+
+                      <div class="pt-1">
+                        <input
+                          type="text"
+                          x-model="sc.autoSendTime"
+                          placeholder="21:00"
+                          class="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-base sm:text-lg font-mono text-center font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:outline-none shadow-sm transition"
+                        />
+                      </div>
+
+                      <!-- Quick Presets -->
+                      <div class="flex items-center gap-1 pt-1 overflow-x-auto">
+                        <span class="text-[11px] text-slate-400 flex-shrink-0 mr-1">Gợi ý:</span>
+                        <button
+                          type="button"
+                          @click="setTimePreset(sc, '06:00')"
+                          class="touch-btn text-[11px] font-mono font-semibold px-2 py-1 rounded-lg bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 shadow-2xs"
+                        >06:00</button>
+                        <button
+                          type="button"
+                          @click="setTimePreset(sc, '11:30')"
+                          class="touch-btn text-[11px] font-mono font-semibold px-2 py-1 rounded-lg bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 shadow-2xs"
+                        >11:30</button>
+                        <button
+                          type="button"
+                          @click="setTimePreset(sc, '19:30')"
+                          class="touch-btn text-[11px] font-mono font-semibold px-2 py-1 rounded-lg bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 shadow-2xs"
+                        >19:30</button>
+                        <button
+                          type="button"
+                          @click="setTimePreset(sc, '21:00')"
+                          class="touch-btn text-[11px] font-mono font-semibold px-2 py-1 rounded-lg bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 shadow-2xs"
+                        >21:00</button>
+                      </div>
+                    </div>
+
+                    <!-- Send Next Day Toggle Switch -->
+                    <div
+                      @click="sc.sendNextDay = !sc.sendNextDay"
+                      class="touch-btn bg-slate-50/80 rounded-xl p-3.5 border border-slate-200/80 flex flex-col justify-between cursor-pointer hover:border-blue-300 transition"
+                    >
+                      <div>
+                        <div class="flex items-center justify-between">
+                          <span class="text-xs font-bold text-slate-800 flex items-center space-x-1">
+                            <span>📅</span>
+                            <span>Chế Độ Ngày Gửi:</span>
+                          </span>
+                          <span
+                            class="text-[11px] font-bold px-2 py-0.5 rounded-full"
+                            :class="sc.sendNextDay ? 'bg-blue-100 text-blue-800 border border-blue-200' : 'bg-amber-100 text-amber-800 border border-amber-200'"
+                            x-text="sc.sendNextDay ? 'Gửi Ngày Mai' : 'Gửi Hôm Nay'"
+                          ></span>
+                        </div>
+                        <p class="text-xs text-slate-600 mt-1.5 font-medium leading-relaxed">
+                          <span x-show="sc.sendNextDay">Tự động lấy dữ liệu lịch trực của <strong>ngày mai (+1)</strong>. Thường dùng khi gửi báo lịch vào buổi tối hôm trước.</span>
+                          <span x-show="!sc.sendNextDay">Tự động lấy dữ liệu lịch trực của <strong>hôm nay</strong>. Thường dùng khi gửi ca trực vào sáng sớm.</span>
+                        </p>
+                      </div>
+
+                      <div class="flex items-center justify-between pt-3 border-t border-slate-200/60 mt-2">
+                        <span class="text-xs text-slate-500">Chuyển sang <strong x-text="sc.sendNextDay ? 'Gửi Hôm Nay' : 'Gửi Ngày Mai'"></strong></span>
+                        <div
+                          class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out"
+                          :class="sc.sendNextDay ? 'bg-blue-600' : 'bg-slate-300'"
+                        >
+                          <span
+                            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                            :class="sc.sendNextDay ? 'translate-x-5' : 'translate-x-0'"
+                          ></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Form Field 3: Enable / Disable Schedule Toggle -->
                 <div
                   @click="sc.enabled = !sc.enabled"
-                  class="touch-btn bg-white rounded-xl p-3 border border-slate-200/70 flex items-center justify-between cursor-pointer"
+                  class="touch-btn rounded-xl p-3.5 border transition cursor-pointer flex items-center justify-between"
+                  :class="sc.enabled ? 'bg-emerald-50/60 border-emerald-200 hover:bg-emerald-50' : 'bg-slate-50/80 border-slate-200 hover:bg-slate-100/60'"
                 >
                   <div class="pr-3">
-                    <p class="text-xs sm:text-sm font-semibold text-slate-800">Kích hoạt lịch này</p>
-                    <p class="text-[11px] text-slate-500">Bật hoặc tạm tắt lịch này trên hệ thống.</p>
+                    <div class="flex items-center space-x-2">
+                      <span class="w-2.5 h-2.5 rounded-full" :class="sc.enabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'"></span>
+                      <p class="text-xs sm:text-sm font-bold text-slate-800">
+                        Kích hoạt lịch này trên hệ thống: 
+                        <span :class="sc.enabled ? 'text-emerald-700' : 'text-slate-500'" x-text="sc.enabled ? 'ĐANG BẬT' : 'ĐANG TẮT'"></span>
+                      </p>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-0.5">
+                      Bật để robot tự động chạy theo lịch hẹn và hiển thị đầy đủ trong bảng điều khiển.
+                    </p>
                   </div>
                   <div
-                    class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                    class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out"
                     :class="sc.enabled ? 'bg-emerald-600' : 'bg-slate-300'"
                   >
                     <span
@@ -861,27 +1101,33 @@
                   </div>
                 </div>
 
-                <!-- Section: Assigned Recipients (F12) -->
-                <div class="bg-white rounded-xl p-3.5 border border-slate-200/70 space-y-2">
+                <!-- Form Field 4: Assigned Recipients (F12) -->
+                <div class="bg-slate-50/80 rounded-xl p-3.5 sm:p-4 border border-slate-200/80 space-y-2.5">
                   <div class="flex items-center justify-between">
-                    <label class="text-xs font-semibold text-slate-700 flex items-center space-x-1">
+                    <label class="text-xs font-bold text-slate-700 flex items-center space-x-1.5">
                       <span>👥</span>
-                      <span>Người nhận lịch này (F12):</span>
+                      <span>Người Nhận Lịch Này (F12):</span>
                     </label>
-                    <span class="text-[11px] font-mono text-slate-400" x-text="(sc.recipients || []).length + ' người nhận'"></span>
+                    <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-600"
+                      x-text="(sc.recipients || []).length + ' nhóm đã gán'"
+                    ></span>
                   </div>
 
-                  <div class="flex flex-wrap gap-1.5 pt-1">
+                  <p class="text-[11px] text-slate-500">
+                    Nhấp vào từng nhóm dưới đây để thêm hoặc gỡ khỏi danh sách nhận lịch này:
+                  </p>
+
+                  <div class="flex flex-wrap gap-2 pt-1">
                     <template x-for="r in configData.recipients" :key="r.key">
                       <button
                         type="button"
                         @click="toggleScheduleRecipient(sc, r.key)"
-                        class="touch-btn px-2.5 py-1.5 rounded-xl text-xs font-medium transition flex items-center space-x-1 border"
-                        :class="(sc.recipients || []).includes(r.key) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'"
+                        class="touch-btn px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center space-x-1.5 border"
+                        :class="(sc.recipients || []).includes(r.key) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'"
                       >
-                        <span x-text="(sc.recipients || []).includes(r.key) ? '✓' : '＋'"></span>
+                        <span class="text-xs" x-text="(sc.recipients || []).includes(r.key) ? '✓' : '＋'"></span>
                         <span x-text="r.display_name"></span>
-                        <span class="text-[10px] opacity-75 font-mono" x-text="'(' + r.key + ')'"></span>
+                        <span class="text-[10px] opacity-80 font-mono" x-text="'(' + r.key + ')'"></span>
                       </button>
                     </template>
                   </div>
@@ -889,12 +1135,26 @@
                     Chưa có danh sách người nhận. Vui lòng thêm tại tab Người Nhận (F12).
                   </p>
                 </div>
+
+                <!-- Mini-Footer in Expanded Card: Quick Collapse Action -->
+                <div class="flex items-center justify-between pt-2 border-t border-slate-100 text-xs text-slate-400">
+                  <span>Nhóm nhận: <strong class="text-slate-600 font-normal" x-text="getRecipientNamesSummary(sc.recipients)"></strong></span>
+                  <button
+                    type="button"
+                    @click="toggleScheduleExpand(sc.key)"
+                    class="touch-btn text-xs font-semibold text-slate-500 hover:text-indigo-600 flex items-center space-x-1 py-1 px-2.5 rounded-lg hover:bg-slate-100 transition"
+                  >
+                    <span>▲</span>
+                    <span>Thu gọn lịch này</span>
+                  </button>
+                </div>
+
               </div>
             </div>
           </template>
         </div>
 
-        <!-- Desktop Bottom Save Button -->
+        <!-- Desktop Bottom Save Button Inside Section 2 -->
         <div class="pt-4 border-t border-slate-100 flex justify-end">
           <button
             @click="saveConfig()"
@@ -1391,6 +1651,7 @@
         actionLoading: null,
         schedules: [],
         configData: { squads: [], schedules: [], recipients: [] },
+        expandedSchedules: { main_duty: true },
         historyList: [],
         historyFilter: 'all',
         confirmSendAllModal: false,
@@ -1761,10 +2022,71 @@
                 })),
                 recipients: data.recipients || []
               };
+              if (!this.expandedSchedules || Object.keys(this.expandedSchedules).length === 0) {
+                this.expandedSchedules = { main_duty: true };
+              }
             }
           } catch (e) {
             this.showToast(e.message, 'error');
           }
+        },
+
+        isScheduleExpanded(key) {
+          if (!this.expandedSchedules) {
+            this.expandedSchedules = { main_duty: true };
+          }
+          if (this.expandedSchedules[key] === undefined) {
+            return key === 'main_duty';
+          }
+          return Boolean(this.expandedSchedules[key]);
+        },
+
+        toggleScheduleExpand(key) {
+          if (!this.expandedSchedules) {
+            this.expandedSchedules = { main_duty: true };
+          }
+          if (this.expandedSchedules[key] === undefined) {
+            this.expandedSchedules[key] = (key === 'main_duty');
+          }
+          this.expandedSchedules[key] = !this.expandedSchedules[key];
+        },
+
+        expandAllSchedules() {
+          if (!this.expandedSchedules) this.expandedSchedules = {};
+          if (this.configData?.schedules) {
+            this.configData.schedules.forEach(sc => {
+              this.expandedSchedules[sc.key] = true;
+            });
+          }
+        },
+
+        collapseAllSchedules() {
+          if (!this.expandedSchedules) this.expandedSchedules = {};
+          if (this.configData?.schedules) {
+            this.configData.schedules.forEach(sc => {
+              this.expandedSchedules[sc.key] = false;
+            });
+          }
+        },
+
+        get configActiveCount() {
+          return (this.configData?.schedules || []).filter(s => s.enabled).length;
+        },
+
+        getSquadDisplayName(squadKey) {
+          if (!squadKey) return '';
+          const sq = (this.configData.squads || []).find(s => s.key === squadKey);
+          return sq ? sq.displayName : squadKey;
+        },
+
+        getRecipientNamesSummary(recipientsList) {
+          if (!recipientsList || recipientsList.length === 0) return 'Chưa gán nhóm';
+          const names = recipientsList.map(rKey => {
+            const found = (this.configData.recipients || []).find(r => r.key === rKey);
+            return found ? found.display_name : rKey;
+          });
+          if (names.length <= 2) return names.join(', ');
+          return names.slice(0, 2).join(', ') + ` (+${names.length - 2})`;
         },
 
         setTimePreset(sc, time) {
