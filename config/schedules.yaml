@@ -1,7 +1,7 @@
 squads:
   main:
     display_name: "Tiểu đội 2"
-    sheet_tab_gate_duty: "Lịch Trực Cổng & Phân Công Nhiệ"
+    sheet_tab_gate_duty: "Lịch Trực Cổng & Phân Công Nhiệm Vụ Tiểu Đội"
     header_style: two_row_merged
     overnight: false
     send_next_day: true          # Tự động gửi lịch ngày mai vào buổi tối hôm trước
