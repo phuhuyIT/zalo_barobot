@@ -10,3 +10,4 @@ data
 service-account.json
 service-account*.json
 logs*.json
+zalo-image-test/
