@@ -32,6 +32,28 @@ function isTimeMatching(targetTimeStr: string, now: Date): boolean {
 }
 
 /**
+ * Tính khoảng cách phút từ timeA đến timeB trong chu kỳ 24h (HH:MM -> HH:MM).
+ */
+function getMinutesDifference(fromTime: string, toTime: string): number {
+  const [fh, fm] = fromTime.split(':').map(Number);
+  const [th, tm] = toTime.split(':').map(Number);
+  let diff = (th * 60 + tm) - (fh * 60 + fm);
+  if (diff < 0) diff += 24 * 60;
+  return diff;
+}
+
+/**
+ * Tính toán giờ cộng thêm N phút (HH:MM).
+ */
+function addMinutesToTime(timeStr: string, minutesToAdd: number): string {
+  const [h, m] = timeStr.split(':').map(Number);
+  const totalMinutes = (h * 60 + m + minutesToAdd) % (24 * 60);
+  const newH = Math.floor(totalMinutes / 60);
+  const newM = totalMinutes % 60;
+  return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+}
+
+/**
  * Tính toán giờ nhắc nhở trước N phút.
  */
 function subtractMinutesFromTime(timeStr: string, minutesToSubtract: number): string | null {
@@ -116,16 +138,43 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
       }
 
       // 2b. Cảnh báo SAU giờ gửi nếu chưa gửi thành công (Failure alert)
-      if (rem.remind_if_not_sent_by && isTimeMatching(rem.remind_if_not_sent_by, now)) {
+      let alertTime: string | null = rem.remind_if_not_sent_by || null;
+
+      if (effective.effectiveSendTime) {
+        if (alertTime) {
+          // Tính offset giữa alertTime và auto_send_time gốc
+          const baseSendTime = schedule.auto_send_time;
+          let offsetMinutes = 10;
+          if (baseSendTime) {
+            const diff = getMinutesDifference(baseSendTime, alertTime);
+            // Nếu diff hợp lý (> 0 và < 12h), giữ nguyên khoảng cách offset này
+            if (diff > 0 && diff < 12 * 60) {
+              offsetMinutes = diff;
+            }
+          }
+          // Nếu effectiveSendTime khác baseSendTime HOẶC alertTime cấu hình rơi vào trước/bằng effectiveSendTime:
+          // Tự động dịch chuyển alertTime theo effectiveSendTime + offsetMinutes
+          const currentDiff = getMinutesDifference(effective.effectiveSendTime, alertTime);
+          if (effective.effectiveSendTime !== baseSendTime || currentDiff === 0 || currentDiff > 12 * 60) {
+            alertTime = addMinutesToTime(effective.effectiveSendTime, offsetMinutes);
+          }
+        } else {
+          // Mặc định cảnh báo sau 10 phút nếu chưa gửi thành công
+          alertTime = addMinutesToTime(effective.effectiveSendTime, 10);
+        }
+      }
+
+      if (alertTime && isTimeMatching(alertTime, now)) {
         const alertKey = `alert_failed_${rem.schedule_key}`;
         const alreadyAlerted = hasSentToday(alertKey, adminChatId, nowDmy);
 
         // Kiểm tra xem lịch đã gửi thành công hôm nay chưa
-        const firstRecipientChat = getRecipientChatId(schedule.recipients[0], config);
+        const recipientKey = effective.effectiveRecipients[0] || schedule.recipients[0];
+        const firstRecipientChat = getRecipientChatId(recipientKey, config);
         const hasSent = hasSentToday(rem.schedule_key, firstRecipientChat, lookupDate);
 
         if (!hasSent && !alreadyAlerted) {
-          const alertMsg = `⚠️ CẢNH BÁO: Đã qua mốc ${rem.remind_if_not_sent_by} nhưng lịch "${schedule.label}" vẫn CHƯA ĐƯỢC GỬI THÀNH CÔNG hôm nay! Vui lòng kiểm tra lại hệ thống và Google Sheet!`;
+          const alertMsg = `⚠️ CẢNH BÁO: Đã qua mốc ${alertTime} nhưng lịch "${schedule.label}" vẫn CHƯA ĐƯỢC GỬI THÀNH CÔNG hôm nay! Vui lòng kiểm tra lại hệ thống và Google Sheet!`;
           try {
             await zalo.sendMessage(adminChatId, alertMsg);
             saveLastMessage(alertKey, adminChatId, `alert_${Date.now()}`, nowDmy);
