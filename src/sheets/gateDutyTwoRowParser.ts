@@ -23,6 +23,8 @@ import { isPlaceholderOrEmpty, normalizeDate } from './dateUtils';
 export interface ColumnHeader {
   index: number;
   name: string;
+  parentName?: string;
+  subName?: string;
 }
 
 export interface ParsedTwoRowLayout {
@@ -91,10 +93,15 @@ export function detectTwoRowLayout(rows: any[][]): ParsedTwoRowLayout {
     }
 
     let combinedName = '';
+    let parentName: string | undefined = undefined;
+    let subName: string | undefined = undefined;
+
     if (h1 !== '') {
       lastH1 = h1;
       if (h2 !== '') {
         combinedName = `${h1} - ${h2}`;
+        parentName = h1;
+        subName = h2;
       } else {
         combinedName = h1;
       }
@@ -102,13 +109,20 @@ export function detectTwoRowLayout(rows: any[][]): ParsedTwoRowLayout {
       // h1 rỗng nhưng h2 có dữ liệu -> forward-fill lastH1
       if (lastH1 !== '' && h2 !== '') {
         combinedName = `${lastH1} - ${h2}`;
+        parentName = lastH1;
+        subName = h2;
       } else {
         // Không có tiêu đề hợp lệ để ghép -> dừng quét
         break;
       }
     }
 
-    taskColumns.push({ index: c, name: combinedName });
+    taskColumns.push({
+      index: c,
+      name: combinedName,
+      parentName,
+      subName,
+    });
   }
 
   return {
@@ -149,6 +163,8 @@ export function parseGateDutyTwoRow(
           tasks.push({
             taskName: col.name,
             assignee: String(rawAssignee).trim(),
+            parentTask: col.parentName,
+            subTask: col.subName,
           });
         }
       }

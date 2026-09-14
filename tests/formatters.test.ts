@@ -16,8 +16,8 @@ describe('Message Formatters', () => {
     tasks: [
       { taskName: 'Ca 1 (05:30 - 06:00) + quét phòng ngủ', assignee: 'Lương Văn Tài' },
       { taskName: 'Ca 2 (06:00 - 07:00)', assignee: 'Bùi Nguyễn Đăng Khoa' },
-      { taskName: 'Đi tuần - Ca 1', assignee: 'Phạm Hoàng Phúc' },
-      { taskName: 'Đi tuần - Ca 2', assignee: 'Phạm Hữu Luân' },
+      { taskName: 'Đi tuần - Ca 1', assignee: 'Phạm Hoàng Phúc', parentTask: 'Đi tuần', subTask: 'Ca 1' },
+      { taskName: 'Đi tuần - Ca 2', assignee: 'Phạm Hữu Luân', parentTask: 'Đi tuần', subTask: 'Ca 2' },
       { taskName: 'Trực ban', assignee: 'Mai Đức Tín' },
     ],
   };
@@ -44,7 +44,9 @@ describe('Message Formatters', () => {
     expect(text).toContain('📢 Lịch trực cổng ngày 01/09/2026');
     expect(text).toContain('Đơn vị: Tiểu đội 2 - Trung đội 1');
     expect(text).toContain('🔹 Ca 1 (05:30 - 06:00) + quét phòng ngủ: Lương Văn Tài');
-    expect(text).toContain('🔹 Đi tuần - Ca 1: Phạm Hoàng Phúc');
+    expect(text).toContain('🔹 Đi tuần:');
+    expect(text).toContain('      - Ca 1: Phạm Hoàng Phúc');
+    expect(text).toContain('      - Ca 2: Phạm Hữu Luân');
     expect(text).toContain('🔹 Trực ban: Mai Đức Tín');
   });
 
@@ -60,11 +62,32 @@ describe('Message Formatters', () => {
   it('formats patrol-only schedule (F7)', () => {
     const text = formatPatrolOnlyMessage(sampleDayDuty);
     expect(text).toContain('📢 Lịch đi tuần ngày 01/09/2026');
-    expect(text).toContain('🔹 Đi tuần - Ca 1: Phạm Hoàng Phúc');
-    expect(text).toContain('🔹 Đi tuần - Ca 2: Phạm Hữu Luân');
+    expect(text).toContain('🔹 Đi tuần:');
+    expect(text).toContain('      - Ca 1: Phạm Hoàng Phúc');
+    expect(text).toContain('      - Ca 2: Phạm Hữu Luân');
     // Non-patrol tasks should be excluded
     expect(text).not.toContain('Trực ban');
     expect(text).not.toContain('Ca 1 (05:30 - 06:00)');
+  });
+
+  it('formats 2-layer title like "Đi tuần" with "Người 1", "Người 2"', () => {
+    const twoLayerDuty: DailyDuty = {
+      date: '01/09/2026',
+      unit: 'Đơn vị: Tiểu đội 2 - Trung đội 1',
+      isOvernight: false,
+      tasks: [
+        { taskName: 'Ca 1', assignee: 'Lương Văn Tài' },
+        { taskName: 'Đi tuần - Người 1', assignee: 'Nguyễn Văn A', parentTask: 'Đi tuần', subTask: 'Người 1' },
+        { taskName: 'Đi tuần - Người 2', assignee: 'Nguyễn Văn B', parentTask: 'Đi tuần', subTask: 'Người 2' },
+        { taskName: 'Trực ban', assignee: 'Mai Đức Tín' },
+      ],
+    };
+
+    const text = formatGateDutyMessage(twoLayerDuty);
+    expect(text).toContain('🔹 Đi tuần:\n      - Người 1: Nguyễn Văn A\n      - Người 2: Nguyễn Văn B');
+
+    const patrolText = formatPatrolOnlyMessage(twoLayerDuty);
+    expect(patrolText).toContain('🔹 Đi tuần:\n      - Người 1: Nguyễn Văn A\n      - Người 2: Nguyễn Văn B');
   });
 
   it('formats leave roster schedule (F5)', () => {

@@ -16,8 +16,8 @@ export function formatPatrolOnlyMessage(duty: DailyDuty | null, targetDate?: str
 
   // Lọc riêng các nhiệm vụ đi tuần / tuần tra
   const patrolTasks = duty.tasks.filter((t) => {
-    const nameLower = t.taskName.toLowerCase();
-    return nameLower.includes('đi tuần') || nameLower.includes('tuần tra');
+    const fullName = `${t.parentTask || ''} ${t.taskName}`.toLowerCase();
+    return fullName.includes('đi tuần') || fullName.includes('tuần tra');
   });
 
   if (patrolTasks.length === 0) {
@@ -31,8 +31,18 @@ export function formatPatrolOnlyMessage(duty: DailyDuty | null, targetDate?: str
   }
   lines.push('');
 
+  let currentParent: string | null = null;
   for (const task of patrolTasks) {
-    lines.push(`🔹 ${task.taskName}: ${task.assignee}`);
+    if (task.parentTask && task.subTask) {
+      if (task.parentTask !== currentParent) {
+        currentParent = task.parentTask;
+        lines.push(`🔹 ${task.parentTask}:`);
+      }
+      lines.push(`      - ${task.subTask}: ${task.assignee}`);
+    } else {
+      currentParent = null;
+      lines.push(`🔹 ${task.taskName}: ${task.assignee}`);
+    }
   }
 
   return lines.join('\n');

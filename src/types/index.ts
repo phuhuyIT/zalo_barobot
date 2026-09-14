@@ -39,6 +39,8 @@ export interface AppConfig {
 export interface DutyTask {
   taskName: string;
   assignee: string;
+  parentTask?: string;
+  subTask?: string;
 }
 
 export interface DailyDuty {

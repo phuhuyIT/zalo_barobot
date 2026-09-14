@@ -48,8 +48,18 @@ export function formatGateDutyMessage(duty: DailyDuty | null, targetDate?: strin
 
   lines.push(''); // Dòng trống ngăn cách
 
+  let currentParent: string | null = null;
   for (const task of duty.tasks) {
-    lines.push(`🔹 ${task.taskName}: ${task.assignee}`);
+    if (task.parentTask && task.subTask) {
+      if (task.parentTask !== currentParent) {
+        currentParent = task.parentTask;
+        lines.push(`🔹 ${task.parentTask}:`);
+      }
+      lines.push(`      - ${task.subTask}: ${task.assignee}`);
+    } else {
+      currentParent = null;
+      lines.push(`🔹 ${task.taskName}: ${task.assignee}`);
+    }
   }
 
   return lines.join('\n');

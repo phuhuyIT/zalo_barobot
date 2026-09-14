@@ -164,6 +164,14 @@ describe('Two-Row Merged Parser (Main Squad)', () => {
     expect(colNames).toContain('Đi tuần - Ca 1');
     expect(colNames).toContain('Đi tuần - Ca 2');
     expect(colNames).toContain('Trực ban');
+
+    // Kiểm tra cấu trúc 2 tầng (parentName & subName)
+    const patrolCol1 = layout.taskColumns.find((c) => c.name === 'Đi tuần - Ca 1');
+    expect(patrolCol1?.parentName).toBe('Đi tuần');
+    expect(patrolCol1?.subName).toBe('Ca 1');
+    const patrolCol2 = layout.taskColumns.find((c) => c.name === 'Đi tuần - Ca 2');
+    expect(patrolCol2?.parentName).toBe('Đi tuần');
+    expect(patrolCol2?.subName).toBe('Ca 2');
   });
 
   it('parses duty schedule for specific date and skips empty/placeholder cells', () => {
@@ -180,9 +188,37 @@ describe('Two-Row Merged Parser (Main Squad)', () => {
     expect(taskMap['Đi tuần - Ca 1']).toBe('Phạm Hoàng Phúc');
     expect(taskMap['Đi tuần - Ca 2']).toBe('Phạm Hữu Luân');
     expect(taskMap['Trực ban']).toBe('Mai Đức Tín');
+
+    const patrolTask1 = duty!.tasks.find((t) => t.taskName === 'Đi tuần - Ca 1');
+    expect(patrolTask1?.parentTask).toBe('Đi tuần');
+    expect(patrolTask1?.subTask).toBe('Ca 1');
+
     // "Ở không" và "Ghi chú" rỗng -> không có trong tasks
     expect(taskMap['Ở không']).toBeUndefined();
     expect(taskMap['Ghi chú']).toBeUndefined();
+  });
+
+  it('parses 2-layer title like "Đi tuần" with "Người 1", "Người 2"', () => {
+    const sheetWithNguoi = [
+      ['Đơn vị: Tiểu đội 2'],
+      ['Thứ', 'Ngày', 'Ca 1', 'Đi tuần', ''],
+      ['', '', '', 'Người 1', 'Người 2'],
+      ['Thứ Hai', '15/09/2026', 'Nguyễn Văn A', 'Trần Văn B', 'Lê Văn C'],
+    ];
+
+    const duty = parseGateDutyTwoRow(sheetWithNguoi, '15/09/2026');
+    expect(duty).not.toBeNull();
+    expect(duty?.tasks).toHaveLength(3);
+
+    const n1 = duty!.tasks.find((t) => t.taskName === 'Đi tuần - Người 1');
+    expect(n1?.assignee).toBe('Trần Văn B');
+    expect(n1?.parentTask).toBe('Đi tuần');
+    expect(n1?.subTask).toBe('Người 1');
+
+    const n2 = duty!.tasks.find((t) => t.taskName === 'Đi tuần - Người 2');
+    expect(n2?.assignee).toBe('Lê Văn C');
+    expect(n2?.parentTask).toBe('Đi tuần');
+    expect(n2?.subTask).toBe('Người 2');
   });
 
   it('handles completely different layout at different row and column positions', () => {
