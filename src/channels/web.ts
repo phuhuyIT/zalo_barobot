@@ -22,6 +22,8 @@ import {
   getRecipient,
   saveRecipient,
   deleteRecipient,
+  resetScheduleSentStatus,
+  clearWebhookLog,
 } from '../store';
 import { fetchLeaveStats, getVietnamTimeParts } from '../sheets';
 import { RuntimeConfigOverride } from '../types';
@@ -31,8 +33,14 @@ import {
   updatePatrolMember,
   deletePatrolMember,
   getPatrolDailyStatus,
+  getAllPatrolDailyStatusForDate,
+  getPatrolSummaryStatus,
+  getPatrolSiteConfigs,
+  getPatrolSiteConfig,
+  savePatrolSiteConfig,
   runPatrolReminders,
   handlePatrolCommand,
+  resetPatrolDailyStatus,
   getSquad1LeaderUserId,
   getPatrolGroupId,
 } from '../patrol';
@@ -485,22 +493,76 @@ webRouter.delete('/api/patrol/members/:id', (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/patrol/sites - Lấy danh sách cấu hình các site đi tuần
+ */
+webRouter.get('/api/patrol/sites', (req: Request, res: Response) => {
+  try {
+    const sites = getPatrolSiteConfigs();
+    res.json({ success: true, sites });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * PUT /api/patrol/sites/:siteKey - Cập nhật cấu hình site đi tuần (F13 & two sites)
+ */
+webRouter.put('/api/patrol/sites/:siteKey', (req: Request, res: Response) => {
+  try {
+    const siteKey = String(req.params.siteKey);
+    const {
+      displayName,
+      leaderUserId,
+      chatId,
+      mergeWithSheet,
+      reminderTimes,
+      maxReminders,
+      enabled,
+    } = req.body || {};
+
+    const updated = savePatrolSiteConfig({
+      siteKey,
+      displayName,
+      leaderUserId,
+      chatId,
+      mergeWithSheet,
+      reminderTimes,
+      maxReminders,
+      enabled,
+    });
+
+    res.json({ success: true, site: updated });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
  * GET /api/patrol/status - Lấy trạng thái đi tuần của ngày hôm nay (hoặc targetDate)
  */
 webRouter.get('/api/patrol/status', (req: Request, res: Response) => {
   try {
     const targetDate = (req.query.date as string) || getVietnamTimeParts().dateDMY;
-    const status = getPatrolDailyStatus(targetDate);
+    const sites = getPatrolSiteConfigs();
+    const dailyStatuses = getAllPatrolDailyStatusForDate(targetDate);
+    const summaryStatus = getPatrolSummaryStatus(targetDate);
+    const site1Status = getPatrolDailyStatus(targetDate, 'site_1');
+
     res.json({
       success: true,
       date: targetDate,
-      status: status || {
+      status: site1Status || {
         date: targetDate,
+        siteKey: 'site_1',
         submitted: false,
         reminderCount: 0,
         selectedMembers: [],
+        shifts: [],
         status: 'pending',
       },
+      sites,
+      dailyStatuses,
+      summaryStatus,
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -512,9 +574,10 @@ webRouter.get('/api/patrol/status', (req: Request, res: Response) => {
  */
 webRouter.post('/api/patrol/test-reminders', async (req: Request, res: Response) => {
   try {
-    const { time } = req.body || {};
+    const { time, siteKey } = req.body || {};
     const result = await runPatrolReminders(new Date(), {
       overrideTimeHM: time || '06:30',
+      targetSiteKey: siteKey || undefined,
     });
     res.json({ success: true, result });
   } catch (error: any) {
@@ -523,18 +586,31 @@ webRouter.post('/api/patrol/test-reminders', async (req: Request, res: Response)
 });
 
 /**
- * POST /api/patrol/simulate-command - Giả lập nhận lệnh tuantra từ Tiểu đội trưởng 1
+ * POST /api/patrol/simulate-command - Giả lập nhận lệnh tuantra từ người báo cáo
  */
 webRouter.post('/api/patrol/simulate-command', async (req: Request, res: Response) => {
   try {
-    const { text, senderId, chatId, messageId } = req.body || {};
-    const defaultSender = getSquad1LeaderUserId() || 'squad1_leader_test';
-    const defaultChat = getPatrolGroupId() || 'patrol_group_test';
+    const { text, senderId, chatId, messageId, siteKey } = req.body || {};
+
+    let effectiveSender = senderId;
+    let effectiveChat = chatId;
+
+    if (!effectiveSender) {
+      if (siteKey === 'site_2') {
+        const s2Config = getPatrolSiteConfig('site_2');
+        effectiveSender = s2Config?.leaderUserId || process.env.SITE_2_LEADER_USER_ID || 'site2_leader_test';
+        effectiveChat = s2Config?.chatId || process.env.SITE_2_PATROL_GROUP_ID || effectiveSender;
+      } else {
+        const s1Config = getPatrolSiteConfig('site_1');
+        effectiveSender = s1Config?.leaderUserId || getSquad1LeaderUserId() || 'squad1_leader_test';
+        effectiveChat = s1Config?.chatId || getPatrolGroupId() || effectiveSender;
+      }
+    }
 
     const result = await handlePatrolCommand({
       text: text || 'tuantra',
-      senderId: senderId || defaultSender,
-      chatId: chatId || defaultChat,
+      senderId: effectiveSender,
+      chatId: effectiveChat || effectiveSender,
       messageId: messageId || `sim_${Date.now()}`,
     });
 
@@ -543,3 +619,46 @@ webRouter.post('/api/patrol/simulate-command', async (req: Request, res: Respons
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+/**
+ * POST /api/patrol/reset - Đặt lại trạng thái nộp lịch tuần tra để test lại
+ */
+webRouter.post('/api/patrol/reset', (req: Request, res: Response) => {
+  try {
+    const targetDate = (req.body?.date as string) || getVietnamTimeParts().dateDMY;
+    const siteKey = req.body?.siteKey ? String(req.body.siteKey) : undefined;
+
+    const result = resetPatrolDailyStatus(targetDate, siteKey);
+    res.json({
+      success: true,
+      message: `Đã đặt lại trạng thái tuần tra ngày ${targetDate} thành công.`,
+      result,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/system/reset-all - Đặt lại toàn bộ trạng thái nộp lịch & lịch sử hôm nay
+ */
+webRouter.post('/api/system/reset-all', (req: Request, res: Response) => {
+  try {
+    const targetDate = (req.body?.date as string) || getVietnamTimeParts().dateDMY;
+    const isAll = Boolean(req.body?.isAll);
+
+    const patrolRes = resetPatrolDailyStatus(isAll ? undefined : targetDate, undefined);
+    const schedRes = resetScheduleSentStatus(isAll ? undefined : targetDate, undefined);
+    clearWebhookLog();
+
+    res.json({
+      success: true,
+      message: `Đã đặt lại toàn bộ trạng thái kiểm thử thành công.`,
+      patrol: patrolRes,
+      schedule: schedRes,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+

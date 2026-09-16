@@ -557,3 +557,47 @@ export function seedDefaultRecipients(
     // Không làm gián đoạn nếu bảng chưa sẵn sàng
   }
 }
+
+/**
+ * Đặt lại (reset/xóa) trạng thái đã gửi trong ngày (last_message) và lịch sử gửi (send_history) để kiểm thử.
+ */
+export function resetScheduleSentStatus(
+  date?: string,
+  scheduleKey?: string,
+  database?: Database.Database
+): { deletedLastMessage: number; deletedHistory: number } {
+  const d = database || getDatabase();
+  let deletedLastMessage = 0;
+  let deletedHistory = 0;
+
+  if (date && scheduleKey) {
+    const info = d.prepare(`DELETE FROM last_message WHERE sent_date = ? AND schedule_key = ?`).run(date, scheduleKey);
+    deletedLastMessage = info.changes;
+  } else if (date) {
+    const info = d.prepare(`DELETE FROM last_message WHERE sent_date = ?`).run(date);
+    deletedLastMessage = info.changes;
+  } else {
+    const info1 = d.prepare(`DELETE FROM last_message`).run();
+    const info2 = d.prepare(`DELETE FROM send_history`).run();
+    deletedLastMessage = info1.changes;
+    deletedHistory = info2.changes;
+  }
+
+  return { deletedLastMessage, deletedHistory };
+}
+
+/**
+ * Xóa trắng file data/webhook.log
+ */
+export function clearWebhookLog(): boolean {
+  try {
+    const logPath = path.resolve(process.cwd(), 'data/webhook.log');
+    if (fs.existsSync(logPath)) {
+      fs.writeFileSync(logPath, '');
+    }
+    return true;
+  } catch (err: unknown) {
+    console.error('[Store] Lỗi xóa file webhook.log:', err);
+    return false;
+  }
+}

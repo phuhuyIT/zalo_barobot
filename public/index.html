@@ -135,7 +135,7 @@
           class="px-3 py-1.5 rounded-lg text-sm font-semibold transition flex items-center space-x-1.5"
         >
           <span>🛡️</span>
-          <span>Đi tuần TĐ 1</span>
+          <span>Đi tuần (2 Trụ sở)</span>
         </button>
       </nav>
 
@@ -1339,121 +1339,327 @@
         <div>
           <div class="flex items-center space-x-2">
             <span class="text-2xl">🛡️</span>
-            <h2 class="text-xl sm:text-2xl font-bold text-slate-800">Đi Tuần & Thành Viên Tiểu Đội 1</h2>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800">Đi Tuần & Quân Số Ban CHQS Phường</h2>
           </div>
-          <p class="text-xs sm:text-sm text-slate-500 mt-1">Quản lý danh sách thành viên Tiểu đội 1, theo dõi trạng thái nộp lịch và kiểm tra tính năng nhắc nhở</p>
+          <p class="text-xs sm:text-sm text-slate-500 mt-1">Quản lý quân số Ban CHQS phường phục vụ chuẩn hóa tên đi tuần cho cả 2 trụ sở, theo dõi trạng thái nộp lịch và kiểm tra tính năng nhắc nhở</p>
         </div>
-        <button
-          @click="fetchPatrolData()"
-          class="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-xs sm:text-sm font-semibold hover:bg-indigo-100 transition flex items-center space-x-1.5"
-        >
-          <span>🔄</span>
-          <span>Làm mới</span>
-        </button>
+        <div class="flex items-center space-x-2">
+          <button
+            @click="resetPatrolTestState()"
+            class="px-3.5 py-2 bg-rose-50 text-rose-600 rounded-xl text-xs sm:text-sm font-semibold hover:bg-rose-100 transition flex items-center space-x-1.5"
+            title="Xóa trạng thái đã nộp và số lần nhắc hôm nay để test lại từ đầu"
+          >
+            <span>🧹</span>
+            <span>Đặt lại trạng thái test</span>
+          </button>
+          <button
+            @click="fetchPatrolData()"
+            class="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-xs sm:text-sm font-semibold hover:bg-indigo-100 transition flex items-center space-x-1.5"
+          >
+            <span>🔄</span>
+            <span>Làm mới</span>
+          </button>
+        </div>
       </div>
 
-      <!-- Top Summary Cards -->
+      <!-- Top Summary Cards: 2 Sites + Combined Report -->
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         
-        <!-- Card 1: Today Status -->
+        <!-- Card 1: Tân Phước Khánh Status -->
         <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
           <div class="flex items-center justify-between mb-3">
-            <h3 class="text-sm font-bold text-slate-700 uppercase tracking-wider">Trạng Thái Hôm Nay</h3>
-            <span
-              class="px-2.5 py-1 text-xs rounded-full font-bold"
-              :class="patrolStatus?.submitted ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'"
-              x-text="patrolStatus?.submitted ? '✅ Đã nộp lịch' : '⏳ Chưa nộp lịch'"
-            ></span>
+            <div>
+              <h3 class="text-sm font-bold text-slate-800">Trụ sở 1 (Tân Phước Khánh)</h3>
+              <span class="text-xs text-indigo-600 font-medium">Ghép lịch Google Sheet</span>
+            </div>
+            <template x-if="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.submitted">
+              <span
+                class="px-2.5 py-1 text-xs rounded-full font-bold"
+                :class="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.hasPatrol ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'"
+                x-text="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.hasPatrol ? '✅ Đã nộp' : '🚫 Báo nghỉ'"
+              ></span>
+            </template>
+            <template x-if="!patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.submitted">
+              <span class="px-2.5 py-1 text-xs rounded-full font-bold bg-amber-100 text-amber-700">⏳ Chưa nộp</span>
+            </template>
           </div>
           <div class="space-y-2 text-sm">
-            <div class="flex justify-between text-slate-600">
-              <span>Ngày:</span>
-              <span class="font-semibold text-slate-800" x-text="patrolStatus?.date || 'Hôm nay'"></span>
+            <div class="flex justify-between text-slate-600 text-xs">
+              <span>Số lần nhắc:</span>
+              <span class="font-semibold text-slate-800" x-text="(patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.reminderCount || 0) + ' / 3 lần'"></span>
             </div>
-            <div class="flex justify-between text-slate-600">
-              <span>Số lần nhắc nhở:</span>
-              <span class="font-semibold text-slate-800" x-text="(patrolStatus?.reminderCount || 0) + ' / 3 lần'"></span>
-            </div>
-            <div class="flex justify-between text-slate-600">
+            <div class="flex justify-between text-slate-600 text-xs">
               <span>Nhắc gần nhất:</span>
-              <span class="font-semibold text-slate-800" x-text="patrolStatus?.lastReminderAt || 'Chưa gửi'"></span>
+              <span class="font-semibold text-slate-800" x-text="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.lastReminderAt || 'Chưa gửi'"></span>
             </div>
             <div class="pt-2 border-t border-slate-100">
-              <span class="text-xs text-slate-500 block mb-1">Thành viên đi tuần hôm nay:</span>
-              <template x-if="patrolStatus?.selectedMembers && patrolStatus.selectedMembers.length > 0">
-                <div class="flex flex-wrap gap-1">
-                  <template x-for="m in patrolStatus.selectedMembers" :key="m">
-                    <span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-md font-semibold" x-text="m"></span>
+              <span class="text-xs text-slate-500 block mb-1">Lịch ca hôm nay:</span>
+              <template x-if="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.shifts?.length > 0">
+                <div class="space-y-1">
+                  <template x-for="sh in (patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.shifts || [])" :key="sh.shiftNumber">
+                    <div class="text-xs bg-slate-50 rounded p-1">
+                      <span class="font-bold text-slate-700" x-text="(sh.shiftLabel || ('Ca ' + sh.shiftNumber)) + ': '"></span>
+                      <span class="text-slate-600" x-text="sh.members.join(', ')"></span>
+                    </div>
                   </template>
                 </div>
               </template>
-              <template x-if="!patrolStatus?.selectedMembers || patrolStatus.selectedMembers.length === 0">
-                <span class="text-xs text-slate-400 italic">Chưa có danh sách</span>
+              <template x-if="!patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.shifts || patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.shifts?.length === 0">
+                <span class="text-xs text-slate-400 italic" x-text="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.submitted ? '(Không có ca tuần hôm nay)' : 'Chưa có dữ liệu'"></span>
               </template>
             </div>
           </div>
         </div>
 
-        <!-- Card 2: Manual Test Reminders -->
+        <!-- Card 2: Thạnh Hội Status -->
         <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
           <div class="flex items-center justify-between mb-3">
-            <h3 class="text-sm font-bold text-slate-700 uppercase tracking-wider">Test Nhắc Nhở (Manual)</h3>
-            <span class="text-xs text-slate-400">06:30 - 06:40</span>
+            <div>
+              <h3 class="text-sm font-bold text-slate-800">Trụ sở 2 (Thạnh Hội)</h3>
+              <span class="text-xs text-amber-600 font-medium">Báo cáo độc lập</span>
+            </div>
+            <template x-if="patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.submitted">
+              <span
+                class="px-2.5 py-1 text-xs rounded-full font-bold"
+                :class="patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.hasPatrol ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'"
+                x-text="patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.hasPatrol ? '✅ Đã nộp' : '🚫 Báo nghỉ'"
+              ></span>
+            </template>
+            <template x-if="!patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.submitted">
+              <span class="px-2.5 py-1 text-xs rounded-full font-bold bg-amber-100 text-amber-700">⏳ Chưa nộp</span>
+            </template>
           </div>
-          <p class="text-xs text-slate-500 mb-3">Giả lập kiểm tra và gửi nhắc nhở tới Tiểu đội trưởng 1 tại các mốc giờ quy định mà không cần đợi tới sáng.</p>
-          <div class="space-y-2">
-            <div class="flex space-x-2">
-              <select
-                x-model="testReminderTime"
-                class="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex-1"
-              >
-                <option value="06:30">06:30 (Lần 1)</option>
-                <option value="06:35">06:35 (Lần 2)</option>
-                <option value="06:40">06:40 (Lần 3)</option>
-              </select>
-              <button
-                @click="triggerTestReminder()"
-                class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition"
-              >
-                Chạy thử
-              </button>
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between text-slate-600 text-xs">
+              <span>Số lần nhắc:</span>
+              <span class="font-semibold text-slate-800" x-text="(patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.reminderCount || 0) + ' / 3 lần'"></span>
+            </div>
+            <div class="flex justify-between text-slate-600 text-xs">
+              <span>Nhắc gần nhất:</span>
+              <span class="font-semibold text-slate-800" x-text="patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.lastReminderAt || 'Chưa gửi'"></span>
+            </div>
+            <div class="pt-2 border-t border-slate-100">
+              <span class="text-xs text-slate-500 block mb-1">Lịch ca hôm nay:</span>
+              <template x-if="patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.shifts?.length > 0">
+                <div class="space-y-1">
+                  <template x-for="sh in (patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.shifts || [])" :key="sh.shiftNumber">
+                    <div class="text-xs bg-slate-50 rounded p-1">
+                      <span class="font-bold text-slate-700" x-text="(sh.shiftLabel || ('Ca ' + sh.shiftNumber)) + ': '"></span>
+                      <span class="text-slate-600" x-text="sh.members.join(', ')"></span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <template x-if="!patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.shifts || patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.shifts?.length === 0">
+                <span class="text-xs text-slate-400 italic" x-text="patrolDailyStatuses.find(s => s.siteKey === 'site_2')?.submitted ? '(Không có ca tuần hôm nay)' : 'Chưa có dữ liệu'"></span>
+              </template>
             </div>
           </div>
         </div>
 
-        <!-- Card 3: Simulate tuantra Command -->
+        <!-- Card 3: Combined Summary Status -->
         <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
           <div class="flex items-center justify-between mb-3">
-            <h3 class="text-sm font-bold text-slate-700 uppercase tracking-wider">Test Nhận Lệnh tuantra</h3>
-            <span class="text-xs text-slate-400">Webhook Test</span>
+            <h3 class="text-sm font-bold text-slate-800">Báo Cáo Tổng Hợp (Trung Đội)</h3>
+            <span
+              class="px-2.5 py-1 text-xs rounded-full font-bold"
+              :class="patrolSummaryStatus?.summarySent ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'"
+              x-text="patrolSummaryStatus?.summarySent ? '✅ Đã gửi' : '⏳ Chờ đủ 2 địa bàn'"
+            ></span>
           </div>
-          <p class="text-xs text-slate-500 mb-3">Giả lập tin nhắn nhận từ Zalo để kiểm tra bộ phân tích cú pháp và quy trình gửi báo cáo.</p>
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between text-slate-600 text-xs">
+              <span>Trạng thái:</span>
+              <span class="font-semibold text-slate-800" x-text="patrolSummaryStatus?.summarySent ? 'Đã gửi tới Trung đội trưởng' : 'Đang chờ cả 2 địa bàn nộp'"></span>
+            </div>
+            <div class="flex justify-between text-slate-600 text-xs">
+              <span>Gửi lúc:</span>
+              <span class="font-semibold text-slate-800" x-text="patrolSummaryStatus?.sentAt ? new Date(patrolSummaryStatus.sentAt).toLocaleTimeString('vi-VN') : 'Chưa gửi'"></span>
+            </div>
+            <div class="pt-2 border-t border-slate-100">
+              <span class="text-xs text-slate-500 block mb-1">Nội dung báo cáo gửi:</span>
+              <div class="bg-slate-50 rounded p-2 text-xs font-mono text-slate-700 whitespace-pre-wrap max-h-24 overflow-y-auto" x-text="patrolSummaryStatus?.lastContent || 'Chưa có báo cáo tổng hợp'"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Testing Tools: Reminders & Simulator -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        
+        <!-- Card: Manual Test Reminders -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-bold text-slate-800">Test Nhắc Nhở Độc Lập</h3>
+            <span class="text-xs text-slate-400">Thử nghiệm</span>
+          </div>
+          <p class="text-xs text-slate-500 mb-3">Giả lập kiểm tra gửi nhắc nhở cho từng địa bàn hoặc tất cả theo các mốc giờ cấu hình.</p>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <select
+              x-model="testReminderSiteKey"
+              class="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Tất cả các địa bàn</option>
+              <option value="site_1">Trụ sở 1 (Tân Phước Khánh)</option>
+              <option value="site_2">Trụ sở 2 (Thạnh Hội)</option>
+            </select>
+            <select
+              x-model="testReminderTime"
+              class="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="06:30">06:30 (Mốc 1)</option>
+              <option value="06:35">06:35 (Mốc 2)</option>
+              <option value="06:40">06:40 (Mốc 3)</option>
+            </select>
+            <button
+              @click="triggerTestReminder()"
+              class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition whitespace-nowrap"
+            >
+              Chạy thử nhắc nhở
+            </button>
+          </div>
+        </div>
+
+        <!-- Card: Simulate tuantra Command -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-bold text-slate-800">Test Gửi Lệnh tuantra</h3>
+            <span class="text-xs text-slate-400">Giả lập Webhook</span>
+          </div>
+          <p class="text-xs text-slate-500 mb-3">Giả lập nhận lệnh từ người phụ trách Tân Phước Khánh hoặc Thạnh Hội (hỗ trợ đơn ca, đa ca, hoặc báo nghỉ).</p>
           <div class="space-y-2">
-            <div class="flex space-x-2">
+            <div class="flex gap-2">
+              <select
+                x-model="simSiteKey"
+                class="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="site_1">Từ Trụ sở 1 (Tân Phước Khánh)</option>
+                <option value="site_2">Từ Trụ sở 2 (Thạnh Hội)</option>
+              </select>
               <input
                 type="text"
                 x-model="simText"
-                placeholder="tuantra Nguyen Van A..."
+                placeholder="tuantra Nguyen Van A... hoặc tuantra 0"
                 class="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex-1"
               />
               <button
                 @click="triggerSimCommand()"
-                class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition"
+                class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition whitespace-nowrap"
               >
                 Gửi lệnh
               </button>
             </div>
+            <div class="flex gap-1 text-[11px] text-slate-400">
+              <span>Gợi ý:</span>
+              <button @click="simText = 'tuantra 0'" class="hover:text-indigo-600 underline">Báo nghỉ: tuantra 0</button>
+              <span>•</span>
+              <button @click="simText = 'tuantra Nguyen Van A, Tran Van B'" class="hover:text-indigo-600 underline">Đơn ca</button>
+              <span>•</span>
+              <button @click="simText = 'tuantra\nCa 1: Nguyen Van A\nCa 2: Tran Van B'" class="hover:text-indigo-600 underline">Đa ca</button>
+            </div>
           </div>
         </div>
 
+      </div>
+
+      <!-- Section: Cấu Hình 2 Site Tuần Tra (Lưu SQLite & Chỉnh sửa Web UI) -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+        <div class="flex justify-between items-center mb-4">
+          <div>
+            <h3 class="text-base font-bold text-slate-800">Cấu Hình Các Site Tuần Tra</h3>
+            <p class="text-xs text-slate-500">Cấu hình được lưu trực tiếp vào cơ sở dữ liệu SQLite và có hiệu lực ngay lập tức.</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <template x-for="site in patrolSites" :key="site.siteKey">
+            <div class="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
+              <div class="flex justify-between items-center pb-2 border-b border-slate-200">
+                <span class="font-bold text-slate-800 text-sm" x-text="site.displayName"></span>
+                <label class="flex items-center space-x-1.5 cursor-pointer text-xs">
+                  <input type="checkbox" x-model="site.enabled" class="rounded text-indigo-600 focus:ring-indigo-500">
+                  <span class="text-slate-600">Kích hoạt</span>
+                </label>
+              </div>
+
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">Tên hiển thị:</label>
+                <input
+                  type="text"
+                  x-model="site.displayName"
+                  class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">User ID Người Báo Cáo:</label>
+                  <input
+                    type="text"
+                    x-model="site.leaderUserId"
+                    placeholder="Zalo User ID"
+                    class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">Nhóm Tuần Tra (Chat ID):</label>
+                  <input
+                    type="text"
+                    x-model="site.chatId"
+                    placeholder="Tùy chọn"
+                    class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">Giờ nhắc (cách bởi dấu phẩy):</label>
+                  <input
+                    type="text"
+                    x-model="site.reminderTimesInput"
+                    placeholder="06:30, 06:35, 06:40"
+                    class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">Số lần nhắc tối đa:</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    x-model="site.maxReminders"
+                    class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between pt-1">
+                <label class="flex items-center space-x-2 cursor-pointer text-xs">
+                  <input type="checkbox" x-model="site.mergeWithSheet" class="rounded text-indigo-600 focus:ring-indigo-500">
+                  <span class="text-slate-700 font-medium">Ghép dữ liệu với Google Sheet</span>
+                </label>
+
+                <button
+                  @click="savePatrolSite(site)"
+                  :disabled="savingPatrolSite"
+                  class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition"
+                >
+                  Lưu cấu hình
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
 
       <!-- Card 4: Member Roster Table & Add Form -->
       <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
           <div>
-            <h3 class="text-base font-bold text-slate-800">Danh Sách Thành Viên Tiểu Đội 1</h3>
-            <p class="text-xs text-slate-500">Nếu có danh sách này, lệnh tuantra không dấu sẽ được tự động chuẩn hóa và nhận diện chính xác</p>
+            <h3 class="text-base font-bold text-slate-800">Danh Sách Quân Số Ban CHQS Phường</h3>
+            <p class="text-xs text-slate-500">Hệ thống dùng danh sách này để tự động chuẩn hóa tên, nhận diện biệt danh và tên không dấu khi nhận lệnh tuantra từ cả 2 trụ sở</p>
           </div>
         </div>
 
@@ -1525,7 +1731,7 @@
               </template>
               <tr x-show="patrolMembers.length === 0">
                 <td colspan="4" class="px-4 py-8 text-center text-slate-400">
-                  Chưa có thành viên nào trong danh sách Tiểu đội 1.<br />
+                  Chưa có thành viên nào trong danh sách Ban CHQS phường.<br />
                   <span class="text-xs text-slate-400">(Khi danh sách trống, bot sẽ phân tách các tên trong lệnh tuantra bằng dấu '+', ',' hoặc xuống dòng).</span>
                 </td>
               </tr>
@@ -1896,12 +2102,18 @@
         loadingLeaveStats: false,
         sendingLeaveStats: false,
 
-        // Patrol Feature State (Đi tuần Tiểu đội 1)
+        // Patrol Feature State (Đi tuần 2 Site)
         patrolMembers: [],
         patrolStatus: null,
+        patrolSites: [],
+        patrolDailyStatuses: [],
+        patrolSummaryStatus: null,
         loadingPatrol: false,
+        savingPatrolSite: false,
         newPatrolMember: { fullName: '', aliases: '' },
         testReminderTime: '06:30',
+        testReminderSiteKey: '',
+        simSiteKey: 'site_1',
         simText: 'tuantra ',
 
         init() {
@@ -2390,18 +2602,64 @@
         async fetchPatrolData() {
           this.loadingPatrol = true;
           try {
-            const [mRes, sRes] = await Promise.all([
+            const [mRes, sRes, siteRes] = await Promise.all([
               fetch('/api/patrol/members'),
-              fetch('/api/patrol/status')
+              fetch('/api/patrol/status'),
+              fetch('/api/patrol/sites'),
             ]);
             const mData = await mRes.json();
             const sData = await sRes.json();
+            const siteData = await siteRes.json();
             if (mData.success) this.patrolMembers = mData.members;
-            if (sData.success) this.patrolStatus = sData.status;
+            if (sData.success) {
+              this.patrolStatus = sData.status;
+              this.patrolDailyStatuses = sData.dailyStatuses || [];
+              this.patrolSummaryStatus = sData.summaryStatus || null;
+            }
+            if (siteData.success) {
+              this.patrolSites = siteData.sites.map(s => ({
+                ...s,
+                reminderTimesInput: (s.reminderTimes || []).join(', ')
+              }));
+            }
           } catch (e) {
             this.showToast(e.message, 'error');
           } finally {
             this.loadingPatrol = false;
+          }
+        },
+
+        async savePatrolSite(site) {
+          this.savingPatrolSite = true;
+          try {
+            const reminderTimes = (site.reminderTimesInput || '')
+              .split(',')
+              .map(t => t.trim())
+              .filter(t => t.length > 0);
+            const res = await fetch(`/api/patrol/sites/${site.siteKey}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                displayName: site.displayName,
+                leaderUserId: site.leaderUserId,
+                chatId: site.chatId,
+                mergeWithSheet: site.mergeWithSheet,
+                reminderTimes,
+                maxReminders: parseInt(site.maxReminders, 10) || 3,
+                enabled: site.enabled,
+              }),
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast(`Đã lưu cấu hình ${site.displayName}!`);
+              await this.fetchPatrolData();
+            } else {
+              this.showToast(data.error || 'Lỗi lưu cấu hình site', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.savingPatrolSite = false;
           }
         },
 
@@ -2422,7 +2680,7 @@
             });
             const data = await res.json();
             if (data.success) {
-              this.showToast('Đã thêm thành viên Tiểu đội 1 thành công!');
+              this.showToast('Đã thêm thành viên Ban CHQS phường thành công!');
               this.newPatrolMember = { fullName: '', aliases: '' };
               await this.fetchPatrolData();
             } else {
@@ -2434,7 +2692,7 @@
         },
 
         async deletePatrolMember(id) {
-          if (!confirm('Bạn có chắc chắn muốn xóa thành viên này khỏi danh sách Tiểu đội 1?')) return;
+          if (!confirm('Bạn có chắc chắn muốn xóa thành viên này khỏi danh sách Ban CHQS phường?')) return;
           try {
             const res = await fetch(`/api/patrol/members/${id}`, { method: 'DELETE' });
             const data = await res.json();
@@ -2454,7 +2712,10 @@
             const res = await fetch('/api/patrol/test-reminders', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ time: this.testReminderTime })
+              body: JSON.stringify({
+                time: this.testReminderTime,
+                siteKey: this.testReminderSiteKey || undefined,
+              })
             });
             const data = await res.json();
             if (data.success) {
@@ -2475,7 +2736,10 @@
             const res = await fetch('/api/patrol/simulate-command', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: this.simText })
+              body: JSON.stringify({
+                text: this.simText,
+                siteKey: this.simSiteKey,
+              })
             });
             const data = await res.json();
             if (data.success) {
@@ -2484,12 +2748,34 @@
                 this.showToast(`Phản hồi: ${r.error}`, 'error');
               } else if (r.ignoredReason) {
                 this.showToast(`Bỏ qua lệnh: ${r.ignoredReason}`, 'warning');
+              } else if (r.waitingForOtherSite) {
+                this.showToast(`Đã nhận lịch ${r.siteKey}! Đang chờ site còn lại...`, 'info');
               } else {
-                this.showToast(`Thành công! Thành viên: ${r.members?.join(', ')}`);
+                this.showToast(`Thành công! Báo cáo tổng hợp đã gửi tới Trung đội trưởng.`);
               }
               await this.fetchPatrolData();
             } else {
               this.showToast(data.error || 'Lỗi gửi lệnh giả lập', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async resetPatrolTestState() {
+          if (!confirm('Bạn có chắc muốn xóa trạng thái nộp lịch và bộ đếm nhắc nhở hôm nay để test lại từ đầu?')) return;
+          try {
+            const res = await fetch('/api/patrol/reset', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({})
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('🧹 Đã đặt lại trạng thái tuần tra hôm nay thành công!');
+              await this.fetchPatrolData();
+            } else {
+              this.showToast(data.error || 'Lỗi đặt lại trạng thái', 'error');
             }
           } catch (e) {
             this.showToast(e.message, 'error');

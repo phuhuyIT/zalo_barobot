@@ -15,6 +15,7 @@ import {
   saveRecipient,
   deleteRecipient,
   seedDefaultRecipients,
+  resetScheduleSentStatus,
 } from '../src/store';
 
 describe('SQLite Store Layer', () => {
@@ -177,5 +178,20 @@ describe('SQLite Store Layer', () => {
       db
     );
     expect(getAllRecipients(db)).toHaveLength(2);
+  });
+
+  it('resets schedule sent status (last_message and send_history)', () => {
+    saveLastMessage('main_duty', 'chat_123', 'msg_1', '16/09/2026', db);
+    saveLastMessage('culi_duty', 'chat_456', 'msg_2', '16/09/2026', db);
+    expect(hasSentToday('main_duty', 'chat_123', '16/09/2026', db)).toBe(true);
+
+    const res = resetScheduleSentStatus('16/09/2026', 'main_duty', db);
+    expect(res.deletedLastMessage).toBe(1);
+    expect(hasSentToday('main_duty', 'chat_123', '16/09/2026', db)).toBe(false);
+    expect(hasSentToday('culi_duty', 'chat_456', '16/09/2026', db)).toBe(true);
+
+    const resAll = resetScheduleSentStatus('16/09/2026', undefined, db);
+    expect(resAll.deletedLastMessage).toBe(1);
+    expect(hasSentToday('culi_duty', 'chat_456', '16/09/2026', db)).toBe(false);
   });
 });
