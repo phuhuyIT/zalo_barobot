@@ -7,7 +7,7 @@
  * - Sử dụng emoji chuẩn 📊, 🔹, định dạng gọn gàng, rõ ràng trên Zalo.
  */
 
-import { LeaveStatsData, MemberLeaveStat } from '../types';
+import { LeaveStatsData } from '../types';
 
 export function formatLeaveStatsMessage(
   data: LeaveStatsData | null | undefined,
@@ -32,7 +32,7 @@ export function formatLeaveStatsMessage(
   lines.push('');
 
   for (const s of data.stats) {
-    let statusText = '';
+    let statusText: string;
     if (s.turnsSinceLastLeave === null) {
       statusText = 'Chưa từng về';
     } else if (s.turnsSinceLastLeave === 0) {

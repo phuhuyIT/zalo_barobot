@@ -3,7 +3,6 @@ import {
   normalizeDate,
   isPlaceholderOrEmpty,
   resolveLookupDate,
-  formatDateDMY,
   getVietnamTimeParts,
 } from '../src/sheets/dateUtils';
 import {

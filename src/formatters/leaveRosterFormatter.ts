@@ -15,16 +15,16 @@ export function formatLeaveRosterMessage(
   input: LeaveFormatterInput | LeaveEntry | null,
   targetDate?: string
 ): string {
-  let entry: LeaveEntry | null = null;
-  let unit: string | undefined = undefined;
+  let entry: LeaveEntry | null;
+  let unit: string | undefined;
 
   if (!input) {
     return `Không có dữ liệu lịch tranh thủ cho ngày ${targetDate || ''}`.trim();
   }
 
-  if ('entries' in (input as any)) {
+  if ('entries' in (input as unknown as Record<string, unknown>)) {
     // Trường hợp truyền full LeaveRoster
-    const full = input as any;
+    const full = input as unknown as { unit?: string; entries?: LeaveEntry[] };
     unit = full.unit;
     entry = full.entries && full.entries.length > 0 ? full.entries[0] : null;
   } else if ('entry' in input) {

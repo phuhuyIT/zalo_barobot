@@ -141,7 +141,7 @@ export async function buildScheduleMessage(
   const isOvernight = Boolean(squad?.overnight);
   const cutoverTime = squad?.cutover_time || '05:30';
 
-  let lookupDate = '';
+  let lookupDate: string;
   if (targetDate === 'today') {
     lookupDate = formatDateDMY(now);
   } else if (targetDate === 'tomorrow') {
@@ -155,7 +155,7 @@ export async function buildScheduleMessage(
   }
 
   // 2. Đọc dữ liệu từ Sheet tùy theo loại schedule
-  let text = '';
+  let text: string;
   if (schedule.type === 'leave_roster') {
     const leaveData = await fetchLeaveRoster(spreadsheetId, effectiveTabName, lookupDate);
     text = formatMessage(schedule.type, leaveData, lookupDate);
@@ -256,10 +256,11 @@ export async function sendSchedule(
         messageId: newMessageId,
         oldMessageDeleted,
       });
-    } catch (sendErr: any) {
+    } catch (sendErr: unknown) {
+      const errorMsg = sendErr instanceof Error ? sendErr.message : String(sendErr);
       console.error(
         `[sendSchedule] Lỗi gửi schedule ${scheduleKey} tới chat ${chatId}:`,
-        sendErr.message
+        errorMsg
       );
 
       // Ghi lịch sử thất bại (F11)
@@ -268,7 +269,7 @@ export async function sendSchedule(
         schedule_key: scheduleKey,
         chat_id: chatId,
         result: 'failure',
-        error: sendErr.message,
+        error: errorMsg,
         old_message_deleted: oldMessageDeleted,
       });
 
@@ -276,7 +277,7 @@ export async function sendSchedule(
         recipientKey: rKey,
         chatId,
         success: false,
-        error: sendErr.message,
+        error: errorMsg,
         oldMessageDeleted,
       });
     }

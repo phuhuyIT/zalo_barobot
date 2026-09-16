@@ -94,7 +94,7 @@ describe('SQLite Store Layer', () => {
       db
     );
 
-    let override = getRuntimeConfigOverride('main', db);
+    const override = getRuntimeConfigOverride('main', db);
     expect(override?.sheet_tab_gate_duty).toBe('Tab Mới Tháng 10');
 
     // Cập nhật thêm auto_send_time

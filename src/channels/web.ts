@@ -15,11 +15,9 @@ import {
 import {
   getRecentSendHistory,
   saveRuntimeConfigOverride,
-  getLastMessageId,
   getLastMessageInfo,
   getDatabase,
   getAllRecipients,
-  getRecipient,
   saveRecipient,
   deleteRecipient,
   resetScheduleSentStatus,
@@ -55,6 +53,14 @@ export function registerSchedulerRefreshCallback(cb: () => void): void {
 export const webRouter = Router();
 
 /**
+ * Xử lý và format lỗi tập trung cho các router của Web API.
+ */
+function handleRouteError(res: Response, error: unknown, statusCode = 500): void {
+  const message = error instanceof Error ? error.message : String(error);
+  res.status(statusCode).json({ success: false, error: message });
+}
+
+/**
  * GET /api/schedules - Danh sách tất cả schedule và trạng thái hiện tại
  */
 webRouter.get('/api/schedules', async (req: Request, res: Response) => {
@@ -62,12 +68,16 @@ webRouter.get('/api/schedules', async (req: Request, res: Response) => {
     const config = getConfig();
     const db = getDatabase();
 
+    // Tối ưu hóa N+1: Lấy trước toàn bộ danh sách recipients vào bộ nhớ
+    const allRecipientsList = getAllRecipients(db);
+    const recipientMap = new Map(allRecipientsList.map((r) => [r.key, r]));
+
     const schedulesStatus = config.schedules.map((s) => {
       const effective = getEffectiveScheduleConfig(s.key);
 
       // Lấy thông tin gửi gần nhất cho từng recipient
       const recipientsInfo = effective.effectiveRecipients.map((rKey) => {
-        const recipient = getRecipient(rKey, db);
+        const recipient = recipientMap.get(rKey);
         const chatId = recipient?.chat_id || getRecipientChatId(rKey, config);
         const displayName = recipient?.display_name || rKey;
         const lastMsg = getLastMessageInfo(s.key, chatId, db);
@@ -95,8 +105,8 @@ webRouter.get('/api/schedules', async (req: Request, res: Response) => {
     });
 
     res.json({ success: true, schedules: schedulesStatus });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -115,8 +125,8 @@ webRouter.post('/api/schedules/:key/preview', async (req: Request, res: Response
       lookupDate: preview.lookupDate,
       effectiveTabName: preview.effectiveTabName,
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -136,8 +146,8 @@ webRouter.post('/api/schedules/:key/send', async (req: Request, res: Response) =
     });
 
     res.json({ success: true, result });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -187,8 +197,8 @@ webRouter.get('/api/config', (req: Request, res: Response) => {
     });
 
     res.json({ success: true, squads, schedules, recipients });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -219,7 +229,12 @@ webRouter.post('/api/config', (req: Request, res: Response) => {
         if (s.key) {
           const override: RuntimeConfigOverride = {};
           if (s.autoSendTime !== undefined) {
-            override.auto_send_time = s.autoSendTime ? String(s.autoSendTime).trim() : null;
+            const timeVal = s.autoSendTime ? String(s.autoSendTime).trim() : null;
+            if (timeVal && !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeVal)) {
+              res.status(400).json({ success: false, error: `Giờ tự động gửi không hợp lệ (phải theo chuẩn HH:MM 00:00 - 23:59): ${timeVal}` });
+              return;
+            }
+            override.auto_send_time = timeVal;
           }
           if (s.enabled !== undefined) {
             override.enabled = Boolean(s.enabled);
@@ -231,7 +246,7 @@ webRouter.post('/api/config', (req: Request, res: Response) => {
             override.send_next_day = Boolean(s.sendNextDay);
           }
           if (s.recipients !== undefined && Array.isArray(s.recipients)) {
-            override.recipients = s.recipients.map((r: any) => String(r).trim()).filter(Boolean);
+            override.recipients = s.recipients.map((r: unknown) => String(r).trim()).filter(Boolean);
           }
           saveRuntimeConfigOverride(s.key, override);
         }
@@ -244,8 +259,8 @@ webRouter.post('/api/config', (req: Request, res: Response) => {
     }
 
     res.json({ success: true, message: 'Cấu hình đã được lưu thành công.' });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -276,8 +291,8 @@ webRouter.get('/api/recipients', (req: Request, res: Response) => {
     });
 
     res.json({ success: true, recipients: data });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -311,8 +326,8 @@ webRouter.post('/api/recipients', (req: Request, res: Response) => {
         chat_id: String(chat_id).trim(),
       },
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -346,8 +361,8 @@ webRouter.put('/api/recipients/:key', (req: Request, res: Response) => {
         chat_id: String(chat_id).trim(),
       },
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -364,8 +379,8 @@ webRouter.delete('/api/recipients/:key', (req: Request, res: Response) => {
       message: `Đã xóa người nhận '${key}' thành công.`,
       affectedSchedules: result.affectedSchedules,
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -402,8 +417,8 @@ webRouter.get('/api/leave-stats', async (req: Request, res: Response) => {
       data,
       scheduleKey: 'leave_stats',
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -415,8 +430,8 @@ webRouter.get('/api/history', (req: Request, res: Response) => {
     const limit = parseInt(req.query.limit as string) || 50;
     const history = getRecentSendHistory(limit);
     res.json({ success: true, history });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -433,8 +448,8 @@ webRouter.get('/api/patrol/members', (req: Request, res: Response) => {
   try {
     const members = getPatrolMembers();
     res.json({ success: true, members });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -451,8 +466,8 @@ webRouter.post('/api/patrol/members', (req: Request, res: Response) => {
 
     const member = addPatrolMember(fullName, Array.isArray(aliases) ? aliases : []);
     res.json({ success: true, member });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -475,8 +490,8 @@ webRouter.put('/api/patrol/members/:id', (req: Request, res: Response) => {
     }
 
     res.json({ success: true });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -488,8 +503,8 @@ webRouter.delete('/api/patrol/members/:id', (req: Request, res: Response) => {
     const id = parseInt(req.params.id as string, 10);
     const deleted = deletePatrolMember(id);
     res.json({ success: true, deleted });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -501,8 +516,8 @@ webRouter.get('/api/patrol/sites', (req: Request, res: Response) => {
     const sites = getPatrolSiteConfigs();
     const platoonLeaderChatId = getPlatoonLeaderChatId();
     res.json({ success: true, sites, platoonLeaderChatId });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -513,8 +528,8 @@ webRouter.get('/api/patrol/platoon-leader', (req: Request, res: Response) => {
   try {
     const chatId = getPlatoonLeaderChatId();
     res.json({ success: true, chatId });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -534,8 +549,8 @@ webRouter.put('/api/patrol/platoon-leader', (req: Request, res: Response) => {
       chat_id: cleanChatId,
     });
     res.json({ success: true, chatId: cleanChatId });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -567,8 +582,8 @@ webRouter.put('/api/patrol/sites/:siteKey', (req: Request, res: Response) => {
     });
 
     res.json({ success: true, site: updated });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -601,8 +616,8 @@ webRouter.get('/api/patrol/status', (req: Request, res: Response) => {
       summaryStatus,
       platoonLeaderChatId,
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -617,8 +632,8 @@ webRouter.post('/api/patrol/test-reminders', async (req: Request, res: Response)
       targetSiteKey: siteKey || undefined,
     });
     res.json({ success: true, result });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -652,8 +667,8 @@ webRouter.post('/api/patrol/simulate-command', async (req: Request, res: Respons
     });
 
     res.json({ success: true, result });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -671,8 +686,8 @@ webRouter.post('/api/patrol/reset', (req: Request, res: Response) => {
       message: `Đã đặt lại trạng thái tuần tra ngày ${targetDate} thành công.`,
       result,
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 
@@ -694,8 +709,8 @@ webRouter.post('/api/system/reset-all', (req: Request, res: Response) => {
       patrol: patrolRes,
       schedule: schedRes,
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
   }
 });
 

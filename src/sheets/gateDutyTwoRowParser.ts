@@ -39,7 +39,7 @@ export interface ParsedTwoRowLayout {
 /**
  * Phân tích cấu trúc bảng tính và định vị các cột nhiệm vụ.
  */
-export function detectTwoRowLayout(rows: any[][]): ParsedTwoRowLayout {
+export function detectTwoRowLayout(rows: unknown[][]): ParsedTwoRowLayout {
   // 1. Quét tìm hàng chứa ô "Ngày"
   const headerLoc = findHeaderAndDateCol(rows, 'ngày');
   if (!headerLoc) {
@@ -68,7 +68,7 @@ export function detectTwoRowLayout(rows: any[][]): ParsedTwoRowLayout {
       break;
     }
 
-    let combinedName = '';
+    let combinedName: string;
     let parentName: string | undefined = undefined;
     let subName: string | undefined = undefined;
 
@@ -114,7 +114,7 @@ export function detectTwoRowLayout(rows: any[][]): ParsedTwoRowLayout {
  * Phân tích dữ liệu lịch trực cho ngày cụ thể (targetDate theo dạng DD/MM/YYYY).
  */
 export function parseGateDutyTwoRow(
-  rows: any[][],
+  rows: unknown[][],
   targetDate: string
 ): DailyDuty | null {
   const layout = detectTwoRowLayout(rows);

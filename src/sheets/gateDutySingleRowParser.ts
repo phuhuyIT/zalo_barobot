@@ -26,7 +26,7 @@ export interface ParsedSingleRowLayout {
 /**
  * Phân tích cấu trúc bảng tính single_row.
  */
-export function detectSingleRowLayout(rows: any[][]): ParsedSingleRowLayout {
+export function detectSingleRowLayout(rows: unknown[][]): ParsedSingleRowLayout {
   // 1. Quét tìm hàng chứa ô "Ngày"
   const headerLoc = findHeaderAndDateCol(rows, 'ngày');
   if (!headerLoc) {
@@ -62,7 +62,7 @@ export function detectSingleRowLayout(rows: any[][]): ParsedSingleRowLayout {
  * Phân tích dữ liệu lịch trực ca đêm của tiểu đội culi cho ngày cụ thể.
  */
 export function parseGateDutySingleRow(
-  rows: any[][],
+  rows: unknown[][],
   targetDate: string
 ): DailyDuty | null {
   const layout = detectSingleRowLayout(rows);

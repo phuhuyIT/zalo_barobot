@@ -6,7 +6,7 @@
  * Tuân thủ mục 5.3: deleteMessage là best-effort, không throw exception làm gián đoạn luồng gửi.
  */
 
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosInstance, isAxiosError } from 'axios';
 
 export interface SendMessageResult {
   messageId: string;
@@ -62,9 +62,13 @@ export class ZaloClient {
         messageId,
         raw: data,
       };
-    } catch (error: any) {
-      const errMsg = error.response?.data?.description || error.message;
-      throw new Error(`Lỗi gửi tin nhắn Zalo tới chat_id ${chatId}: ${errMsg}`);
+    } catch (error: unknown) {
+      const errMsg = isAxiosError(error)
+        ? error.response?.data?.description || error.message
+        : error instanceof Error
+        ? error.message
+        : String(error);
+      throw new Error(`Lỗi gửi tin nhắn Zalo tới chat_id ${chatId}: ${errMsg}`, { cause: error });
     }
   }
 
@@ -89,12 +93,15 @@ export class ZaloClient {
 
       console.warn(`[ZaloClient] deleteMessage không thành công (chat_id: ${chatId}, msg: ${messageId}):`, data);
       return false;
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Ghi warning và tiếp tục, không ngắt luồng
+      const errMsg = isAxiosError(error)
+        ? error.response?.data?.description || error.message
+        : error instanceof Error
+        ? error.message
+        : String(error);
       console.warn(
-        `[ZaloClient] Lỗi khi gọi deleteMessage (chat_id: ${chatId}, msg: ${messageId}): ${
-          error.response?.data?.description || error.message
-        }`
+        `[ZaloClient] Lỗi khi gọi deleteMessage (chat_id: ${chatId}, msg: ${messageId}): ${errMsg}`
       );
       return false;
     }

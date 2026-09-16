@@ -77,7 +77,7 @@ export function parsePatrolCommand(
     .trim();
 
   // Kiểm tra tiền tố lệnh tuantra (không phân biệt hoa thường, cho phép /tuantra)
-  const commandMatch = cleanedText.match(/^(?:\/)?tuantra(?:\s*[\+:]|\s+|$)/i);
+  const commandMatch = cleanedText.match(/^(?:\/)?tuantra(?:\s*[+:]|\s+|$)/i);
   if (!commandMatch) {
     return {
       isValid: false,

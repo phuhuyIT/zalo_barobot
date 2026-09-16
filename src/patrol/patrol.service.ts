@@ -8,7 +8,6 @@ import {
   savePatrolSubmission,
   getPatrolMembers,
   getPatrolSiteConfigs,
-  getPatrolSiteConfig,
   getPatrolSummaryStatus,
   savePatrolSummaryStatus,
 } from './patrol.repository';
@@ -209,20 +208,21 @@ export async function fetchMySquadPatrolTasks(targetDate: string): Promise<
   }
 
   // Tái sử dụng cấu hình tab và parser của schedule 'patrol_summary' hoặc 'main_duty'
-  let effectiveTabName = '';
-  let headerStyle: 'two_row_merged' | 'single_row' = 'two_row_merged';
+  let effectiveTabName: string;
+  let headerStyle: 'two_row_merged' | 'single_row';
 
   try {
     const effective = getEffectiveScheduleConfig('patrol_summary');
     effectiveTabName = effective.effectiveTabName;
     headerStyle = effective.squad?.header_style || 'two_row_merged';
-  } catch (_) {
+  } catch {
     try {
       const effective = getEffectiveScheduleConfig('main_duty');
       effectiveTabName = effective.effectiveTabName;
       headerStyle = effective.squad?.header_style || 'two_row_merged';
-    } catch (e: any) {
-      throw new Error(`Không thể xác định cấu hình tab Tiểu đội 2: ${e.message}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`Không thể xác định cấu hình tab Tiểu đội 2: ${msg}`, { cause: e });
     }
   }
 
@@ -406,7 +406,7 @@ export async function handlePatrolCommand(
   const messageId = payload.messageId ? String(payload.messageId).trim() : undefined;
 
   // 1. Kiểm tra xem tin nhắn có phải lệnh tuantra không
-  if (!/(?:^|\s|\/)tuantra(?:\s*[\+:]|\s+|$)/i.test(text)) {
+  if (!/(?:^|\s|\/)tuantra(?:\s*[+:]|\s+|$)/i.test(text)) {
     return { handled: false, success: false };
   }
 
@@ -489,8 +489,8 @@ export async function handlePatrolCommand(
   }
 
   // 6. Xử lý logic ghép Sheet (áp dụng cho Site 1 / merge_with_sheet)
-  let mergedShifts: PatrolShift[] = [];
-  let mergedMembers: string[] = [];
+  let mergedShifts: PatrolShift[];
+  let mergedMembers: string[];
 
   if (matchedSite.mergeWithSheet) {
     let mySquadTasks: { taskName: string; assignee: string; subTask?: string }[] = [];

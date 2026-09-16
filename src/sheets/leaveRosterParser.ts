@@ -14,7 +14,7 @@ import { LeaveEntry, LeaveRoster } from '../types';
 import { isPlaceholderOrEmpty, normalizeDate, parseDMYToDate } from './dateUtils';
 import { findHeaderAndDateCol, findUnitName } from './sheetParserUtils';
 
-export function parseLeaveRoster(rows: any[][]): LeaveRoster {
+export function parseLeaveRoster(rows: unknown[][]): LeaveRoster {
   // 1. Quét tìm hàng chứa ô "Ngày"
   const headerLoc = findHeaderAndDateCol(rows, 'ngày');
   if (!headerLoc) {

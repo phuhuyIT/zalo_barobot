@@ -2,8 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   parsePatrolCommand,
-  normalizeVietnamese,
-  initPatrolTables,
   getPatrolDailyStatus,
   savePatrolSubmission,
   getPatrolMembers,
@@ -11,7 +9,6 @@ import {
   handlePatrolCommand,
   runPatrolReminders,
   buildCombinedPatrolMessage,
-  formatTwoSitesPatrolMessage,
   savePatrolSiteConfig,
   getPatrolSiteConfig,
   getPatrolSiteConfigs,

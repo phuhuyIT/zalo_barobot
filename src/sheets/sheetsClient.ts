@@ -26,8 +26,9 @@ export function getSheetsClient(): sheets_v4.Sheets {
         credentials,
         scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
       });
-    } catch (err: any) {
-      throw new Error(`Lỗi parse GOOGLE_SERVICE_ACCOUNT_JSON: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Lỗi parse GOOGLE_SERVICE_ACCOUNT_JSON: ${msg}`, { cause: err });
     }
   } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     const credPath = path.resolve(process.cwd(), process.env.GOOGLE_APPLICATION_CREDENTIALS);
@@ -56,7 +57,7 @@ export function getSheetsClient(): sheets_v4.Sheets {
 export async function readSheetTab(
   spreadsheetId: string,
   tabName: string
-): Promise<any[][]> {
+): Promise<unknown[][]> {
   const sheets = getSheetsClient();
 
   try {
@@ -66,11 +67,15 @@ export async function readSheetTab(
       valueRenderOption: 'FORMATTED_VALUE',
     });
 
-    return res.data.values || [];
-  } catch (error: any) {
-    if (error.code === 404 || error.message?.includes('Unable to parse range')) {
-      throw new Error(`Không tìm thấy tab sheet '${tabName}' hoặc Spreadsheet ID không tồn tại.`);
+    return (res.data.values as unknown[][]) || [];
+  } catch (error: unknown) {
+    const errObj = error as { code?: number; message?: string } | undefined;
+    if (errObj?.code === 404 || errObj?.message?.includes('Unable to parse range')) {
+      throw new Error(`Không tìm thấy tab sheet '${tabName}' hoặc Spreadsheet ID không tồn tại.`, {
+        cause: error,
+      });
     }
-    throw new Error(`Lỗi khi đọc Google Sheet tab '${tabName}': ${error.message}`);
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Lỗi khi đọc Google Sheet tab '${tabName}': ${msg}`, { cause: error });
   }
 }
