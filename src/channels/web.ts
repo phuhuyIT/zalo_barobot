@@ -16,14 +16,26 @@ import {
   getRecentSendHistory,
   saveRuntimeConfigOverride,
   getLastMessageId,
+  getLastMessageInfo,
   getDatabase,
   getAllRecipients,
   getRecipient,
   saveRecipient,
   deleteRecipient,
 } from '../store';
-import { fetchLeaveStats } from '../sheets';
+import { fetchLeaveStats, getVietnamTimeParts } from '../sheets';
 import { RuntimeConfigOverride } from '../types';
+import {
+  getPatrolMembers,
+  addPatrolMember,
+  updatePatrolMember,
+  deletePatrolMember,
+  getPatrolDailyStatus,
+  runPatrolReminders,
+  handlePatrolCommand,
+  getSquad1LeaderUserId,
+  getPatrolGroupId,
+} from '../patrol';
 
 let schedulerRefreshCallback: (() => void) | null = null;
 
@@ -49,18 +61,14 @@ webRouter.get('/api/schedules', async (req: Request, res: Response) => {
         const recipient = getRecipient(rKey, db);
         const chatId = recipient?.chat_id || getRecipientChatId(rKey, config);
         const displayName = recipient?.display_name || rKey;
-        const lastMsg = db
-          .prepare(
-            `SELECT message_id, sent_date, updated_at FROM last_message WHERE schedule_key = ? AND chat_id = ?`
-          )
-          .get(s.key, chatId) as any;
+        const lastMsg = getLastMessageInfo(s.key, chatId, db);
 
         return {
           recipientKey: rKey,
           displayName,
           chatId,
-          lastSentDate: lastMsg?.sent_date || null,
-          lastUpdatedAt: lastMsg?.updated_at || null,
+          lastSentDate: lastMsg?.sentDate || null,
+          lastUpdatedAt: lastMsg?.updatedAt || null,
         };
       });
 
@@ -364,14 +372,13 @@ webRouter.get('/api/leave-stats', async (req: Request, res: Response) => {
 
     let tabName = req.query.tabName ? String(req.query.tabName).trim() : '';
     if (!tabName) {
-      try {
-        const statsEff = getEffectiveScheduleConfig('leave_stats');
-        tabName = statsEff.effectiveTabName;
-      } catch (_) {
-        try {
-          const leaveEff = getEffectiveScheduleConfig('squad_leave');
-          tabName = leaveEff.effectiveTabName;
-        } catch (_) {}
+      const config = getConfig();
+      const leaveSchedule =
+        config.schedules.find((s) => s.key === 'leave_stats') ||
+        config.schedules.find((s) => s.key === 'squad_leave');
+
+      if (leaveSchedule) {
+        tabName = getEffectiveScheduleConfig(leaveSchedule.key).effectiveTabName;
       }
     }
 
@@ -399,6 +406,139 @@ webRouter.get('/api/history', (req: Request, res: Response) => {
     const limit = parseInt(req.query.limit as string) || 50;
     const history = getRecentSendHistory(limit);
     res.json({ success: true, history });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * ====================================================================
+ * TÍNH NĂNG ĐI TUẦN TIỂU ĐỘI 1 (PATROL API)
+ * ====================================================================
+ */
+
+/**
+ * GET /api/patrol/members - Lấy danh sách thành viên Tiểu đội 1
+ */
+webRouter.get('/api/patrol/members', (req: Request, res: Response) => {
+  try {
+    const members = getPatrolMembers();
+    res.json({ success: true, members });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/patrol/members - Thêm thành viên Tiểu đội 1
+ */
+webRouter.post('/api/patrol/members', (req: Request, res: Response) => {
+  try {
+    const { fullName, aliases } = req.body || {};
+    if (!fullName || typeof fullName !== 'string' || !fullName.trim()) {
+      res.status(400).json({ success: false, error: 'Họ tên thành viên là bắt buộc.' });
+      return;
+    }
+
+    const member = addPatrolMember(fullName, Array.isArray(aliases) ? aliases : []);
+    res.json({ success: true, member });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * PUT /api/patrol/members/:id - Cập nhật thông tin thành viên Tiểu đội 1
+ */
+webRouter.put('/api/patrol/members/:id', (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id as string, 10);
+    const { fullName, aliases } = req.body || {};
+    if (!fullName || typeof fullName !== 'string' || !fullName.trim()) {
+      res.status(400).json({ success: false, error: 'Họ tên thành viên là bắt buộc.' });
+      return;
+    }
+
+    const updated = updatePatrolMember(id, fullName, Array.isArray(aliases) ? aliases : []);
+    if (!updated) {
+      res.status(404).json({ success: false, error: 'Không tìm thấy thành viên để cập nhật.' });
+      return;
+    }
+
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/patrol/members/:id - Xóa thành viên Tiểu đội 1
+ */
+webRouter.delete('/api/patrol/members/:id', (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id as string, 10);
+    const deleted = deletePatrolMember(id);
+    res.json({ success: true, deleted });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/patrol/status - Lấy trạng thái đi tuần của ngày hôm nay (hoặc targetDate)
+ */
+webRouter.get('/api/patrol/status', (req: Request, res: Response) => {
+  try {
+    const targetDate = (req.query.date as string) || getVietnamTimeParts().dateDMY;
+    const status = getPatrolDailyStatus(targetDate);
+    res.json({
+      success: true,
+      date: targetDate,
+      status: status || {
+        date: targetDate,
+        submitted: false,
+        reminderCount: 0,
+        selectedMembers: [],
+        status: 'pending',
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/patrol/test-reminders - Giả lập kiểm tra nhắc nhở tại mốc giờ (06:30, 06:35, 06:40)
+ */
+webRouter.post('/api/patrol/test-reminders', async (req: Request, res: Response) => {
+  try {
+    const { time } = req.body || {};
+    const result = await runPatrolReminders(new Date(), {
+      overrideTimeHM: time || '06:30',
+    });
+    res.json({ success: true, result });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/patrol/simulate-command - Giả lập nhận lệnh tuantra từ Tiểu đội trưởng 1
+ */
+webRouter.post('/api/patrol/simulate-command', async (req: Request, res: Response) => {
+  try {
+    const { text, senderId, chatId, messageId } = req.body || {};
+    const defaultSender = getSquad1LeaderUserId() || 'squad1_leader_test';
+    const defaultChat = getPatrolGroupId() || 'patrol_group_test';
+
+    const result = await handlePatrolCommand({
+      text: text || 'tuantra',
+      senderId: senderId || defaultSender,
+      chatId: chatId || defaultChat,
+      messageId: messageId || `sim_${Date.now()}`,
+    });
+
+    res.json({ success: true, result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

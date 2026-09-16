@@ -19,6 +19,7 @@
 
 import { DailyDuty, DutyTask } from '../types';
 import { isPlaceholderOrEmpty, normalizeDate } from './dateUtils';
+import { findHeaderAndDateCol, findUnitName } from './sheetParserUtils';
 
 export interface ColumnHeader {
   index: number;
@@ -39,44 +40,19 @@ export interface ParsedTwoRowLayout {
  * Phân tích cấu trúc bảng tính và định vị các cột nhiệm vụ.
  */
 export function detectTwoRowLayout(rows: any[][]): ParsedTwoRowLayout {
-  let headerRow1Index = -1;
-  let dateColIndex = -1;
-
   // 1. Quét tìm hàng chứa ô "Ngày"
-  for (let r = 0; r < rows.length; r++) {
-    const row = rows[r] || [];
-    for (let c = 0; c < row.length; c++) {
-      const val = String(row[c] || '').trim().toLowerCase();
-      if (val === 'ngày') {
-        headerRow1Index = r;
-        dateColIndex = c;
-        break;
-      }
-    }
-    if (headerRow1Index !== -1) break;
-  }
-
-  if (headerRow1Index === -1 || dateColIndex === -1) {
+  const headerLoc = findHeaderAndDateCol(rows, 'ngày');
+  if (!headerLoc) {
     throw new Error("Không tìm thấy ô mốc 'Ngày' trong bảng tính (two_row_merged).");
   }
 
+  const { headerRowIndex: headerRow1Index, dateColIndex } = headerLoc;
   const headerRow2Index = headerRow1Index + 1;
   const row1 = rows[headerRow1Index] || [];
   const row2 = rows[headerRow2Index] || [];
 
   // 2. Tìm dòng Đơn vị: ở các hàng phía trên headerRow1
-  let unit: string | undefined = undefined;
-  for (let r = 0; r < headerRow1Index; r++) {
-    const row = rows[r] || [];
-    for (let c = 0; c < row.length; c++) {
-      const val = String(row[c] || '').trim();
-      if (val.toLowerCase().startsWith('đơn vị:')) {
-        unit = val;
-        break;
-      }
-    }
-    if (unit) break;
-  }
+  const unit = findUnitName(rows, headerRow1Index);
 
   // 3. Ghép tiêu đề cột nhiệm vụ (chỉ xét các cột SAU cột "Ngày")
   const taskColumns: ColumnHeader[] = [];

@@ -66,8 +66,8 @@ export function loadConfig(configPath?: string): AppConfig {
       chat_id: chatId,
     }));
     seedDefaultRecipients(seedList);
-  } catch (_) {
-    // Bỏ qua nếu store chưa sẵn sàng
+  } catch (err: unknown) {
+    // Không làm gián đoạn việc load config nếu database chưa được kết nối
   }
 
   cachedConfig = config;
@@ -91,8 +91,8 @@ export function getRecipientChatId(recipientKey: string, config?: AppConfig): st
     if (fromStore && fromStore.chat_id) {
       return fromStore.chat_id;
     }
-  } catch (_) {
-    // Bỏ qua lỗi store khi chạy test độc lập
+  } catch (err: unknown) {
+    // Dự phòng đọc từ config khi chạy test độc lập không có kết nối DB
   }
   const currentConfig = config || getConfig();
   return currentConfig.recipients[recipientKey] || recipientKey;

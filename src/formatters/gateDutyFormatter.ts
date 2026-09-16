@@ -7,6 +7,7 @@
 
 import { DailyDuty } from '../types';
 import { parseDMYToDate } from '../sheets/dateUtils';
+import { formatTaskHierarchy } from './formatterUtils';
 
 /**
  * Tính ngày tiếp theo dạng DD/MM từ chuỗi DD/MM/YYYY.
@@ -47,20 +48,7 @@ export function formatGateDutyMessage(duty: DailyDuty | null, targetDate?: strin
   }
 
   lines.push(''); // Dòng trống ngăn cách
-
-  let currentParent: string | null = null;
-  for (const task of duty.tasks) {
-    if (task.parentTask && task.subTask) {
-      if (task.parentTask !== currentParent) {
-        currentParent = task.parentTask;
-        lines.push(`🔹 ${task.parentTask}:`);
-      }
-      lines.push(`      - ${task.subTask}: ${task.assignee}`);
-    } else {
-      currentParent = null;
-      lines.push(`🔹 ${task.taskName}: ${task.assignee}`);
-    }
-  }
+  lines.push(...formatTaskHierarchy(duty.tasks));
 
   return lines.join('\n');
 }

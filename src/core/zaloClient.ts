@@ -10,7 +10,7 @@ import axios, { AxiosInstance } from 'axios';
 
 export interface SendMessageResult {
   messageId: string;
-  raw: any;
+  raw: Record<string, unknown>;
 }
 
 export class ZaloClient {
@@ -103,29 +103,29 @@ export class ZaloClient {
   /**
    * Thiết lập webhook URL cho Zalo Bot.
    */
-  async setWebhook(url: string, secretToken?: string): Promise<any> {
+  async setWebhook(url: string, secretToken?: string): Promise<Record<string, unknown>> {
     if (!this.token) {
       throw new Error('ZALO_BOT_TOKEN chưa được cấu hình.');
     }
 
-    const payload: Record<string, any> = { url };
+    const payload: Record<string, unknown> = { url };
     if (secretToken) {
       payload.secret_token = secretToken;
     }
 
     const response = await this.client.post('/setWebhook', payload);
-    return response.data;
+    return response.data as Record<string, unknown>;
   }
 
   /**
    * Lấy thông tin về Bot hiện tại.
    */
-  async getMe(): Promise<any> {
+  async getMe(): Promise<Record<string, unknown>> {
     if (!this.token) {
       throw new Error('ZALO_BOT_TOKEN chưa được cấu hình.');
     }
 
     const response = await this.client.get('/getMe');
-    return response.data;
+    return response.data as Record<string, unknown>;
   }
 }

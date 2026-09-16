@@ -129,6 +129,14 @@
           <span>🕒</span>
           <span>Lịch sử gửi (F11)</span>
         </button>
+        <button
+          @click="selectTab('patrol')"
+          :class="activeTab === 'patrol' ? 'bg-white text-indigo-800 shadow' : 'text-indigo-100 hover:bg-indigo-700/60'"
+          class="px-3 py-1.5 rounded-lg text-sm font-semibold transition flex items-center space-x-1.5"
+        >
+          <span>🛡️</span>
+          <span>Đi tuần TĐ 1</span>
+        </button>
       </nav>
 
       <!-- Header Quick Actions (Mobile & Desktop) -->
@@ -1321,13 +1329,220 @@
 
     </div>
 
+    <!-- ========================================== -->
+    <!-- TAB 6: PATROL SCHEDULE & MEMBERS (ĐI TUẦN TĐ 1) -->
+    <!-- ========================================== -->
+    <div x-show="activeTab === 'patrol'" x-cloak class="space-y-4 sm:space-y-6">
+      
+      <!-- Top Header -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="text-2xl">🛡️</span>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800">Đi Tuần & Thành Viên Tiểu Đội 1</h2>
+          </div>
+          <p class="text-xs sm:text-sm text-slate-500 mt-1">Quản lý danh sách thành viên Tiểu đội 1, theo dõi trạng thái nộp lịch và kiểm tra tính năng nhắc nhở</p>
+        </div>
+        <button
+          @click="fetchPatrolData()"
+          class="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-xs sm:text-sm font-semibold hover:bg-indigo-100 transition flex items-center space-x-1.5"
+        >
+          <span>🔄</span>
+          <span>Làm mới</span>
+        </button>
+      </div>
+
+      <!-- Top Summary Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        
+        <!-- Card 1: Today Status -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-slate-700 uppercase tracking-wider">Trạng Thái Hôm Nay</h3>
+            <span
+              class="px-2.5 py-1 text-xs rounded-full font-bold"
+              :class="patrolStatus?.submitted ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'"
+              x-text="patrolStatus?.submitted ? '✅ Đã nộp lịch' : '⏳ Chưa nộp lịch'"
+            ></span>
+          </div>
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between text-slate-600">
+              <span>Ngày:</span>
+              <span class="font-semibold text-slate-800" x-text="patrolStatus?.date || 'Hôm nay'"></span>
+            </div>
+            <div class="flex justify-between text-slate-600">
+              <span>Số lần nhắc nhở:</span>
+              <span class="font-semibold text-slate-800" x-text="(patrolStatus?.reminderCount || 0) + ' / 3 lần'"></span>
+            </div>
+            <div class="flex justify-between text-slate-600">
+              <span>Nhắc gần nhất:</span>
+              <span class="font-semibold text-slate-800" x-text="patrolStatus?.lastReminderAt || 'Chưa gửi'"></span>
+            </div>
+            <div class="pt-2 border-t border-slate-100">
+              <span class="text-xs text-slate-500 block mb-1">Thành viên đi tuần hôm nay:</span>
+              <template x-if="patrolStatus?.selectedMembers && patrolStatus.selectedMembers.length > 0">
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="m in patrolStatus.selectedMembers" :key="m">
+                    <span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-md font-semibold" x-text="m"></span>
+                  </template>
+                </div>
+              </template>
+              <template x-if="!patrolStatus?.selectedMembers || patrolStatus.selectedMembers.length === 0">
+                <span class="text-xs text-slate-400 italic">Chưa có danh sách</span>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 2: Manual Test Reminders -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-slate-700 uppercase tracking-wider">Test Nhắc Nhở (Manual)</h3>
+            <span class="text-xs text-slate-400">06:30 - 06:40</span>
+          </div>
+          <p class="text-xs text-slate-500 mb-3">Giả lập kiểm tra và gửi nhắc nhở tới Tiểu đội trưởng 1 tại các mốc giờ quy định mà không cần đợi tới sáng.</p>
+          <div class="space-y-2">
+            <div class="flex space-x-2">
+              <select
+                x-model="testReminderTime"
+                class="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex-1"
+              >
+                <option value="06:30">06:30 (Lần 1)</option>
+                <option value="06:35">06:35 (Lần 2)</option>
+                <option value="06:40">06:40 (Lần 3)</option>
+              </select>
+              <button
+                @click="triggerTestReminder()"
+                class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition"
+              >
+                Chạy thử
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 3: Simulate tuantra Command -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-slate-700 uppercase tracking-wider">Test Nhận Lệnh tuantra</h3>
+            <span class="text-xs text-slate-400">Webhook Test</span>
+          </div>
+          <p class="text-xs text-slate-500 mb-3">Giả lập tin nhắn nhận từ Zalo để kiểm tra bộ phân tích cú pháp và quy trình gửi báo cáo.</p>
+          <div class="space-y-2">
+            <div class="flex space-x-2">
+              <input
+                type="text"
+                x-model="simText"
+                placeholder="tuantra Nguyen Van A..."
+                class="bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex-1"
+              />
+              <button
+                @click="triggerSimCommand()"
+                class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition"
+              >
+                Gửi lệnh
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Card 4: Member Roster Table & Add Form -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+          <div>
+            <h3 class="text-base font-bold text-slate-800">Danh Sách Thành Viên Tiểu Đội 1</h3>
+            <p class="text-xs text-slate-500">Nếu có danh sách này, lệnh tuantra không dấu sẽ được tự động chuẩn hóa và nhận diện chính xác</p>
+          </div>
+        </div>
+
+        <!-- Add Member Form -->
+        <div class="bg-slate-50 rounded-xl p-4 border border-slate-200 mb-4 flex flex-col sm:flex-row gap-2 items-end">
+          <div class="flex-1 w-full">
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Họ và tên chuẩn (Có dấu)</label>
+            <input
+              type="text"
+              x-model="newPatrolMember.fullName"
+              placeholder="Ví dụ: Nguyễn Văn A"
+              class="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div class="flex-1 w-full">
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Biệt danh / Tên không dấu (cách nhau bởi dấu phẩy)</label>
+            <input
+              type="text"
+              x-model="newPatrolMember.aliases"
+              placeholder="Nguyen Van A, A, van a"
+              class="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <button
+            @click="addPatrolMember()"
+            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition whitespace-nowrap"
+          >
+            + Thêm Thành Viên
+          </button>
+        </div>
+
+        <!-- Members Table -->
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-600">
+            <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500 border-b border-slate-200">
+              <tr>
+                <th class="px-4 py-2.5">ID</th>
+                <th class="px-4 py-2.5">Họ và Tên Chuẩn</th>
+                <th class="px-4 py-2.5">Biệt Danh / Tên Phụ</th>
+                <th class="px-4 py-2.5 text-right">Thao Tác</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <template x-for="m in patrolMembers" :key="m.id">
+                <tr class="hover:bg-slate-50/60">
+                  <td class="px-4 py-2.5 text-slate-400 font-mono text-xs" x-text="m.id"></td>
+                  <td class="px-4 py-2.5 font-semibold text-slate-800" x-text="m.fullName"></td>
+                  <td class="px-4 py-2.5">
+                    <template x-if="m.aliases && m.aliases.length > 0">
+                      <div class="flex flex-wrap gap-1">
+                        <template x-for="a in m.aliases" :key="a">
+                          <span class="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded" x-text="a"></span>
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="!m.aliases || m.aliases.length === 0">
+                      <span class="text-xs text-slate-400 italic">Không có</span>
+                    </template>
+                  </td>
+                  <td class="px-4 py-2.5 text-right">
+                    <button
+                      @click="deletePatrolMember(m.id)"
+                      class="px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                    >
+                      Xóa
+                    </button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="patrolMembers.length === 0">
+                <td colspan="4" class="px-4 py-8 text-center text-slate-400">
+                  Chưa có thành viên nào trong danh sách Tiểu đội 1.<br />
+                  <span class="text-xs text-slate-400">(Khi danh sách trống, bot sẽ phân tách các tên trong lệnh tuantra bằng dấu '+', ',' hoặc xuống dòng).</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
   </main>
 
   <!-- ========================================== -->
   <!-- MOBILE BOTTOM NAVIGATION BAR (md:hidden) -->
   <!-- ========================================== -->
   <nav class="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-[0_-4px_12px_rgba(0,0,0,0.05)] pb-safe">
-    <div class="grid grid-cols-5 h-16">
+    <div class="grid grid-cols-6 h-16">
       
       <!-- Tab 1: Dashboard -->
       <button
@@ -1382,6 +1597,17 @@
         <span class="text-lg">🕒</span>
         <span class="text-[10px] leading-none truncate">Lịch Sử</span>
         <span x-show="activeTab === 'history'" class="absolute top-1 w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+      </button>
+
+      <!-- Tab 6: Patrol -->
+      <button
+        @click="selectTab('patrol')"
+        class="touch-btn flex flex-col items-center justify-center space-y-1 transition duration-150 relative"
+        :class="activeTab === 'patrol' ? 'text-indigo-600 font-bold' : 'text-slate-500 hover:text-slate-700'"
+      >
+        <span class="text-lg">🛡️</span>
+        <span class="text-[10px] leading-none truncate">Đi Tuần</span>
+        <span x-show="activeTab === 'patrol'" class="absolute top-1 w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
       </button>
 
     </div>
@@ -1670,6 +1896,14 @@
         loadingLeaveStats: false,
         sendingLeaveStats: false,
 
+        // Patrol Feature State (Đi tuần Tiểu đội 1)
+        patrolMembers: [],
+        patrolStatus: null,
+        loadingPatrol: false,
+        newPatrolMember: { fullName: '', aliases: '' },
+        testReminderTime: '06:30',
+        simText: 'tuantra ',
+
         init() {
           this.fetchSchedules();
         },
@@ -1700,6 +1934,8 @@
             this.fetchConfig();
           } else if (tab === 'history') {
             this.fetchHistory();
+          } else if (tab === 'patrol') {
+            this.fetchPatrolData();
           }
         },
 
@@ -1714,6 +1950,8 @@
             this.fetchConfig();
           } else if (this.activeTab === 'history') {
             this.fetchHistory();
+          } else if (this.activeTab === 'patrol') {
+            this.fetchPatrolData();
           }
         },
 
@@ -2143,6 +2381,115 @@
             const data = await res.json();
             if (data.success) {
               this.historyList = data.history;
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async fetchPatrolData() {
+          this.loadingPatrol = true;
+          try {
+            const [mRes, sRes] = await Promise.all([
+              fetch('/api/patrol/members'),
+              fetch('/api/patrol/status')
+            ]);
+            const mData = await mRes.json();
+            const sData = await sRes.json();
+            if (mData.success) this.patrolMembers = mData.members;
+            if (sData.success) this.patrolStatus = sData.status;
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.loadingPatrol = false;
+          }
+        },
+
+        async addPatrolMember() {
+          if (!this.newPatrolMember.fullName.trim()) {
+            this.showToast('Vui lòng nhập họ và tên thành viên', 'error');
+            return;
+          }
+          try {
+            const aliases = this.newPatrolMember.aliases
+              .split(',')
+              .map(a => a.trim())
+              .filter(a => a.length > 0);
+            const res = await fetch('/api/patrol/members', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fullName: this.newPatrolMember.fullName, aliases })
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('Đã thêm thành viên Tiểu đội 1 thành công!');
+              this.newPatrolMember = { fullName: '', aliases: '' };
+              await this.fetchPatrolData();
+            } else {
+              this.showToast(data.error || 'Lỗi thêm thành viên', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async deletePatrolMember(id) {
+          if (!confirm('Bạn có chắc chắn muốn xóa thành viên này khỏi danh sách Tiểu đội 1?')) return;
+          try {
+            const res = await fetch(`/api/patrol/members/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('Đã xóa thành viên khỏi danh sách');
+              await this.fetchPatrolData();
+            } else {
+              this.showToast(data.error || 'Lỗi xóa thành viên', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async triggerTestReminder() {
+          try {
+            const res = await fetch('/api/patrol/test-reminders', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ time: this.testReminderTime })
+            });
+            const data = await res.json();
+            if (data.success) {
+              const r = data.result;
+              this.showToast(`[Test] ${r.reason || (r.triggered ? `Đã gửi nhắc nhở #${r.reminderCount}` : 'Không kích hoạt')}`);
+              await this.fetchPatrolData();
+            } else {
+              this.showToast(data.error || 'Lỗi kiểm tra nhắc nhở', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async triggerSimCommand() {
+          if (!this.simText.trim()) return;
+          try {
+            const res = await fetch('/api/patrol/simulate-command', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: this.simText })
+            });
+            const data = await res.json();
+            if (data.success) {
+              const r = data.result;
+              if (r.error) {
+                this.showToast(`Phản hồi: ${r.error}`, 'error');
+              } else if (r.ignoredReason) {
+                this.showToast(`Bỏ qua lệnh: ${r.ignoredReason}`, 'warning');
+              } else {
+                this.showToast(`Thành công! Thành viên: ${r.members?.join(', ')}`);
+              }
+              await this.fetchPatrolData();
+            } else {
+              this.showToast(data.error || 'Lỗi gửi lệnh giả lập', 'error');
             }
           } catch (e) {
             this.showToast(e.message, 'error');

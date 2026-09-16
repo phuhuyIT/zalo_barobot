@@ -13,6 +13,60 @@ import fs from 'fs';
 import path from 'path';
 import { SendHistoryEntry, RuntimeConfigOverride, Recipient } from '../types';
 import { formatDateDMY } from '../sheets/dateUtils';
+import { initPatrolTables } from '../patrol/patrol.repository';
+
+/**
+ * Parse chuỗi JSON an toàn với giá trị fallback nếu chuỗi rỗng hoặc lỗi cú pháp.
+ */
+export function safeJsonParse<T>(jsonStr: string | null | undefined, fallback: T): T {
+  if (!jsonStr || typeof jsonStr !== 'string') return fallback;
+  try {
+    return JSON.parse(jsonStr) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export interface LastMessageInfo {
+  messageId: string;
+  sentDate: string;
+  updatedAt: string;
+}
+
+interface LastMessageRow {
+  schedule_key: string;
+  chat_id: string;
+  message_id: string;
+  sent_date: string;
+  updated_at: string;
+}
+
+interface RuntimeConfigRow {
+  config_key: string;
+  sheet_tab_gate_duty: string | null;
+  auto_send_time: string | null;
+  enabled: number | null;
+  send_next_day: number | null;
+  recipients: string | null;
+}
+
+interface RecipientRow {
+  key: string;
+  display_name: string;
+  chat_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SendHistoryRow {
+  id: number;
+  timestamp: string;
+  schedule_key: string;
+  chat_id: string;
+  result: string;
+  error: string | null;
+  old_message_deleted: number;
+}
 
 let db: Database.Database | null = null;
 
@@ -113,6 +167,9 @@ export function initTables(database: Database.Database): void {
       old_message_deleted INTEGER NOT NULL DEFAULT 0
     );
   `);
+
+  // 5. Khởi tạo các bảng phục vụ tính năng đi tuần (Patrol)
+  initPatrolTables(database);
 }
 
 /**
@@ -176,6 +233,29 @@ export function getLastMessageId(
     .get(scheduleKey, chatId) as { message_id: string } | undefined;
 
   return row?.message_id || null;
+}
+
+/**
+ * Lấy đầy đủ thông tin gửi tin nhắn gần nhất (dùng cho Web UI / API).
+ */
+export function getLastMessageInfo(
+  scheduleKey: string,
+  chatId: string,
+  database?: Database.Database
+): LastMessageInfo | null {
+  const d = database || getDatabase();
+  const row = d
+    .prepare(
+      `SELECT message_id, sent_date, updated_at FROM last_message WHERE schedule_key = ? AND chat_id = ?`
+    )
+    .get(scheduleKey, chatId) as LastMessageRow | undefined;
+
+  if (!row) return null;
+  return {
+    messageId: row.message_id,
+    sentDate: row.sent_date,
+    updatedAt: row.updated_at,
+  };
 }
 
 /**
@@ -250,16 +330,13 @@ export function getRuntimeConfigOverride(
          FROM runtime_config
          WHERE config_key = ?`
       )
-      .get(configKey) as any;
+      .get(configKey) as RuntimeConfigRow | undefined;
 
     if (!row) return null;
 
-    let recipientsParsed: string[] | undefined = undefined;
-    if (row.recipients) {
-      try {
-        recipientsParsed = JSON.parse(row.recipients);
-      } catch (_) {}
-    }
+    const recipientsParsed = row.recipients
+      ? safeJsonParse<string[]>(row.recipients, [])
+      : undefined;
 
     return {
       sheet_tab_gate_duty: row.sheet_tab_gate_duty ?? undefined,
@@ -268,7 +345,8 @@ export function getRuntimeConfigOverride(
       send_next_day: row.send_next_day !== null && row.send_next_day !== undefined ? Boolean(row.send_next_day) : undefined,
       recipients: recipientsParsed,
     };
-  } catch (_) {
+  } catch (err: unknown) {
+    console.error(`[Store] Lỗi đọc runtime_config cho key '${configKey}':`, err);
     return null;
   }
 }
@@ -281,16 +359,13 @@ export function getAllRuntimeConfigOverrides(
 ): Record<string, RuntimeConfigOverride> {
   const d = database || getDatabase();
   try {
-    const rows = d.prepare(`SELECT * FROM runtime_config`).all() as any[];
+    const rows = d.prepare(`SELECT * FROM runtime_config`).all() as RuntimeConfigRow[];
 
     const result: Record<string, RuntimeConfigOverride> = {};
     for (const r of rows) {
-      let recipientsParsed: string[] | undefined = undefined;
-      if (r.recipients) {
-        try {
-          recipientsParsed = JSON.parse(r.recipients);
-        } catch (_) {}
-      }
+      const recipientsParsed = r.recipients
+        ? safeJsonParse<string[]>(r.recipients, [])
+        : undefined;
 
       result[r.config_key] = {
         sheet_tab_gate_duty: r.sheet_tab_gate_duty ?? undefined,
@@ -301,7 +376,8 @@ export function getAllRuntimeConfigOverrides(
       };
     }
     return result;
-  } catch (_) {
+  } catch (err: unknown) {
+    console.error('[Store] Lỗi đọc danh sách runtime_config:', err);
     return {};
   }
 }
@@ -370,7 +446,7 @@ export function saveRuntimeConfigOverride(
 export function getAllRecipients(database?: Database.Database): Recipient[] {
   const d = database || getDatabase();
   try {
-    const rows = d.prepare(`SELECT key, display_name, chat_id, created_at, updated_at FROM recipients ORDER BY display_name ASC`).all() as any[];
+    const rows = d.prepare(`SELECT key, display_name, chat_id, created_at, updated_at FROM recipients ORDER BY display_name ASC`).all() as RecipientRow[];
     return rows.map((r) => ({
       key: r.key,
       display_name: r.display_name,
@@ -378,7 +454,8 @@ export function getAllRecipients(database?: Database.Database): Recipient[] {
       created_at: r.created_at,
       updated_at: r.updated_at,
     }));
-  } catch (_) {
+  } catch (err: unknown) {
+    console.error('[Store] Lỗi đọc danh sách recipients:', err);
     return [];
   }
 }
@@ -389,7 +466,7 @@ export function getAllRecipients(database?: Database.Database): Recipient[] {
 export function getRecipient(key: string, database?: Database.Database): Recipient | null {
   const d = database || getDatabase();
   try {
-    const row = d.prepare(`SELECT key, display_name, chat_id, created_at, updated_at FROM recipients WHERE key = ?`).get(key) as any;
+    const row = d.prepare(`SELECT key, display_name, chat_id, created_at, updated_at FROM recipients WHERE key = ?`).get(key) as RecipientRow | undefined;
     if (!row) return null;
     return {
       key: row.key,
@@ -398,7 +475,8 @@ export function getRecipient(key: string, database?: Database.Database): Recipie
       created_at: row.created_at,
       updated_at: row.updated_at,
     };
-  } catch (_) {
+  } catch (err: unknown) {
+    console.error(`[Store] Lỗi đọc recipient cho key '${key}':`, err);
     return null;
   }
 }
@@ -439,20 +517,16 @@ export function deleteRecipient(
   const affectedSchedules: string[] = [];
 
   // Tìm các schedule trong runtime_config đang gán recipient này
-  const rows = d.prepare(`SELECT config_key, recipients FROM runtime_config WHERE recipients IS NOT NULL`).all() as any[];
+  const rows = d.prepare(`SELECT config_key, recipients FROM runtime_config WHERE recipients IS NOT NULL`).all() as { config_key: string; recipients: string }[];
   for (const r of rows) {
-    try {
-      const recList = JSON.parse(r.recipients) as string[];
-      if (Array.isArray(recList) && recList.includes(key)) {
-        const updatedList = recList.filter((k) => k !== key);
-        d.prepare(`UPDATE runtime_config SET recipients = ? WHERE config_key = ?`).run(
-          JSON.stringify(updatedList),
-          r.config_key
-        );
-        affectedSchedules.push(r.config_key);
-      }
-    } catch (_) {
-      // Bỏ qua lỗi parse
+    const recList = safeJsonParse<string[]>(r.recipients, []);
+    if (Array.isArray(recList) && recList.includes(key)) {
+      const updatedList = recList.filter((k) => k !== key);
+      d.prepare(`UPDATE runtime_config SET recipients = ? WHERE config_key = ?`).run(
+        JSON.stringify(updatedList),
+        r.config_key
+      );
+      affectedSchedules.push(r.config_key);
     }
   }
 

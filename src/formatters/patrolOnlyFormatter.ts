@@ -6,6 +6,7 @@
  */
 
 import { DailyDuty } from '../types';
+import { formatTaskHierarchy } from './formatterUtils';
 
 export function formatPatrolOnlyMessage(duty: DailyDuty | null, targetDate?: string): string {
   const dateStr = duty?.date || targetDate || '';
@@ -30,20 +31,7 @@ export function formatPatrolOnlyMessage(duty: DailyDuty | null, targetDate?: str
     lines.push(duty.unit);
   }
   lines.push('');
-
-  let currentParent: string | null = null;
-  for (const task of patrolTasks) {
-    if (task.parentTask && task.subTask) {
-      if (task.parentTask !== currentParent) {
-        currentParent = task.parentTask;
-        lines.push(`🔹 ${task.parentTask}:`);
-      }
-      lines.push(`      - ${task.subTask}: ${task.assignee}`);
-    } else {
-      currentParent = null;
-      lines.push(`🔹 ${task.taskName}: ${task.assignee}`);
-    }
-  }
+  lines.push(...formatTaskHierarchy(patrolTasks));
 
   return lines.join('\n');
 }

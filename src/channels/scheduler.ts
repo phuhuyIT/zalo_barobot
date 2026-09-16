@@ -16,6 +16,7 @@ import { getEffectiveScheduleConfig, sendSchedule } from '../core';
 import { hasSentToday, saveLastMessage } from '../store';
 import { ZaloClient } from '../core/zaloClient';
 import { formatDateDMY, resolveLookupDate, getVietnamTimeParts } from '../sheets/dateUtils';
+import { runPatrolReminders } from '../patrol';
 
 export const schedulerRouter = Router();
 
@@ -186,6 +187,16 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
         }
       }
     }
+  }
+
+  // 3. Kiểm tra nhắc nhở nộp lịch đi tuần Tiểu đội 1 (06:30, 06:35, 06:40)
+  try {
+    const patrolRes = await runPatrolReminders(now);
+    if (patrolRes.triggered) {
+      remindersRun.push(`patrol_reminder_${patrolRes.reminderCount}`);
+    }
+  } catch (err: any) {
+    console.error(`[Scheduler] ❌ Lỗi thực thi runPatrolReminders:`, err.message);
   }
 
   return { schedulesRun, remindersRun };

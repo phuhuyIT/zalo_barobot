@@ -17,7 +17,7 @@ export function getSheetsClient(): sheets_v4.Sheets {
     return cachedSheetsClient;
   }
 
-  let auth: any;
+  let auth: InstanceType<typeof google.auth.GoogleAuth>;
 
   if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
     try {

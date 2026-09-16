@@ -14,6 +14,7 @@ export * from './gateDutyFormatter';
 export * from './patrolOnlyFormatter';
 export * from './leaveRosterFormatter';
 export * from './leaveStatsFormatter';
+export * from './formatterUtils';
 
 export type FormatterFn = (data: any, targetDate?: string) => string;
 

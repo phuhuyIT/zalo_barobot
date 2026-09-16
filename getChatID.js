@@ -1,7 +1,11 @@
 require("dotenv").config();
 const ZaloBot = require("node-zalo-bot");
 
-const token = process.env.ZALO_BOT_TOKEN || "3580052352266717043:JmdlpnyqfOlfgbTteDveeFbFDPGgrZIDiPmSzwduTeVmcruRuoVLlxMukjdPLQTC";
+const token = process.env.ZALO_BOT_TOKEN;
+if (!token) {
+  console.error("❌ Lỗi: Chưa cấu hình ZALO_BOT_TOKEN trong file .env");
+  process.exit(1);
+}
 
 console.log("🚀 Đang khởi động bot ở chế độ Polling...");
 console.log("👉 Hãy vào nhóm Zalo (hoặc chat riêng với bot) và gửi 1 tin nhắn bất kỳ (ví dụ: 'hello').");
