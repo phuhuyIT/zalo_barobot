@@ -2,8 +2,13 @@ node_modules
 dist
 data
 *.db
+*.db-*
 *.log
 .env
 .git
+.github
 tests
 *.xlsx
+service-account*.json
+logs*.json
+coverage
