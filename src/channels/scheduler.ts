@@ -10,6 +10,7 @@
  */
 
 import cron, { ScheduledTask } from 'node-cron';
+import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { getConfig, getRecipientChatId } from '../config';
 import { getEffectiveScheduleConfig, sendSchedule } from '../core';
@@ -24,6 +25,16 @@ export const schedulerRouter = Router();
 const activeCronTasks: ScheduledTask[] = [];
 
 /**
+ * So sánh an toàn hai chuỗi để chống timing-attack.
+ */
+function timingSafeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
  * Kiểm tra xem công việc có đến hạn gửi lúc này không theo múi giờ Việt Nam.
  */
 function isTimeMatching(targetTimeStr: string, now: Date): boolean {
@@ -36,9 +47,9 @@ function isTimeMatching(targetTimeStr: string, now: Date): boolean {
  * Tính khoảng cách phút từ timeA đến timeB trong chu kỳ 24h (HH:MM -> HH:MM).
  */
 function getMinutesDifference(fromTime: string, toTime: string): number {
-  const [fh, fm] = fromTime.split(':').map(Number);
-  const [th, tm] = toTime.split(':').map(Number);
-  let diff = (th * 60 + tm) - (fh * 60 + fm);
+  const [fromHours, fromMinutes] = fromTime.split(':').map(Number);
+  const [toHours, toMinutes] = toTime.split(':').map(Number);
+  let diff = (toHours * 60 + toMinutes) - (fromHours * 60 + fromMinutes);
   if (diff < 0) diff += 24 * 60;
   return diff;
 }
@@ -259,22 +270,28 @@ export function refreshSchedules(): void {
  */
 schedulerRouter.post('/internal/run-due-jobs', async (req: Request, res: Response) => {
   const expectedKey = process.env.INTERNAL_API_KEY;
-  if (expectedKey) {
-    const receivedKey =
-      req.headers['x-internal-key'] ||
-      req.headers['authorization']?.replace('Bearer ', '') ||
-      req.query.key;
+  if (!expectedKey) {
+    res.status(403).json({ success: false, error: 'INTERNAL_API_KEY is not configured on the server.' });
+    return;
+  }
 
-    if (receivedKey !== expectedKey) {
-      res.status(403).json({ error: 'Unauthorized internal API key' });
-      return;
-    }
+  const rawKey =
+    req.headers['x-internal-key'] ||
+    req.headers['authorization']?.replace('Bearer ', '') ||
+    req.query.key;
+
+  const receivedKey = typeof rawKey === 'string' ? rawKey.trim() : Array.isArray(rawKey) ? String(rawKey[0]).trim() : '';
+
+  if (!receivedKey || !timingSafeCompare(receivedKey, expectedKey)) {
+    res.status(403).json({ success: false, error: 'Unauthorized internal API key' });
+    return;
   }
 
   try {
     const result = await runDueJobs(new Date());
     res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
   }
 });

@@ -10,6 +10,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { getConfig, getRecipientChatId } from '../config';
 import { sendSchedule, getEffectiveScheduleConfig } from '../core';
@@ -17,6 +18,16 @@ import { ZaloClient } from '../core/zaloClient';
 import { handlePatrolCommand } from '../patrol';
 
 export const webhookRouter = Router();
+
+/**
+ * So sánh an toàn hai chuỗi để chống timing-attack.
+ */
+function timingSafeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 function appendWebhookLog(line: string) {
   try {
@@ -32,43 +43,50 @@ function appendWebhookLog(line: string) {
 }
 
 webhookRouter.post('/webhook/zalo', async (req: Request, res: Response) => {
-  appendWebhookLog(`REQ: ${req.ip} | User-Agent: ${req.headers['user-agent']} | Body: ${JSON.stringify(req.body)}`);
-  console.log('[Webhook] Incoming request from:', req.ip, 'User-Agent:', req.headers['user-agent']);
-
-  // Sanitize headers để không log secret token hoặc authorization (Quy tắc bảo mật)
-  const safeHeaders: Record<string, unknown> = { ...req.headers };
-  delete safeHeaders['authorization'];
-  delete safeHeaders['x-bot-secret-token'];
-  delete safeHeaders['x-zalo-bot-secret-token'];
-  delete safeHeaders['x-telegram-bot-api-secret-token'];
-  delete safeHeaders['x-secret-token'];
-  delete safeHeaders['secret-token'];
-  delete safeHeaders['secret_token'];
-  console.log('[Webhook] Headers:', JSON.stringify(safeHeaders));
-  console.log('[Webhook] Body:', JSON.stringify(req.body));
-
-  // 1. Xác thực webhook secret token qua header (Mục 6.2 & Quy tắc #7)
+  // 1. Xác thực webhook secret token qua header hoặc URL query (Mục 6.2 & Quy tắc #7)
   const webhookSecret = process.env.ZALO_WEBHOOK_SECRET;
   if (webhookSecret) {
-    const receivedSecret =
+    const rawSecret =
       req.headers['x-bot-secret-token'] ||
       req.headers['x-zalo-bot-secret-token'] ||
       req.headers['x-telegram-bot-api-secret-token'] ||
       req.headers['x-secret-token'] ||
       req.headers['secret-token'] ||
-      req.headers['secret_token'];
+      req.headers['secret_token'] ||
+      req.headers['x-bot-token'] ||
+      (typeof req.headers['authorization'] === 'string' && req.headers['authorization'].startsWith('Bearer ')
+        ? req.headers['authorization'].slice(7)
+        : undefined) ||
+      (typeof req.query?.secret_token === 'string' ? req.query.secret_token : undefined) ||
+      (typeof req.query?.secret === 'string' ? req.query.secret : undefined) ||
+      (typeof req.query?.token === 'string' ? req.query.token : undefined);
 
-    // Nếu Zalo gửi request có secret token nhưng không khớp:
-    if (receivedSecret && receivedSecret !== webhookSecret) {
-      console.warn('[Webhook] Nhận request với secret token không hợp lệ (mismatch)');
-      res.status(403).json({ error: 'Unauthorized secret token' });
-      return;
-    }
+    const receivedSecret = typeof rawSecret === 'string' ? rawSecret : Array.isArray(rawSecret) ? rawSecret[0] : '';
 
-    if (!receivedSecret) {
-      console.warn('[Webhook Warning] Không tìm thấy secret token trong header.');
+    if (receivedSecret) {
+      if (!timingSafeCompare(receivedSecret, webhookSecret)) {
+        console.warn('[Webhook] Từ chối request do secret token không khớp (mismatch)');
+        appendWebhookLog(`REJECTED: ${req.ip} | Reason: secret token mismatch`);
+        res.status(403).json({ success: false, error: 'Unauthorized secret token' });
+        return;
+      }
+    } else {
+      const enforceSecret = process.env.ZALO_WEBHOOK_ENFORCE_SECRET === 'true';
+      if (enforceSecret) {
+        console.warn('[Webhook] Từ chối request do thiếu secret token (ZALO_WEBHOOK_ENFORCE_SECRET=true)');
+        appendWebhookLog(`REJECTED: ${req.ip} | Reason: missing secret token`);
+        res.status(403).json({ success: false, error: 'Unauthorized: missing secret token' });
+        return;
+      }
+      console.warn(
+        '[Webhook Warning] Không tìm thấy secret token trong header hoặc URL query. Đang tiếp tục xử lý (Zalo Bot không luôn gửi kèm header secret token).'
+      );
     }
   }
+
+  // Ghi log metadata an toàn (không ghi thông tin nhạy cảm/PII)
+  appendWebhookLog(`REQ: ${req.ip} | User-Agent: ${req.headers['user-agent']} | Event: message received`);
+  console.log('[Webhook] Incoming request from:', req.ip);
 
   // Trả về 200 OK ngay lập tức cho Zalo Bot Platform
   res.status(200).json({ ok: true });
@@ -112,7 +130,7 @@ webhookRouter.post('/webhook/zalo', async (req: Request, res: Response) => {
     }
 
     // 2a. Kiểm tra lệnh đi tuần: tuantra <tên 1> [tên 2] (kể cả có @mention bot hoặc /tuantra)
-    if (/(?:^|\s|\/)tuantra(?:\s*[\+:]|\s+|$)/i.test(text)) {
+    if (/(?:^|\s|\/)tuantra(?:\s*[+:]|\s+|$)/i.test(text)) {
       appendWebhookLog(`PROCESSING PATROL COMMAND: "${text}" from senderId="${senderId}" in chatId="${chatId}"`);
       try {
         const patrolRes = await handlePatrolCommand({
