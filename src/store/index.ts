@@ -13,7 +13,6 @@ import fs from 'fs';
 import path from 'path';
 import { SendHistoryEntry, RuntimeConfigOverride, Recipient } from '../types';
 import { formatDateDMY } from '../sheets/dateUtils';
-import { initPatrolTables } from '../patrol/patrol.repository';
 
 /**
  * Parse chuỗi JSON an toàn với giá trị fallback nếu chuỗi rỗng hoặc lỗi cú pháp.
@@ -56,16 +55,6 @@ interface RecipientRow {
   chat_id: string;
   created_at: string;
   updated_at: string;
-}
-
-interface SendHistoryRow {
-  id: number;
-  timestamp: string;
-  schedule_key: string;
-  chat_id: string;
-  result: string;
-  error: string | null;
-  old_message_deleted: number;
 }
 
 let db: Database.Database | null = null;
@@ -132,16 +121,12 @@ export function initTables(database: Database.Database): void {
     );
   `);
 
-  try {
+  const runtimeCols = database.prepare(`PRAGMA table_info(runtime_config)`).all() as Array<{ name: string }>;
+  if (!runtimeCols.some((col) => col.name === 'send_next_day')) {
     database.exec(`ALTER TABLE runtime_config ADD COLUMN send_next_day INTEGER;`);
-  } catch (_) {
-    // Cột đã tồn tại
   }
-
-  try {
+  if (!runtimeCols.some((col) => col.name === 'recipients')) {
     database.exec(`ALTER TABLE runtime_config ADD COLUMN recipients TEXT;`);
-  } catch (_) {
-    // Cột đã tồn tại
   }
 
   // 3. Bảng người nhận lịch runtime (F12)
@@ -166,10 +151,10 @@ export function initTables(database: Database.Database): void {
       error TEXT,
       old_message_deleted INTEGER NOT NULL DEFAULT 0
     );
-  `);
 
-  // 5. Khởi tạo các bảng phục vụ tính năng đi tuần (Patrol)
-  initPatrolTables(database);
+    CREATE INDEX IF NOT EXISTS idx_last_message_date ON last_message(sent_date);
+    CREATE INDEX IF NOT EXISTS idx_send_history_schedule ON send_history(schedule_key, timestamp);
+  `);
 }
 
 /**
@@ -516,22 +501,26 @@ export function deleteRecipient(
   const d = database || getDatabase();
   const affectedSchedules: string[] = [];
 
-  // Tìm các schedule trong runtime_config đang gán recipient này
-  const rows = d.prepare(`SELECT config_key, recipients FROM runtime_config WHERE recipients IS NOT NULL`).all() as { config_key: string; recipients: string }[];
-  for (const r of rows) {
-    const recList = safeJsonParse<string[]>(r.recipients, []);
-    if (Array.isArray(recList) && recList.includes(key)) {
-      const updatedList = recList.filter((k) => k !== key);
-      d.prepare(`UPDATE runtime_config SET recipients = ? WHERE config_key = ?`).run(
-        JSON.stringify(updatedList),
-        r.config_key
-      );
-      affectedSchedules.push(r.config_key);
+  const performDelete = d.transaction(() => {
+    // Tìm các schedule trong runtime_config đang gán recipient này
+    const rows = d.prepare(`SELECT config_key, recipients FROM runtime_config WHERE recipients IS NOT NULL`).all() as { config_key: string; recipients: string }[];
+    for (const r of rows) {
+      const recList = safeJsonParse<string[]>(r.recipients, []);
+      if (Array.isArray(recList) && recList.includes(key)) {
+        const updatedList = recList.filter((k) => k !== key);
+        d.prepare(`UPDATE runtime_config SET recipients = ? WHERE config_key = ?`).run(
+          JSON.stringify(updatedList),
+          r.config_key
+        );
+        affectedSchedules.push(r.config_key);
+      }
     }
-  }
 
-  // Xóa khỏi bảng recipients
-  d.prepare(`DELETE FROM recipients WHERE key = ?`).run(key);
+    // Xóa khỏi bảng recipients
+    d.prepare(`DELETE FROM recipients WHERE key = ?`).run(key);
+  });
+
+  performDelete();
 
   return { deletedKey: key, affectedSchedules };
 }
@@ -545,7 +534,7 @@ export function seedDefaultRecipients(
 ): void {
   const d = database || getDatabase();
   try {
-    const countRow = d.prepare(`SELECT COUNT(*) as count FROM recipients`).get() as any;
+    const countRow = d.prepare(`SELECT COUNT(*) as count FROM recipients`).get() as { count: number } | undefined;
     if (countRow?.count === 0) {
       for (const item of defaults) {
         if (item.key && item.chat_id) {
@@ -553,8 +542,8 @@ export function seedDefaultRecipients(
         }
       }
     }
-  } catch (_) {
-    // Không làm gián đoạn nếu bảng chưa sẵn sàng
+  } catch (err: unknown) {
+    console.warn('[Store] Không thể seed danh sách người nhận mặc định:', err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -567,7 +556,7 @@ export function resetScheduleSentStatus(
   database?: Database.Database
 ): { deletedLastMessage: number; deletedHistory: number } {
   const d = database || getDatabase();
-  let deletedLastMessage = 0;
+  let deletedLastMessage: number;
   let deletedHistory = 0;
 
   if (date && scheduleKey) {

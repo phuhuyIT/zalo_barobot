@@ -15,10 +15,30 @@ import {
   PatrolSummaryDailyStatus,
 } from './patrol.types';
 
+const initializedDbs = new WeakSet<Database.Database>();
+
+/**
+ * Đảm bảo các bảng tuần tra đã được khởi tạo trên database kết nối.
+ */
+export function ensurePatrolTables(database: Database.Database): void {
+  if (initializedDbs.has(database)) return;
+  initPatrolTables(database);
+}
+
+/**
+ * Lấy đối tượng database và đảm bảo bảng tuần tra sẵn sàng.
+ */
+export function getPatrolDb(database?: Database.Database): Database.Database {
+  const dbInstance = database || getDatabase();
+  ensurePatrolTables(dbInstance);
+  return dbInstance;
+}
+
 /**
  * Khởi tạo cấu trúc các bảng liên quan đến Patrol.
  */
 export function initPatrolTables(database: Database.Database): void {
+  initializedDbs.add(database);
   // 1. Bảng cấu hình các site đi tuần (F13 & two-sites)
   database.exec(`
     CREATE TABLE IF NOT EXISTS patrol_site_configs (
@@ -220,10 +240,16 @@ export function seedDefaultPatrolMembers(database: Database.Database): void {
     `INSERT OR IGNORE INTO patrol_members (full_name, aliases, created_at) VALUES (?, ?, ?)`
   );
 
-  for (const m of defaultMembers) {
-    try {
+  const insertBatch = database.transaction(() => {
+    for (const m of defaultMembers) {
       insertStmt.run(m.fullName, JSON.stringify(m.aliases), now);
-    } catch (_) {}
+    }
+  });
+
+  try {
+    insertBatch();
+  } catch (err: unknown) {
+    console.warn('[PatrolRepo] Không thể seed patrol_members:', err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -231,7 +257,7 @@ export function seedDefaultPatrolMembers(database: Database.Database): void {
  * Lấy tất cả cấu hình các site tuần tra.
  */
 export function getPatrolSiteConfigs(database?: Database.Database): PatrolSiteConfig[] {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   try {
     const rows = d
       .prepare(`SELECT site_key, display_name, leader_user_id, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at FROM patrol_site_configs ORDER BY site_key ASC`)
@@ -262,7 +288,7 @@ export function getPatrolSiteConfig(
   siteKey: string,
   database?: Database.Database
 ): PatrolSiteConfig | null {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const row = d
     .prepare(
       `SELECT site_key, display_name, leader_user_id, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at
@@ -293,7 +319,7 @@ export function savePatrolSiteConfig(
   config: Partial<PatrolSiteConfig> & { siteKey: string },
   database?: Database.Database
 ): PatrolSiteConfig {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const now = new Date().toISOString();
   const existing = getPatrolSiteConfig(config.siteKey, d);
 
@@ -365,11 +391,11 @@ export function getPatrolDailyStatus(
 
   if (typeof siteKeyOrDb === 'string') {
     siteKey = siteKeyOrDb;
-    d = database || getDatabase();
+    d = getPatrolDb(database);
   } else if (siteKeyOrDb && typeof siteKeyOrDb === 'object') {
     d = siteKeyOrDb;
   } else {
-    d = database || getDatabase();
+    d = getPatrolDb(database);
   }
 
   const row = d
@@ -416,7 +442,7 @@ export function getAllPatrolDailyStatusForDate(
   date: string,
   database?: Database.Database
 ): PatrolDailyStatus[] {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const rows = d
     .prepare(
       `SELECT id, date, site_key, group_id, sender_id, leader_user_id, submitted,
@@ -473,7 +499,7 @@ export function savePatrolSubmission(
   },
   database?: Database.Database
 ): PatrolDailyStatus {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const now = new Date().toISOString();
   const siteKey = params.siteKey || 'site_1';
   const receivedAt = params.receivedAt || now;
@@ -568,7 +594,7 @@ export function updatePatrolReminder(
   },
   database?: Database.Database
 ): PatrolDailyStatus {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const now = new Date().toISOString();
   const siteKey = params.siteKey || 'site_1';
 
@@ -611,7 +637,7 @@ export function getPatrolSummaryStatus(
   date: string,
   database?: Database.Database
 ): PatrolSummaryDailyStatus | null {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const row = d
     .prepare(
       `SELECT date, summary_sent, sent_at, message_id, last_content, created_at, updated_at
@@ -645,7 +671,7 @@ export function savePatrolSummaryStatus(
   },
   database?: Database.Database
 ): PatrolSummaryDailyStatus {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const now = new Date().toISOString();
   const existing = getPatrolSummaryStatus(params.date, d);
 
@@ -689,7 +715,7 @@ export function savePatrolSummaryStatus(
  * Quản lý danh sách thành viên Tiểu đội 1 (CRUD).
  */
 export function getPatrolMembers(database?: Database.Database): PatrolMember[] {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   try {
     const rows = d
       .prepare(`SELECT id, full_name, aliases, created_at FROM patrol_members ORDER BY id ASC`)
@@ -712,7 +738,7 @@ export function addPatrolMember(
   aliases: string[] = [],
   database?: Database.Database
 ): PatrolMember {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const now = new Date().toISOString();
   const trimmedName = fullName.trim();
   const aliasesJson = JSON.stringify(aliases.map((a) => a.trim()).filter((a) => a.length > 0));
@@ -738,7 +764,7 @@ export function updatePatrolMember(
   aliases: string[] = [],
   database?: Database.Database
 ): boolean {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const trimmedName = fullName.trim();
   const aliasesJson = JSON.stringify(aliases.map((a) => a.trim()).filter((a) => a.length > 0));
 
@@ -754,7 +780,7 @@ export function updatePatrolMember(
 }
 
 export function deletePatrolMember(id: number, database?: Database.Database): boolean {
-  const d = database || getDatabase();
+  const d = getPatrolDb(database);
   const res = d.prepare(`DELETE FROM patrol_members WHERE id = ?`).run(id);
   return res.changes > 0;
 }
@@ -767,8 +793,8 @@ export function resetPatrolDailyStatus(
   siteKey?: string,
   database?: Database.Database
 ): { deletedDaily: number; deletedSummary: number } {
-  const d = database || getDatabase();
-  let deletedDaily = 0;
+  const d = getPatrolDb(database);
+  let deletedDaily: number;
   let deletedSummary = 0;
 
   if (date && siteKey) {

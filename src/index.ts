@@ -14,6 +14,7 @@ import { webhookRouter } from './channels/webhook';
 import { schedulerRouter, startScheduler, stopScheduler, refreshSchedules } from './channels/scheduler';
 import { getDatabase, closeDatabase } from './store';
 import { loadConfig } from './config';
+import { initPatrolTables } from './patrol/patrol.repository';
 
 dotenv.config();
 
@@ -24,7 +25,8 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 // Khởi tạo Database và nạp cấu hình ban đầu
-getDatabase();
+const db = getDatabase();
+initPatrolTables(db);
 loadConfig();
 
 // Middleware parse JSON và URL-encoded
