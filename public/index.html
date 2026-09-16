@@ -1469,6 +1469,10 @@
           </div>
           <div class="space-y-2 text-sm">
             <div class="flex justify-between text-slate-600 text-xs">
+              <span>Nơi nhận báo cáo:</span>
+              <span class="font-semibold text-indigo-700 font-mono truncate max-w-[170px]" :title="platoonLeaderChatId" x-text="platoonLeaderChatId || '(Chưa cấu hình)'"></span>
+            </div>
+            <div class="flex justify-between text-slate-600 text-xs">
               <span>Trạng thái:</span>
               <span class="font-semibold text-slate-800" x-text="patrolSummaryStatus?.summarySent ? 'Đã gửi tới Trung đội trưởng' : 'Đang chờ cả 2 địa bàn nộp'"></span>
             </div>
@@ -1569,6 +1573,38 @@
           <div>
             <h3 class="text-base font-bold text-slate-800">Cấu Hình Các Site Tuần Tra</h3>
             <p class="text-xs text-slate-500">Cấu hình được lưu trực tiếp vào cơ sở dữ liệu SQLite và có hiệu lực ngay lập tức.</p>
+          </div>
+        </div>
+
+        <!-- Cấu hình Trung đội trưởng nhận báo cáo tổng hợp -->
+        <div class="mb-5 p-4 bg-gradient-to-r from-indigo-50/90 to-blue-50/90 border border-indigo-200 rounded-xl">
+          <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div class="flex-1">
+              <div class="flex items-center space-x-2">
+                <span class="text-base">🎖️</span>
+                <h4 class="text-xs sm:text-sm font-bold text-indigo-900">Trung Đội Trưởng (Nhận báo cáo tổng hợp)</h4>
+                <span class="px-2 py-0.5 text-[11px] font-semibold bg-indigo-100 text-indigo-700 rounded-md">Chung 2 địa bàn</span>
+              </div>
+              <p class="text-xs text-indigo-800/80 mt-1">
+                Khi cả 2 địa bàn hoàn thành nộp lịch (hoặc báo nghỉ), bot sẽ tổng hợp và gửi báo cáo về Chat ID này. Cấu hình được lưu vào SQLite và áp dụng ngay lập tức mà không cần khởi động lại bot.
+              </p>
+            </div>
+            <div class="flex items-center gap-2 w-full sm:w-auto">
+              <input
+                type="text"
+                x-model="platoonLeaderChatId"
+                placeholder="Nhập Chat ID Trung đội trưởng"
+                class="w-full sm:w-64 bg-white border border-indigo-300 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+              />
+              <button
+                @click="savePlatoonLeaderChatId()"
+                :disabled="savingPlatoonLeader"
+                class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold rounded-lg transition whitespace-nowrap flex items-center space-x-1"
+              >
+                <span x-show="!savingPlatoonLeader">Lưu Chat ID</span>
+                <span x-show="savingPlatoonLeader" class="inline-block animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full"></span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2108,6 +2144,8 @@
         patrolSites: [],
         patrolDailyStatuses: [],
         patrolSummaryStatus: null,
+        platoonLeaderChatId: '',
+        savingPlatoonLeader: false,
         loadingPatrol: false,
         savingPatrolSite: false,
         newPatrolMember: { fullName: '', aliases: '' },
@@ -2602,14 +2640,16 @@
         async fetchPatrolData() {
           this.loadingPatrol = true;
           try {
-            const [mRes, sRes, siteRes] = await Promise.all([
+            const [mRes, sRes, siteRes, plRes] = await Promise.all([
               fetch('/api/patrol/members'),
               fetch('/api/patrol/status'),
               fetch('/api/patrol/sites'),
+              fetch('/api/patrol/platoon-leader'),
             ]);
             const mData = await mRes.json();
             const sData = await sRes.json();
             const siteData = await siteRes.json();
+            const plData = await plRes.json();
             if (mData.success) this.patrolMembers = mData.members;
             if (sData.success) {
               this.patrolStatus = sData.status;
@@ -2622,10 +2662,37 @@
                 reminderTimesInput: (s.reminderTimes || []).join(', ')
               }));
             }
+            if (plData.success) {
+              this.platoonLeaderChatId = plData.chatId || '';
+            } else if (sData.platoonLeaderChatId) {
+              this.platoonLeaderChatId = sData.platoonLeaderChatId;
+            }
           } catch (e) {
             this.showToast(e.message, 'error');
           } finally {
             this.loadingPatrol = false;
+          }
+        },
+
+        async savePlatoonLeaderChatId() {
+          this.savingPlatoonLeader = true;
+          try {
+            const res = await fetch('/api/patrol/platoon-leader', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chatId: this.platoonLeaderChatId })
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('Đã lưu Chat ID Trung đội trưởng thành công!');
+              await this.fetchPatrolData();
+            } else {
+              this.showToast(data.error || 'Lỗi lưu Chat ID Trung đội trưởng', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.savingPlatoonLeader = false;
           }
         },
 

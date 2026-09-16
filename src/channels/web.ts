@@ -43,6 +43,7 @@ import {
   resetPatrolDailyStatus,
   getSquad1LeaderUserId,
   getPatrolGroupId,
+  getPlatoonLeaderChatId,
 } from '../patrol';
 
 let schedulerRefreshCallback: (() => void) | null = null;
@@ -498,7 +499,41 @@ webRouter.delete('/api/patrol/members/:id', (req: Request, res: Response) => {
 webRouter.get('/api/patrol/sites', (req: Request, res: Response) => {
   try {
     const sites = getPatrolSiteConfigs();
-    res.json({ success: true, sites });
+    const platoonLeaderChatId = getPlatoonLeaderChatId();
+    res.json({ success: true, sites, platoonLeaderChatId });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/patrol/platoon-leader - Lấy chat ID Trung đội trưởng nhận báo cáo tổng hợp
+ */
+webRouter.get('/api/patrol/platoon-leader', (req: Request, res: Response) => {
+  try {
+    const chatId = getPlatoonLeaderChatId();
+    res.json({ success: true, chatId });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * PUT /api/patrol/platoon-leader - Cập nhật chat ID Trung đội trưởng nhận báo cáo tổng hợp
+ */
+webRouter.put('/api/patrol/platoon-leader', (req: Request, res: Response) => {
+  try {
+    const { chatId } = req.body || {};
+    if (chatId === undefined || chatId === null) {
+      return res.status(400).json({ success: false, error: 'chatId is required' });
+    }
+    const cleanChatId = String(chatId).trim();
+    saveRecipient({
+      key: 'platoon_leader',
+      display_name: 'Trung đội trưởng',
+      chat_id: cleanChatId,
+    });
+    res.json({ success: true, chatId: cleanChatId });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -547,6 +582,7 @@ webRouter.get('/api/patrol/status', (req: Request, res: Response) => {
     const dailyStatuses = getAllPatrolDailyStatusForDate(targetDate);
     const summaryStatus = getPatrolSummaryStatus(targetDate);
     const site1Status = getPatrolDailyStatus(targetDate, 'site_1');
+    const platoonLeaderChatId = getPlatoonLeaderChatId();
 
     res.json({
       success: true,
@@ -563,6 +599,7 @@ webRouter.get('/api/patrol/status', (req: Request, res: Response) => {
       sites,
       dailyStatuses,
       summaryStatus,
+      platoonLeaderChatId,
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });

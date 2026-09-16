@@ -225,4 +225,37 @@ describe('Web API Endpoints (F12 & F13)', () => {
       expect(data.data.stats[0].name).toBe('Nguyễn Văn A');
     });
   });
+
+  describe('Patrol Platoon Leader API', () => {
+    it('allows reading and updating platoon_leader chat ID via /api/patrol/platoon-leader', async () => {
+      // 1. Initial read
+      const getRes1 = await fetch(`${baseUrl}/api/patrol/platoon-leader`);
+      expect(getRes1.status).toBe(200);
+      const getData1 = await getRes1.json();
+      expect(getData1.success).toBe(true);
+
+      // 2. Update platoon leader chat ID
+      const putRes = await fetch(`${baseUrl}/api/patrol/platoon-leader`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId: 'leader_chat_999' }),
+      });
+      expect(putRes.status).toBe(200);
+      const putData = await putRes.json();
+      expect(putData.success).toBe(true);
+      expect(putData.chatId).toBe('leader_chat_999');
+
+      // 3. Verify via GET endpoint
+      const getRes2 = await fetch(`${baseUrl}/api/patrol/platoon-leader`);
+      const getData2 = await getRes2.json();
+      expect(getData2.success).toBe(true);
+      expect(getData2.chatId).toBe('leader_chat_999');
+
+      // 4. Verify /api/patrol/sites returns updated platoonLeaderChatId
+      const sitesRes = await fetch(`${baseUrl}/api/patrol/sites`);
+      const sitesData = await sitesRes.json();
+      expect(sitesData.success).toBe(true);
+      expect(sitesData.platoonLeaderChatId).toBe('leader_chat_999');
+    });
+  });
 });

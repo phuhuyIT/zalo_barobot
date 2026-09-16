@@ -18,6 +18,7 @@ import {
   getPatrolSummaryStatus,
   groupPatrolTasksIntoShifts,
   resetPatrolDailyStatus,
+  getPlatoonLeaderChatId,
 } from '../src/patrol';
 import { ZaloClient } from '../src/core/zaloClient';
 import * as storeModule from '../src/store';
@@ -1106,6 +1107,23 @@ describe('Two-Site Patrol Feature Tests (Mục 1 - 7)', () => {
       const res2 = resetPatrolDailyStatus('16/09/2026', undefined, mockDb);
       expect(res2.deletedDaily).toBe(1);
       expect(getPatrolDailyStatus('16/09/2026', 'site_2', mockDb)).toBeNull();
+    });
+
+    it('resolves platoon leader chat ID from SQLite DB recipients table before env variable', () => {
+      // 1. When DB has no record for platoon_leader, it falls back to process.env.PLATOON_LEADER_CHAT_ID
+      expect(getPlatoonLeaderChatId(mockDb)).toBe(platoonLeaderId);
+
+      // 2. When configured in DB (via Web UI), it takes precedence over env variable
+      storeModule.saveRecipient(
+        {
+          key: 'platoon_leader',
+          display_name: 'Trung đội trưởng',
+          chat_id: 'chat_id_from_sqlite_ui',
+        },
+        mockDb
+      );
+
+      expect(getPlatoonLeaderChatId(mockDb)).toBe('chat_id_from_sqlite_ui');
     });
   });
 });

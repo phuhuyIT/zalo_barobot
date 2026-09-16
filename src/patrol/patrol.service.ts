@@ -20,6 +20,7 @@ import {
   PatrolSiteConfig,
 } from './patrol.types';
 import { getRecipientChatId, getConfig } from '../config';
+import { getRecipient } from '../store';
 
 export interface SitePatrolDisplayData {
   siteKey: string;
@@ -54,18 +55,33 @@ export function getPatrolGroupId(): string {
 
 /**
  * Lấy Chat ID của Trung đội trưởng nhận báo cáo.
+ * Ưu tiên:
+ * 1. Bảng recipients trong SQLite DB (được cấu hình qua Web UI)
+ * 2. Biến môi trường PLATOON_LEADER_CHAT_ID
+ * 3. File config YAML
  */
-export function getPlatoonLeaderChatId(): string {
-  const envId = (process.env.PLATOON_LEADER_CHAT_ID || '').trim();
+export function getPlatoonLeaderChatId(database?: Database.Database): string {
+  // 1. Ưu tiên tra cứu từ recipients trong DB SQLite
+  try {
+    const recipient = getRecipient('platoon_leader', database);
+    if (recipient && recipient.chat_id && recipient.chat_id.trim()) {
+      return recipient.chat_id.trim();
+    }
+  } catch (_) {}
 
+  // 2. Dự phòng từ biến môi trường PLATOON_LEADER_CHAT_ID
+  const envId = (process.env.PLATOON_LEADER_CHAT_ID || '').trim();
   if (envId) return envId;
 
-  // Tra cứu từ recipients trong config
+  // 3. Dự phòng từ config YAML nếu có
   try {
-    return getRecipientChatId('platoon_leader') || '';
-  } catch (_) {
-    return '';
-  }
+    const fromConfig = getRecipientChatId('platoon_leader');
+    if (fromConfig && fromConfig !== 'platoon_leader') {
+      return fromConfig.trim();
+    }
+  } catch (_) {}
+
+  return '';
 }
 
 /**
@@ -397,7 +413,7 @@ export async function handlePatrolCommand(
   console.log(`[Patrol] Nhận lệnh "${text}" từ sender_id: ${senderId} trong chat_id: ${chatId}`);
 
   const zalo = options?.zaloClient || new ZaloClient();
-  const platoonLeaderId = getPlatoonLeaderChatId();
+  const platoonLeaderId = getPlatoonLeaderChatId(options?.database);
 
   // 2. Xác định Site và kiểm tra quyền gửi lệnh
   const { matchedSite, isAuthorizedSender, isAuthorizedChat } = resolveSiteForCommand(
