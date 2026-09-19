@@ -1,8 +1,10 @@
 /**
  * index.ts
  *
- * Điểm khởi động chính của hệ thống Zalo Barobot.
- * Tích hợp Express Web Server, Zalo Webhook, và Scheduler trong 1 tiến trình Node duy nhất.
+ * Official bot process: Express + webhook + scheduler.
+ * Có thể chạy độc lập (`npm run dev`) hoặc do supervisor spawn
+ * (cùng container với worker — worker crash không được kéo sập process này).
+ * Chỉ process này được CREATE TABLE.
  */
 
 import express from 'express';
@@ -15,6 +17,8 @@ import { schedulerRouter, startScheduler, stopScheduler, refreshSchedules } from
 import { getDatabase, closeDatabase } from './store';
 import { loadConfig } from './config';
 import { initPatrolTables } from './patrol/patrol.repository';
+import { initTaskproofTables } from './taskproof/store';
+import { taskproofInternalRouter } from './taskproof/internal';
 
 dotenv.config();
 
@@ -28,6 +32,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const db = getDatabase();
 initPatrolTables(db);
 loadConfig();
+initTaskproofTables(db);
 
 // Middleware parse JSON và URL-encoded
 app.use(express.json());
@@ -43,6 +48,9 @@ app.use(webhookRouter);
 
 // Gắn Internal Scheduler endpoint (dành cho Railway Cron)
 app.use(schedulerRouter);
+
+// Gắn internal task-proof (worker-down notify; worker gọi localhost)
+app.use(taskproofInternalRouter);
 
 // Bảo vệ Web UI và các API nội bộ bằng Basic Auth
 app.use(basicAuthMiddleware);
