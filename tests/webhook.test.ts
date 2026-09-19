@@ -18,7 +18,14 @@ describe('Webhook Channel Authentication & Handling', () => {
     delete process.env.ZALO_WEBHOOK_ENFORCE_SECRET;
 
     const app = express();
-    app.use(express.json());
+    app.use(
+      express.json({
+        verify: (req, _res, buf) => {
+          (req as { rawBody?: string }).rawBody = buf.toString('utf8');
+        },
+      })
+    );
+    app.use(express.text({ type: ['text/plain'], limit: '2mb' }));
     app.use(webhookRouter);
 
     await new Promise<void>((resolve) => {
@@ -149,5 +156,66 @@ describe('Webhook Channel Authentication & Handling', () => {
     expect(res.status).toBe(403);
     const data = await res.json();
     expect(data.error).toBe('Unauthorized: missing secret token');
+  });
+
+  it('still accepts /gui (schedule command, not task-proof)', async () => {
+    const res = await fetch(`${baseUrl}/webhook/zalo`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-bot-secret-token': 'test_secret_123',
+      },
+      body: JSON.stringify({
+        message: { text: '/gui', chat: { id: 'group_123' }, from: { id: 'user_1' } },
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it('accepts /task JSON posted as text/plain (Zalo Java client)', async () => {
+    const res = await fetch(`${baseUrl}/webhook/zalo`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+        'x-bot-secret-token': 'test_secret_123',
+      },
+      body: JSON.stringify({
+        ok: true,
+        result: {
+          event_name: 'message.text.received',
+          message: {
+            text: '/task Link: https://example.com/p Caption: hi HanChot: 19/09/2026 18:00',
+            chat: { id: 'group_task', chat_type: 'GROUP' },
+            from: { id: 'manager_1' },
+          },
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it('accepts /task on the official result.message envelope', async () => {
+    const res = await fetch(`${baseUrl}/webhook/zalo`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-bot-secret-token': 'test_secret_123',
+      },
+      body: JSON.stringify({
+        ok: true,
+        result: {
+          event_name: 'message.text.received',
+          message: {
+            text: '/task Link: https://example.com/p Caption: hi HanChot: 19/09/2026 18:00',
+            chat: { id: 'group_task', chat_type: 'GROUP' },
+            from: { id: 'manager_1' },
+          },
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
   });
 });

@@ -16,6 +16,7 @@ import { getConfig, getRecipientChatId } from '../config';
 import { sendSchedule, getEffectiveScheduleConfig } from '../core';
 import { ZaloClient } from '../core/zaloClient';
 import { handlePatrolCommand } from '../patrol';
+import { extractWebhookInbound, handleTaskproofCommand, redactSecrets } from '../taskproof/commands';
 
 export const webhookRouter = Router();
 
@@ -93,27 +94,54 @@ webhookRouter.post('/webhook/zalo', async (req: Request, res: Response) => {
 
   // 2. Phân tích nội dung tin nhắn đến (xử lý bất đồng bộ trong background)
   try {
-    const body = req.body || {};
-    const message = body.message || body;
-    const text = (message.text || '').trim();
-    const chatId = String(
-      message.chat?.id || message.chat_id || message.from?.id || ''
-    ).trim();
+    const rawBody = (req as { rawBody?: string }).rawBody;
+    const body =
+      typeof req.body === 'string' && req.body.trim()
+        ? req.body
+        : req.body && typeof req.body === 'object' && Object.keys(req.body as object).length > 0
+          ? req.body
+          : rawBody || req.body;
+    const inbound = extractWebhookInbound(body);
+    const text = (inbound?.text || inbound?.commandText || '').trim();
+    const chatId = (inbound?.chatId || '').trim();
 
-    if (!chatId || !text) {
+    if (!chatId) {
+      const preview = JSON.stringify(redactSecrets(body ?? rawBody ?? req.body) ?? {}).slice(0, 2000);
+      appendWebhookLog(
+        `NO_CHAT content-type=${req.headers['content-type'] || ''} keys=${Object.keys((typeof req.body === 'object' && req.body) || {}).join(',')} payload=${preview}`
+      );
+      console.warn('[Webhook] Bỏ qua vì không đọc được chat.id. payload=', preview);
       return;
     }
 
-    console.log(`[Webhook] Nhận tin nhắn từ chat_id: ${chatId}, text: "${text}"`);
+    console.log(`[Webhook] Nhận tin nhắn từ chat_id: ${chatId}, text: "${text || inbound?.caption || ''}"`);
 
-    const senderId = String(
-      message.from?.id || message.sender?.id || message.user_id || body.sender?.id || body.from?.id || chatId
-    ).trim();
-    const messageId = String(
-      message.message_id || message.msg_id || body.message_id || message.id || ''
-    ).trim();
+    const senderId = (inbound?.senderId || chatId).trim();
+    const messageId = (inbound?.messageId || '').trim();
 
-    appendWebhookLog(`PARSED: text="${text}" | chatId="${chatId}" | senderId="${senderId}" | msgId="${messageId}"`);
+    appendWebhookLog(
+      `PARSED: text="${text.slice(0, 300)}" | chatId="${chatId}" | senderId="${senderId}" | msgId="${messageId}" | event="${inbound?.eventName || ''}" | chatType="${inbound?.chatType || '?'}"`
+    );
+
+    // Lệnh task-proof: parser nằm ở src/taskproof/commands — webhook chỉ route.
+    // /gui, /id, tuantra không đi vào nhánh này.
+    if (inbound) {
+      try {
+        const handled = await handleTaskproofCommand(inbound);
+        if (handled) {
+          appendWebhookLog(`TASKPROOF COMMAND handled in chatId="${chatId}"`);
+          return;
+        }
+      } catch (tpErr: unknown) {
+        const msg = tpErr instanceof Error ? tpErr.message : String(tpErr);
+        appendWebhookLog(`TASKPROOF ERROR: ${msg}`);
+        console.error('[Webhook] Lỗi xử lý lệnh task-proof:', tpErr);
+      }
+    }
+
+    if (!text) {
+      return;
+    }
 
     // Lệnh hỗ trợ kiểm tra định danh: /id hoặc /myid
     if (text === '/id' || text === '/myid') {

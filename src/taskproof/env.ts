@@ -4,7 +4,10 @@
  * Đọc biến môi trường task-proof.
  * Tên biến đã khóa (Section 0.2 / 5.1): không đổi INTERNAL_API_KEY /
  * ADMIN_USERNAME / ADMIN_PASSWORD.
+ * PUBLIC_BASE_URL không có trailing slash — Zalo fetch sendPhoto từ đây.
  */
+
+import path from 'path';
 
 /** Worker chỉ bind localhost — user không bao giờ mở cổng 3001. */
 export const WORKER_BIND_HOST = '127.0.0.1';
@@ -21,4 +24,40 @@ export function getOfficialBotPort(): number {
 
 export function getInternalApiKey(): string {
   return (process.env.INTERNAL_API_KEY || '').trim();
+}
+
+export function getPublicBaseUrl(): string {
+  return (process.env.PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
+}
+
+export function getSessionFilePath(): string {
+  const fromEnv = (process.env.ZCA_SESSION_FILE_PATH || '').trim();
+  return fromEnv || path.resolve(process.cwd(), 'data/zca-session.json');
+}
+
+export function getProofDir(): string {
+  const fromEnv = (process.env.PROOF_DIR || '').trim();
+  return fromEnv || path.resolve(process.cwd(), 'data/proofs');
+}
+
+/** QR tạm: /data/qr-tmp cạnh session, hoặc QR_TMP_DIR. */
+export function getQrTmpDir(): string {
+  const fromEnv = (process.env.QR_TMP_DIR || '').trim();
+  if (fromEnv) return fromEnv;
+  return path.join(path.dirname(getSessionFilePath()), 'qr-tmp');
+}
+
+export function getOfficialBotOrigin(): string {
+  return `http://127.0.0.1:${getOfficialBotPort()}`;
+}
+
+export function getWorkerOrigin(): string {
+  return `http://${WORKER_BIND_HOST}:${getWorkerPort()}`;
+}
+
+export function buildTokenGatedUrl(pathname: string): string {
+  const base = getPublicBaseUrl();
+  const key = encodeURIComponent(getInternalApiKey());
+  const cleaned = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return `${base}${cleaned}?key=${key}`;
 }

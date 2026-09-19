@@ -34,9 +34,18 @@ initPatrolTables(db);
 loadConfig();
 initTaskproofTables(db);
 
-// Middleware parse JSON và URL-encoded
-app.use(express.json());
+// Middleware parse JSON và URL-encoded.
+// Zalo Java client đôi khi gửi JSON với Content-Type text/plain — giữ rawBody để webhook tự parse.
+app.use(
+  express.json({
+    limit: '2mb',
+    verify: (req, _res, buf) => {
+      (req as { rawBody?: string }).rawBody = buf.toString('utf8');
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
+app.use(express.text({ type: ['text/plain', 'text/html'], limit: '2mb' }));
 
 // Endpoint health check (không cần auth)
 app.get('/health', (req, res) => {
