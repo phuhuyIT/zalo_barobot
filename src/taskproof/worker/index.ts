@@ -1,7 +1,7 @@
 /**
  * worker/index.ts
  *
- * Tiến trình 2: task-proof worker (zca-js sẽ gắn ở Step 5).
+ * Tiến trình 2: task-proof worker (zca-js login / QR ở Step 5).
  * Bind 127.0.0.1:TASKPROOF_WORKER_PORT.
  * Không CREATE TABLE — chỉ kiểm tra bảng đã có rồi mới listen.
  */
