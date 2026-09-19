@@ -13,13 +13,18 @@ export interface SendMessageResult {
   raw: Record<string, unknown>;
 }
 
+export interface SendPhotoResult {
+  messageId: string;
+  raw: Record<string, unknown>;
+}
+
 export class ZaloClient {
   private token: string;
   private baseUrl: string;
   private client: AxiosInstance;
 
   constructor(token?: string, baseUrl?: string) {
-    this.token = token || process.env.ZALO_BOT_TOKEN || '';
+    this.token = (token || process.env.ZALO_BOT_TOKEN || '').trim();
     this.baseUrl = (baseUrl || process.env.ZALO_BASE_URL || 'https://bot-api.zapps.me').replace(/\/$/, '');
 
     this.client = axios.create({
@@ -69,6 +74,49 @@ export class ZaloClient {
         ? error.message
         : String(error);
       throw new Error(`Lỗi gửi tin nhắn Zalo tới chat_id ${chatId}: ${errMsg}`, { cause: error });
+    }
+  }
+
+  /**
+   * Gửi ảnh qua URL https (không phải đường dẫn đĩa — docs sendPhoto).
+   * Dùng cho QR login (Step 5) và báo cáo proof (Step 10).
+   */
+  async sendPhoto(chatId: string, photoUrl: string, caption?: string): Promise<SendPhotoResult> {
+    if (!this.token) {
+      throw new Error('ZALO_BOT_TOKEN chưa được cấu hình.');
+    }
+    if (!/^https:\/\//i.test(photoUrl)) {
+      throw new Error('sendPhoto yêu cầu URL https, không nhận đường dẫn file.');
+    }
+
+    try {
+      const payload: Record<string, unknown> = {
+        chat_id: chatId,
+        photo: photoUrl,
+      };
+      if (caption) payload.caption = caption;
+
+      const response = await this.client.post('/sendPhoto', payload);
+      const data = response.data;
+      if (!data || data.ok === false) {
+        throw new Error(data?.description || `Gửi ảnh thất bại: mã lỗi ${data?.error_code}`);
+      }
+
+      const messageId =
+        data.result?.message_id !== undefined
+          ? String(data.result.message_id)
+          : data.message_id !== undefined
+            ? String(data.message_id)
+            : `msg_${Date.now()}`;
+
+      return { messageId, raw: data };
+    } catch (error: unknown) {
+      const errMsg = isAxiosError(error)
+        ? error.response?.data?.description || error.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      throw new Error(`Lỗi gửi ảnh Zalo tới chat_id ${chatId}: ${errMsg}`, { cause: error });
     }
   }
 

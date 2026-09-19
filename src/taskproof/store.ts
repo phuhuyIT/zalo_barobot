@@ -135,6 +135,10 @@ export function getWorkerDatabase(customPath?: string): Database.Database {
   return workerDb;
 }
 
+export function peekWorkerDatabase(): Database.Database | null {
+  return workerDb;
+}
+
 export function closeWorkerDatabase(): void {
   if (workerDb) {
     workerDb.close();

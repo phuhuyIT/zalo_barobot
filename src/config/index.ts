@@ -38,7 +38,7 @@ export function loadConfig(configPath?: string): AppConfig {
     for (const [key, val] of Object.entries(rawConfig.recipients)) {
       if (typeof val === 'string' && val.startsWith('$')) {
         const envVarName = val.slice(1);
-        resolvedRecipients[key] = process.env[envVarName] || '';
+        resolvedRecipients[key] = (process.env[envVarName] || '').trim();
       } else {
         resolvedRecipients[key] = String(val || '');
       }

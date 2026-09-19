@@ -78,6 +78,9 @@ function coerceSetting<K extends TaskproofSettingKey>(
   if (typeof parsed !== typeof fallback) {
     return fallback;
   }
+  if (typeof parsed === 'string') {
+    return parsed.trim() as TaskproofSettings[K];
+  }
   return parsed as TaskproofSettings[K];
 }
 
