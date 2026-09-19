@@ -63,24 +63,53 @@ export function setDatabase(customDb: Database.Database | null): void {
   db = customDb;
 }
 
+export function resolveDatabasePath(customPath?: string): string {
+  return (
+    customPath ||
+    process.env.DATABASE_PATH ||
+    path.resolve(process.cwd(), 'data/app.db')
+  );
+}
+
 export function getDatabase(customPath?: string): Database.Database {
   if (db) return db;
 
-  const dbPath =
-    customPath ||
-    process.env.DATABASE_PATH ||
-    path.resolve(process.cwd(), 'data/app.db');
-
+  const dbPath = resolveDatabasePath(customPath);
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
   db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  configureSqliteConnection(db);
   initTables(db);
 
   return db;
+}
+
+/**
+ * Mở file SQLite đã có — không CREATE TABLE.
+ * Dùng cho worker: nếu file chưa có, official bot chưa chạy.
+ */
+export function openSqliteFile(customPath?: string): Database.Database {
+  const dbPath = resolveDatabasePath(customPath);
+  if (!fs.existsSync(dbPath)) {
+    throw new Error(
+      `SQLite file not found at ${dbPath}. Official bot must create it first.`
+    );
+  }
+  const database = new Database(dbPath, { fileMustExist: true });
+  configureSqliteConnection(database);
+  return database;
+}
+
+/**
+ * WAL + busy_timeout cho mọi kết nối chia sẻ /data/app.db
+ * (official bot và worker). Không dùng PRAGMA user_version.
+ */
+export function configureSqliteConnection(database: Database.Database): void {
+  database.pragma('journal_mode = WAL');
+  database.pragma('busy_timeout = 5000');
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   initTables,
+  configureSqliteConnection,
   saveLastMessage,
   getLastMessageId,
   hasSentToday,
@@ -28,6 +29,11 @@ describe('SQLite Store Layer', () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  it('sets busy_timeout for shared WAL connections', () => {
+    configureSqliteConnection(db);
+    expect(Number(db.pragma('busy_timeout', { simple: true }))).toBe(5000);
   });
 
   it('manages last_message and idempotency correctly', () => {
