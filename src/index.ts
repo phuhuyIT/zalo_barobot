@@ -19,6 +19,7 @@ import { loadConfig } from './config';
 import { initPatrolTables } from './patrol/patrol.repository';
 import { initTaskproofTables } from './taskproof/store';
 import { taskproofInternalRouter } from './taskproof/internal';
+import { taskproofWebRouter } from './taskproof/webApi';
 
 dotenv.config();
 
@@ -69,6 +70,7 @@ app.use(express.static(path.resolve(process.cwd(), 'public')));
 
 // Gắn các API điều khiển Web UI
 app.use(webRouter);
+app.use(taskproofWebRouter);
 
 // Đăng ký callback làm mới scheduler khi cấu hình thay đổi từ Web UI (F9)
 registerSchedulerRefreshCallback(refreshSchedules);

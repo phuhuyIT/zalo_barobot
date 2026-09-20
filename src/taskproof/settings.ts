@@ -61,7 +61,28 @@ const FORBIDDEN_SETTING_KEYS = new Set([
   'WEB_UI_PASSWORD',
   'ZALO_BOT_TOKEN',
   'ZALO_WEBHOOK_SECRET',
+  'PUBLIC_BASE_URL',
+  'ZCA_SESSION_FILE_PATH',
+  'PROOF_DIR',
 ]);
+
+/** Khóa chỉnh trên Web UI (Section 8.12 A). Secret / PUBLIC_BASE_URL không nằm đây. */
+export const TASKPROOF_UI_SETTING_KEYS: TaskproofSettingKey[] = [
+  'official_bot_uid',
+  'zca_own_uid',
+  'remind_exclude_uids',
+  'default_report_group_id',
+  'admin_official_chat_id',
+  'max_mentions_per_message',
+  'max_reminder_text_len',
+  'ocr_match_threshold',
+  'default_required_count',
+  'max_auto_reminders',
+  'reminder_interval_ms',
+  'task_stale_after_ms',
+  'link_pending_ms',
+  'qr_login_timeout_ms',
+];
 
 function dbOf(database?: Database.Database): Database.Database {
   return database || getDatabase();

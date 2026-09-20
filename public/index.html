@@ -123,7 +123,7 @@
         <div class="relative" x-data="{ desktopMenuOpen: false }" @click.outside="desktopMenuOpen = false">
           <button
             @click="desktopMenuOpen = !desktopMenuOpen"
-            :class="['leave-stats', 'recipients', 'history'].includes(activeTab) ? 'bg-white text-indigo-800 shadow font-semibold' : 'text-indigo-100 hover:bg-indigo-700/60'"
+            :class="['leave-stats', 'recipients', 'history', 'taskproof'].includes(activeTab) ? 'bg-white text-indigo-800 shadow font-semibold' : 'text-indigo-100 hover:bg-indigo-700/60'"
             class="px-3 py-1.5 rounded-lg text-sm font-semibold transition flex items-center space-x-1.5 cursor-pointer"
             aria-haspopup="true"
             :aria-expanded="desktopMenuOpen"
@@ -132,7 +132,7 @@
             <span>☰</span>
             <span>Menu</span>
             <span
-              x-show="['leave-stats', 'recipients', 'history'].includes(activeTab)"
+              x-show="['leave-stats', 'recipients', 'history', 'taskproof'].includes(activeTab)"
               class="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white"
             ></span>
             <svg
@@ -203,6 +203,20 @@
               </div>
               <span x-show="activeTab === 'history'" class="text-indigo-600 font-bold text-sm">✓</span>
             </button>
+
+            <!-- Item 4: Task proof -->
+            <button
+              @click="selectTab('taskproof'); desktopMenuOpen = false;"
+              class="w-full text-left p-2.5 rounded-xl text-xs font-semibold flex items-center space-x-2.5 transition"
+              :class="activeTab === 'taskproof' ? 'bg-indigo-50 text-indigo-700 font-bold shadow-xs' : 'text-slate-700 hover:bg-slate-100'"
+            >
+              <span class="text-lg flex-shrink-0">✅</span>
+              <div class="flex-1 min-w-0">
+                <div class="truncate text-sm">Task proof</div>
+                <div class="text-[11px] text-slate-400 font-normal truncate">Cài đặt OCR, map nhóm, đóng / hủy task</div>
+              </div>
+              <span x-show="activeTab === 'taskproof'" class="text-indigo-600 font-bold text-sm">✓</span>
+            </button>
           </div>
         </div>
       </nav>
@@ -232,6 +246,16 @@
         >
           <span x-show="!savingConfig">💾 Lưu</span>
           <span x-show="savingConfig" class="inline-block animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full"></span>
+        </button>
+        <button
+          x-show="activeTab === 'taskproof'"
+          x-cloak
+          @click="saveTaskproofSettings()"
+          :disabled="savingTaskproof"
+          class="md:hidden touch-btn px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-sm flex items-center space-x-1"
+        >
+          <span x-show="!savingTaskproof">💾 Lưu</span>
+          <span x-show="savingTaskproof" class="inline-block animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full"></span>
         </button>
       </div>
     </div>
@@ -1846,6 +1870,191 @@
 
     </div>
 
+    <!-- ========================================== -->
+    <!-- TAB: TASK PROOF (T13) -->
+    <!-- ========================================== -->
+    <div x-show="activeTab === 'taskproof'" x-cloak class="space-y-4 sm:space-y-6">
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="text-2xl">✅</span>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-800">Task proof</h2>
+          </div>
+          <p class="text-xs sm:text-sm text-slate-500 mt-1">Cài đặt OCR / nhắc, map official chat id ↔ zca threadId, đóng hoặc hủy task. Token Zalo, mật khẩu Web UI và PUBLIC_BASE_URL không nằm trên form này.</p>
+        </div>
+        <div class="flex items-center space-x-2">
+          <button
+            @click="wakeTaskproofWorker()"
+            :disabled="wakingWorker"
+            class="px-3.5 py-2 bg-amber-50 text-amber-700 rounded-xl text-xs sm:text-sm font-semibold hover:bg-amber-100 transition"
+          >
+            <span x-text="wakingWorker ? 'Đang gọi…' : 'Đánh thức worker'"></span>
+          </button>
+          <button
+            @click="fetchTaskproofData()"
+            class="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-xs sm:text-sm font-semibold hover:bg-indigo-100 transition"
+          >
+            🔄 Làm mới
+          </button>
+        </div>
+      </div>
+
+      <!-- Section A: Parameters -->
+      <form @submit.prevent="saveTaskproofSettings()" class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
+        <h3 class="text-sm font-bold text-slate-800">Tham số vận hành</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Official-bot UID</span>
+            <input x-model="taskproofSettings.official_bot_uid" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Tài khoản phụ zca UID</span>
+            <input x-model="taskproofSettings.zca_own_uid" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Nhóm báo cáo mặc định (official chat id)</span>
+            <input x-model="taskproofSettings.default_report_group_id" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Admin nhận QR / cảnh báo</span>
+            <input x-model="taskproofSettings.admin_official_chat_id" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Ngưỡng OCR (0–1)</span>
+            <input type="number" step="0.05" min="0" max="1" x-model.number="taskproofSettings.ocr_match_threshold" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Số lượng mặc định</span>
+            <input type="number" min="1" x-model.number="taskproofSettings.default_required_count" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Max mention / tin</span>
+            <input type="number" min="1" x-model.number="taskproofSettings.max_mentions_per_message" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Max độ dài tin nhắc</span>
+            <input type="number" min="1" x-model.number="taskproofSettings.max_reminder_text_len" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Max lần nhắc tự động</span>
+            <input type="number" min="0" x-model.number="taskproofSettings.max_auto_reminders" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Khoảng nhắc (ms)</span>
+            <input type="number" min="0" x-model.number="taskproofSettings.reminder_interval_ms" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Stale hủy sau (ms)</span>
+            <input type="number" min="0" x-model.number="taskproofSettings.task_stale_after_ms" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Cửa /lienket (ms)</span>
+            <input type="number" min="0" x-model.number="taskproofSettings.link_pending_ms" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1">
+            <span>Timeout QR (ms)</span>
+            <input type="number" min="0" x-model.number="taskproofSettings.qr_login_timeout_ms" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+        </div>
+        <label class="text-xs font-semibold text-slate-600 space-y-1 block">
+          <span>UID loại trừ khi nhắc (csv / mỗi dòng một uid)</span>
+          <textarea x-model="taskproofExcludeText" rows="3" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono" placeholder="uid1, uid2"></textarea>
+        </label>
+        <div class="flex justify-end">
+          <button
+            type="submit"
+            :disabled="savingTaskproof"
+            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold"
+          >
+            <span x-text="savingTaskproof ? 'Đang lưu…' : 'Lưu cài đặt'"></span>
+          </button>
+        </div>
+      </form>
+
+      <!-- Section B: Group map -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
+        <h3 class="text-sm font-bold text-slate-800">Map nhóm (official chat id ↔ zca threadId)</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input x-model="newGroupMap.official_chat_id" placeholder="official_chat_id" class="rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          <input x-model="newGroupMap.zca_group_id" placeholder="zca_group_id" class="rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          <div class="flex gap-2">
+            <input x-model="newGroupMap.display_name" placeholder="Tên (tuỳ chọn)" class="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            <button @click="saveGroupMapRow()" class="px-3 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold">Thêm</button>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs text-slate-500 border-b">
+                <th class="py-2 pr-3">Official</th>
+                <th class="py-2 pr-3">zca</th>
+                <th class="py-2 pr-3">Tên</th>
+                <th class="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="row in taskproofMaps" :key="row.official_chat_id">
+                <tr class="border-b border-slate-100">
+                  <td class="py-2 pr-3 font-mono text-xs" x-text="row.official_chat_id"></td>
+                  <td class="py-2 pr-3 font-mono text-xs" x-text="row.zca_group_id"></td>
+                  <td class="py-2 pr-3" x-text="row.display_name || '—'"></td>
+                  <td class="py-2 text-right">
+                    <button @click="deleteGroupMapRow(row.official_chat_id)" class="text-rose-600 text-xs font-semibold hover:bg-rose-50 px-2 py-1 rounded-lg">Xóa</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="taskproofMaps.length === 0">
+                <td colspan="4" class="py-6 text-center text-slate-400 text-sm">Chưa có map. Dùng /lienket trong nhóm hoặc thêm ở đây.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Section C: Open / recent tasks -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
+        <h3 class="text-sm font-bold text-slate-800">Task gần đây</h3>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs text-slate-500 border-b">
+                <th class="py-2 pr-3">Mã</th>
+                <th class="py-2 pr-3">Tiến độ</th>
+                <th class="py-2 pr-3">Trạng thái</th>
+                <th class="py-2 pr-3">Nhóm</th>
+                <th class="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="t in taskproofTasks" :key="t.id">
+                <tr class="border-b border-slate-100">
+                  <td class="py-2 pr-3 font-mono font-semibold" x-text="t.short_code"></td>
+                  <td class="py-2 pr-3" x-text="t.submitted_count + '/' + t.required_count"></td>
+                  <td class="py-2 pr-3" x-text="t.status"></td>
+                  <td class="py-2 pr-3 text-xs" x-text="t.zca_group_id ? t.zca_group_id : 'chưa liên kết nhóm'"></td>
+                  <td class="py-2 text-right space-x-1">
+                    <button
+                      x-show="t.status === 'collecting' || t.status === 'overdue'"
+                      @click="dongTask(t.short_code)"
+                      class="text-indigo-600 text-xs font-semibold hover:bg-indigo-50 px-2 py-1 rounded-lg"
+                    >/dong</button>
+                    <button
+                      x-show="t.status === 'collecting' || t.status === 'overdue'"
+                      @click="huyTask(t.short_code)"
+                      class="text-rose-600 text-xs font-semibold hover:bg-rose-50 px-2 py-1 rounded-lg"
+                    >/huy</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="taskproofTasks.length === 0">
+                <td colspan="5" class="py-6 text-center text-slate-400 text-sm">Chưa có task.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <!-- ========================================== -->
@@ -1891,11 +2100,11 @@
       <button
         @click="mobileMenuOpen = !mobileMenuOpen"
         class="touch-btn flex flex-col items-center justify-center space-y-1 transition duration-150 relative"
-        :class="(mobileMenuOpen || ['leave-stats', 'recipients', 'history'].includes(activeTab)) ? 'text-indigo-600 font-bold' : 'text-slate-500 hover:text-slate-700'"
+        :class="(mobileMenuOpen || ['leave-stats', 'recipients', 'history', 'taskproof'].includes(activeTab)) ? 'text-indigo-600 font-bold' : 'text-slate-500 hover:text-slate-700'"
       >
         <span class="text-lg">☰</span>
         <span class="text-[11px] leading-none truncate px-1">Menu</span>
-        <span x-show="['leave-stats', 'recipients', 'history'].includes(activeTab)" class="absolute top-1 w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+        <span x-show="['leave-stats', 'recipients', 'history', 'taskproof'].includes(activeTab)" class="absolute top-1 w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
       </button>
 
     </div>
@@ -2009,6 +2218,25 @@
               <span x-show="activeTab === 'history'" class="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full font-semibold">Đang xem</span>
             </div>
             <div class="text-xs text-slate-500 truncate mt-0.5">Nhật ký các lần gửi tin Zalo và kết quả</div>
+          </div>
+          <svg class="w-5 h-5 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </button>
+
+        <!-- Item 4: Task proof -->
+        <button
+          @click="selectTab('taskproof')"
+          class="w-full p-3.5 rounded-2xl flex items-center space-x-3.5 transition text-left border"
+          :class="activeTab === 'taskproof' ? 'bg-indigo-50/80 border-indigo-200 text-indigo-900 shadow-xs' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/70 text-slate-700'"
+        >
+          <div class="w-10 h-10 rounded-xl bg-white shadow-xs flex items-center justify-center text-xl flex-shrink-0">
+            ✅
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold text-sm truncate flex items-center gap-1.5">
+              <span>Task proof</span>
+              <span x-show="activeTab === 'taskproof'" class="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full font-semibold">Đang xem</span>
+            </div>
+            <div class="text-xs text-slate-500 truncate mt-0.5">Cài đặt OCR, map nhóm, đóng / hủy task</div>
           </div>
           <svg class="w-5 h-5 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </button>
@@ -2316,6 +2544,29 @@
         simSiteKey: 'site_1',
         simText: 'tuantra ',
 
+        loadingTaskproof: false,
+        savingTaskproof: false,
+        wakingWorker: false,
+        taskproofSettings: {
+          official_bot_uid: '',
+          zca_own_uid: '',
+          default_report_group_id: '',
+          admin_official_chat_id: '',
+          ocr_match_threshold: 0.5,
+          default_required_count: 1,
+          max_mentions_per_message: 8,
+          max_reminder_text_len: 1500,
+          max_auto_reminders: 3,
+          reminder_interval_ms: 3600000,
+          task_stale_after_ms: 604800000,
+          link_pending_ms: 120000,
+          qr_login_timeout_ms: 90000,
+        },
+        taskproofExcludeText: '',
+        taskproofMaps: [],
+        taskproofTasks: [],
+        newGroupMap: { official_chat_id: '', zca_group_id: '', display_name: '' },
+
         init() {
           this.fetchSchedules();
         },
@@ -2349,6 +2600,8 @@
             this.fetchHistory();
           } else if (tab === 'patrol') {
             this.fetchPatrolData();
+          } else if (tab === 'taskproof') {
+            this.fetchTaskproofData();
           }
         },
 
@@ -2365,6 +2618,8 @@
             this.fetchHistory();
           } else if (this.activeTab === 'patrol') {
             this.fetchPatrolData();
+          } else if (this.activeTab === 'taskproof') {
+            this.fetchTaskproofData();
           }
         },
 
@@ -3016,6 +3271,140 @@
           if (!iso) return '—';
           const d = new Date(iso);
           return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + d.toLocaleDateString('vi-VN');
+        },
+
+        async fetchTaskproofData() {
+          this.loadingTaskproof = true;
+          try {
+            const res = await fetch('/api/taskproof');
+            const data = await res.json();
+            if (!data.success) {
+              this.showToast(data.error || 'Lỗi tải Task proof', 'error');
+              return;
+            }
+            this.taskproofSettings = { ...this.taskproofSettings, ...(data.settings || {}) };
+            const exclude = (data.settings && data.settings.remind_exclude_uids) || [];
+            this.taskproofExcludeText = Array.isArray(exclude) ? exclude.join('\n') : '';
+            this.taskproofMaps = data.maps || [];
+            this.taskproofTasks = data.tasks || [];
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.loadingTaskproof = false;
+          }
+        },
+
+        async saveTaskproofSettings() {
+          this.savingTaskproof = true;
+          try {
+            const payload = {
+              ...this.taskproofSettings,
+              remind_exclude_uids: this.taskproofExcludeText,
+            };
+            const res = await fetch('/api/taskproof/settings', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.taskproofSettings = { ...this.taskproofSettings, ...(data.settings || {}) };
+              this.showToast('Đã lưu cài đặt Task proof');
+            } else {
+              this.showToast(data.error || 'Lỗi lưu cài đặt', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.savingTaskproof = false;
+          }
+        },
+
+        async saveGroupMapRow() {
+          try {
+            const res = await fetch('/api/taskproof/group-map', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.newGroupMap),
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.taskproofMaps = data.maps || [];
+              this.newGroupMap = { official_chat_id: '', zca_group_id: '', display_name: '' };
+              this.showToast('Đã lưu map nhóm');
+              await this.fetchTaskproofData();
+            } else {
+              this.showToast(data.error || 'Không lưu được map', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async deleteGroupMapRow(officialChatId) {
+          if (!confirm('Xóa map này? Task mở của nhóm sẽ về trạng thái chưa liên kết (không bị hủy).')) return;
+          try {
+            const res = await fetch('/api/taskproof/group-map/' + encodeURIComponent(officialChatId), { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              this.taskproofMaps = data.maps || [];
+              this.showToast('Đã xóa map');
+              await this.fetchTaskproofData();
+            } else {
+              this.showToast(data.error || 'Không xóa được map', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async dongTask(shortCode) {
+          if (!confirm('Đóng task ' + shortCode + ' và gửi báo cáo với minh chứng đã nộp?')) return;
+          try {
+            const res = await fetch('/api/taskproof/tasks/' + encodeURIComponent(shortCode) + '/dong', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('Đã đóng ' + shortCode);
+              await this.fetchTaskproofData();
+            } else {
+              this.showToast(data.error || 'Không đóng được', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async huyTask(shortCode) {
+          if (!confirm('Hủy task ' + shortCode + '? Không gửi báo cáo, xóa minh chứng.')) return;
+          try {
+            const res = await fetch('/api/taskproof/tasks/' + encodeURIComponent(shortCode) + '/huy', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('Đã hủy ' + shortCode);
+              await this.fetchTaskproofData();
+            } else {
+              this.showToast(data.error || 'Không hủy được', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          }
+        },
+
+        async wakeTaskproofWorker() {
+          this.wakingWorker = true;
+          try {
+            const res = await fetch('/api/taskproof/wake-worker', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('Worker: ' + (data.state || 'ok'));
+            } else {
+              this.showToast(data.error || data.hint || 'Không gọi được worker', 'error');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.wakingWorker = false;
+          }
         }
       };
     }
