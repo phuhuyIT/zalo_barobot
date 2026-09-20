@@ -34,6 +34,7 @@ function seedOpenTask(
     createdAt?: number;
     zca?: string;
     official?: string;
+    link?: string;
   } = {}
 ): void {
   const zca = opts.zca ?? 'zgr-1';
@@ -45,12 +46,13 @@ function seedOpenTask(
   db.prepare(
     `INSERT INTO tasks (id, short_code, official_chat_id, zca_group_id, report_group_id,
       link, reference_text, required_count, deadline, status, created_at)
-     VALUES (?, ?, ?, ?, 'rep', 'https://x', ?, ?, 9_999_999, 'collecting', ?)`
+     VALUES (?, ?, ?, ?, 'rep', ?, ?, ?, 9_999_999, 'collecting', ?)`
   ).run(
     opts.id ?? 't1',
     opts.code ?? 'ABC123',
     official,
     zca,
+    opts.link ?? 'https://x',
     opts.caption ?? 'TEST TASK PROOF OCR',
     opts.required ?? 1,
     opts.createdAt ?? 10
@@ -82,12 +84,14 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     dirs.push(proofDir);
     seedOpenTask(db, { required: 1 });
 
+    const kickReport = vi.fn().mockResolvedValue(undefined);
     const result = await ingestProofImage(db, proofImage(), {
       now: () => 100,
       proofDir,
       newId: () => 'sub-1',
       ocrImage: async () => 'chrome UI TEST TASK PROOF OCR xem them',
       downloadImage: async () => PNG,
+      kickReport,
     });
 
     expect(result).toMatchObject({
@@ -97,6 +101,7 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
       closed: true,
       score: 1,
     });
+    expect(kickReport).toHaveBeenCalledWith('t1');
     const stored = path.join(proofDir, 't1', 'sub-1.jpg');
     expect(fs.readFileSync(stored).equals(PNG)).toBe(true);
     const task = db.prepare(`SELECT status FROM tasks WHERE id = 't1'`).get() as { status: string };
@@ -225,9 +230,65 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
       },
     });
     expect(photo.hasImage).toBe(true);
+    expect(photo.isLinkCard).toBe(false);
     expect(photo.href).toBe('https://cdn.example/a.jpg');
     expect(photo.msgId).toBe('p1');
     expect(photo.uidFrom).toBe('u1');
+  });
+
+  it('treats chat.link preview cards as not screenshots and does not OCR them', () => {
+    const card = normalizeZcaInbound({
+      type: 1,
+      threadId: 'zgr-1',
+      data: {
+        msgId: 'l1',
+        uidFrom: 'u1',
+        dName: 'An',
+        msgType: 'chat.link',
+        content: {
+          href: 'https://www.facebook.com/share/v/1FS7f9MknZ/',
+          thumb: 'https://scontent.xx.fbcdn.net/preview.jpg',
+          title: 'video',
+          type: 'recommend',
+        },
+      },
+    });
+    expect(card.hasImage).toBe(false);
+    expect(card.isLinkCard).toBe(true);
+  });
+
+  it('handleZcaMessage skips link preview cards (not proof)', async () => {
+    const db = openDb();
+    seedOpenTask(db, { required: 1, link: 'https://www.facebook.com/share/v/1FS7f9MknZ/' });
+    const ocrImage = vi.fn(async () => 'should not run');
+    const runtime = new WorkerRuntime({
+      db,
+      loginPort: {
+        login: async () => undefined,
+        loginQR: async () => ({ cookie: [], imei: 'i', userAgent: 'ua' }),
+        startMessageLoop: () => undefined,
+        stopMessageLoop: () => undefined,
+      } as unknown as ZcaLoginPort,
+      now: () => 1_000,
+      getAdminChatId: () => 'admin',
+      getPublicBaseUrl: () => 'https://example.test',
+      ocrImage,
+    });
+    const handled = runtime.handleZcaMessage({
+      threadId: 'zgr-1',
+      isGroup: true,
+      text: '',
+      displayName: 'An',
+      hasImage: false,
+      isLinkCard: true,
+      shareHref: 'https://www.facebook.com/share/v/1FS7f9MknZ/',
+      msgId: 'card-1',
+      uidFrom: 'u4',
+    });
+    expect(handled.ocr).toBe(false);
+    expect(handled.job).toBeUndefined();
+    expect(ocrImage).not.toHaveBeenCalled();
+    db.close();
   });
 
   it('falls back to thumb when href fails and sends session cookies', async () => {
@@ -288,6 +349,7 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
       scheduleInterval: () => () => undefined,
       ocrImage: async () => 'TEST TASK PROOF OCR',
       downloadImage: async () => PNG,
+      kickReport: vi.fn().mockResolvedValue(undefined),
     });
     await runtime.ensureListening();
     expect(runtime.isLoggedIn()).toBe(true);

@@ -130,4 +130,23 @@ describe('task-proof worker HTTP (Step 5)', () => {
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
+
+  it('scan-history requires INTERNAL_API_KEY', async () => {
+    const runtime = new WorkerRuntime({
+      loginPort: { login: async () => undefined, loginQR: async () => ({ cookie: [], imei: 'x', userAgent: 'y' }) },
+      db: null,
+    });
+    const server = await startWorkerHttp(createWorkerApp({ runtime }), 0, WORKER_BIND_HOST);
+    const addr = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${addr.port}`;
+
+    const denied = await fetch(`${base}/internal/taskproof/scan-history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: 't1' }),
+    });
+    expect(denied.status).toBe(403);
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
 });

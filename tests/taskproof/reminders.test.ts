@@ -13,6 +13,7 @@ import { saveSession } from '../../src/taskproof/worker/session';
 import {
   isMemberCacheStale,
   listCachedMembers,
+  observeMember,
   refreshMemberCache,
   replaceMemberCache,
 } from '../../src/taskproof/worker/memberCache';
@@ -67,6 +68,10 @@ function groupInfo(partial: Partial<ZcaGroupInfoSnapshot> & { memberIds: string[
     currentMems: partial.memberIds.map((id) => ({ id, dName: `Name-${id}` })),
     totalMember: partial.memberIds.length,
     hasMoreMember: false,
+    memVerList: [],
+    adminIds: [],
+    creatorId: '',
+    lockViewMember: false,
     ...partial,
   };
 }
@@ -211,6 +216,55 @@ describe('task-proof reminders (Step 7)', () => {
   });
 
   describe('member cache', () => {
+    it('uses memVerList when memberIds is empty', async () => {
+      const db = openDb();
+      const result = await refreshMemberCache({
+        db,
+        port: mockPort({
+          getGroupInfo: async () =>
+            groupInfo({
+              memberIds: [],
+              memVerList: ['u1_0', 'u2_3'],
+              currentMems: [],
+              totalMember: 2,
+            }),
+          getGroupMembersInfo: async () => [
+            { id: 'u1', displayName: 'An' },
+            { id: 'u2', displayName: 'Binh' },
+          ],
+        }),
+        zcaGroupId: 'zgr-1',
+        now: 1000,
+        forceRefresh: true,
+      });
+      expect(result.ok).toBe(true);
+      expect(listCachedMembers(db, 'zgr-1').map((m) => m.user_id).sort()).toEqual(['u1', 'u2']);
+      db.close();
+    });
+
+    it('does not replace cache with only the logged-in account', async () => {
+      const db = openDb();
+      replaceMemberCache(db, 'zgr-1', [{ user_id: 'u1', display_name: 'An' }], 1);
+      const result = await refreshMemberCache({
+        db,
+        port: mockPort({
+          getOwnId: () => 'own-zca',
+          getGroupInfo: async () =>
+            groupInfo({
+              memberIds: ['own-zca'],
+              totalMember: 9,
+              lockViewMember: true,
+            }),
+        }),
+        zcaGroupId: 'zgr-1',
+        now: 2000,
+        forceRefresh: true,
+      });
+      expect(result.usedStale).toBe(true);
+      expect(listCachedMembers(db, 'zgr-1')[0].user_id).toBe('u1');
+      db.close();
+    });
+
     it('uses memberIds, falls back to currentMems, upserts displayName', async () => {
       const db = openDb();
       const port = mockPort({
@@ -278,6 +332,14 @@ describe('task-proof reminders (Step 7)', () => {
       expect(result.warning).toMatch(/incomplete/);
       expect(warn).toHaveBeenCalled();
       warn.mockRestore();
+      db.close();
+    });
+
+    it('observeMember upserts a speaker without wiping the cache', () => {
+      const db = openDb();
+      replaceMemberCache(db, 'zgr-1', [{ user_id: 'u1', display_name: 'An' }], 1);
+      observeMember(db, 'zgr-1', 'u2_0', 'Binh', 2);
+      expect(listCachedMembers(db, 'zgr-1').map((m) => m.user_id).sort()).toEqual(['u1', 'u2']);
       db.close();
     });
 
@@ -365,6 +427,33 @@ describe('task-proof reminders (Step 7)', () => {
       expect(result.kind).toBe('all');
       expect(result.missing_count).toBe(3);
       expect(sent[0].mentions).toEqual([{ pos: 0, len: 4, uid: ALL_MENTION_UID }]);
+      db.close();
+    });
+
+    it('treats a cache of only excluded uids as unavailable (generic, not "no one missing")', async () => {
+      const db = openDb();
+      insertOpenTask(db);
+      replaceMemberCache(db, 'zgr-1', [{ user_id: 'own-zca', display_name: 'Bot' }], 1);
+      const sent: Array<{ msg: string; mentions?: unknown }> = [];
+      const runtime = loggedInRuntime(
+        db,
+        mockPort({
+          getOwnId: () => 'own-zca',
+          getGroupInfo: async () =>
+            groupInfo({
+              memberIds: ['own-zca'],
+              totalMember: 5,
+              lockViewMember: true,
+            }),
+          sendGroupMessage: async (_threadId, content) => {
+            sent.push({ msg: content.msg, mentions: content.mentions });
+          },
+        })
+      );
+      const result = await runtime.remind('t1');
+      expect(result).toMatchObject({ httpStatus: 200, reminded: true, kind: 'generic' });
+      expect(sent[0].mentions).toBeUndefined();
+      expect(sent[0].msg).toMatch(/không lấy được danh sách/i);
       db.close();
     });
 
