@@ -9,6 +9,8 @@ import {
   generateShortCode,
   getTaskByExactShortCode,
   handleTaskproofCommand,
+  PREVIEW_CARD_HINT,
+  resetPreviewHintThrottle,
   isExactShortCode,
   looksLikeTaskproofCommand,
   parseDeadlineToUtcMs,
@@ -103,23 +105,41 @@ describe('task-proof command parsers (Step 3)', () => {
       }
     });
 
-    it('rejects message.unsupported.received as /task', () => {
+    it('recovers /task from unsupported preview-card metadata when nested text exists', () => {
       const inbound = inboundFrom({
         ok: true,
         result: {
           event_name: 'message.unsupported.received',
           message: {
-            text: TASK_BASE,
+            text: '',
             chat: { id: 'group_task', chat_type: 'GROUP' },
+            preview: {
+              title: '/task Caption: Bao cao tuan HanChot: 19/09/2026 18:00',
+              href: 'https://www.facebook.com/share/v/1FS7f9MknZ/',
+            },
           },
         },
       });
       const parsed = parseTaskproofCommand(inbound);
-      expect(parsed.found).toBe(true);
-      expect(parsed.ok).toBe(false);
-      if (!parsed.ok && parsed.found) {
-        expect(parsed.error).toMatch(/unsupported/i);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok && parsed.command === 'task') {
+        expect(parsed.fields.link).toBe('https://www.facebook.com/share/v/1FS7f9MknZ/');
+        expect(parsed.fields.caption).toBe('Bao cao tuan');
       }
+    });
+
+    it('does not treat empty unsupported cards as a command (Zalo dropped the text)', () => {
+      const inbound = inboundFrom({
+        ok: true,
+        result: {
+          event_name: 'message.unsupported.received',
+          message: {
+            text: '',
+            chat: { id: 'group_task', chat_type: 'GROUP' },
+          },
+        },
+      });
+      expect(parseTaskproofCommand(inbound)).toMatchObject({ found: false });
     });
 
     it('takes fallback URL from preview-card metadata', () => {
@@ -323,6 +343,23 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       db.close();
     });
 
+    it('accepts /quet with default 5 messages and optional count', () => {
+      const def = parseTaskproofCommand(textMessage('/quet abc123'));
+      expect(def).toMatchObject({ ok: true, command: 'quet', shortCode: 'ABC123', count: 5 });
+      const twenty = parseTaskproofCommand(textMessage('/quet ABC123 20'));
+      expect(twenty).toMatchObject({ ok: true, command: 'quet', count: 20 });
+      const fifty = parseTaskproofCommand(textMessage('/quet ABC123 50'));
+      expect(fifty).toMatchObject({ ok: true, command: 'quet', count: 50 });
+      expect(parseTaskproofCommand(textMessage('/quet')).ok).toBe(false);
+      expect(parseTaskproofCommand(textMessage('/quet ABC123 0')).ok).toBe(false);
+      expect(parseTaskproofCommand(textMessage('/quet ABC123 51')).ok).toBe(false);
+      expect(parseTaskproofCommand(textMessage('/quet ABC123 200')).ok).toBe(false);
+      expect(parseTaskproofCommand(textMessage('/quet ABC123 20p')).ok).toBe(false);
+      expect(parseTaskproofCommand(textMessage('/quet ABC123 15 phút')).ok).toBe(false);
+      expect(parseTaskproofCommand(textMessage('/quet ABC123 abc')).ok).toBe(false);
+      expect(looksLikeTaskproofCommand('/quet ABC123')).toBe(true);
+    });
+
     it('accepts /nhac /dong /huy with exact 6-char code', () => {
       for (const cmd of ['nhac', 'dong', 'huy'] as const) {
         const parsed = parseTaskproofCommand(textMessage(`/${cmd} abc123`));
@@ -389,18 +426,159 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
   });
 
   describe('handler routing', () => {
-    it('replies with parsed /task fields and does not swallow /gui', async () => {
+    beforeEach(() => {
+      resetPreviewHintThrottle();
+    });
+
+    it('hints to resend /task as plain text when Zalo sends an empty preview card', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const inbound = inboundFrom({
+        event_name: 'message.unsupported.received',
+        message: {
+          text: '',
+          chat: { id: 'group_task', chat_type: 'GROUP' },
+          from: { id: 'manager_1' },
+        },
+      });
+      const handled = await handleTaskproofCommand(inbound, {
+        sendMessage,
+        now: () => 1_000,
+      });
+      expect(handled).toBe(true);
+      expect(sendMessage).toHaveBeenCalledWith('group_task', PREVIEW_CARD_HINT);
+
+      sendMessage.mockClear();
+      const again = await handleTaskproofCommand(inbound, {
+        sendMessage,
+        now: () => 60_000,
+      });
+      expect(again).toBe(true);
+      expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not hint on unsupported private chats or on /gui', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const priv = inboundFrom({
+        event_name: 'message.unsupported.received',
+        message: {
+          text: '',
+          chat: { id: 'c9ee', chat_type: 'PRIVATE' },
+          from: { id: 'c9ee' },
+        },
+      });
+      expect(await handleTaskproofCommand(priv, { sendMessage })).toBe(false);
+      expect(await handleTaskproofCommand(textMessage('/gui'), { sendMessage })).toBe(false);
+      expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('inserts /task, replies with short_code, and does not swallow /gui', async () => {
       const sendMessage = vi.fn().mockResolvedValue({ messageId: 'm' });
-      const handledTask = await handleTaskproofCommand(textMessage(TASK_BASE), { sendMessage });
+      const insertTask = vi.fn().mockReturnValue({
+        id: 'uuid-1',
+        short_code: 'ABC123',
+        official_chat_id: 'group_task',
+        zca_group_id: 'zca-1',
+        report_group_id: 'rep',
+        required_count: 1,
+        deadline: 1,
+        status: 'collecting',
+      });
+      const ensureListening = vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} });
+      const handledTask = await handleTaskproofCommand(textMessage(TASK_BASE), {
+        sendMessage,
+        insertTask,
+        ensureListening,
+      });
       expect(handledTask).toBe(true);
+      expect(insertTask).toHaveBeenCalledOnce();
+      expect(ensureListening).toHaveBeenCalledWith('uuid-1');
       expect(sendMessage).toHaveBeenCalledOnce();
-      expect(sendMessage.mock.calls[0][1]).toContain('Lệnh /task hợp lệ');
+      expect(sendMessage.mock.calls[0][1]).toContain('Đã tạo task ABC123');
       expect(sendMessage.mock.calls[0][1]).toContain('https://example.com/post');
+      expect(sendMessage.mock.calls[0][1]).not.toMatch(/chưa liên kết/);
 
       sendMessage.mockClear();
       const handledGui = await handleTaskproofCommand(textMessage('/gui'), { sendMessage });
       expect(handledGui).toBe(false);
       expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('tells the manager to /lienket when the group is unmapped', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      await handleTaskproofCommand(textMessage(TASK_BASE), {
+        sendMessage,
+        insertTask: () => ({
+          id: 'uuid-2',
+          short_code: 'UNL001',
+          official_chat_id: 'group_task',
+          zca_group_id: null,
+          report_group_id: '',
+          required_count: 1,
+          deadline: 1,
+          status: 'collecting',
+        }),
+        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+      });
+      expect(sendMessage.mock.calls[0][1]).toMatch(/chưa liên kết/);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/\/lienket/);
+    });
+
+    it('keeps the /task row and does not fail silently when the worker is down', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const insertTask = vi.fn().mockReturnValue({
+        id: 'uuid-3',
+        short_code: 'DWN001',
+        official_chat_id: 'group_task',
+        zca_group_id: 'zca-1',
+        report_group_id: 'rep',
+        required_count: 1,
+        deadline: 1,
+        status: 'collecting',
+      });
+      await handleTaskproofCommand(textMessage(TASK_BASE), {
+        sendMessage,
+        insertTask,
+        ensureListening: async () => {
+          throw new Error('fetch failed');
+        },
+      });
+      expect(insertTask).toHaveBeenCalledOnce();
+      expect(sendMessage.mock.calls[0][1]).toContain('Đã tạo task DWN001');
+      expect(sendMessage.mock.calls[0][1]).toMatch(/Worker không chạy/);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/\/gui vẫn dùng được/);
+    });
+
+    it('lists /tasks from DB and does not wake the worker', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const ensureListening = vi.fn();
+      const handled = await handleTaskproofCommand(textMessage('/tasks'), {
+        sendMessage,
+        ensureListening,
+        listTasks: () => [
+          {
+            id: 't1',
+            short_code: 'ABC123',
+            official_chat_id: 'group_task',
+            zca_group_id: null,
+            report_group_id: 'rep',
+            link: 'https://x',
+            reference_text: 'cap',
+            required_count: 2,
+            deadline: 1,
+            status: 'collecting',
+            created_at: 1,
+            remind_count: 0,
+            reminded_at: null,
+            reported_at: null,
+            submitted_count: 1,
+          },
+        ],
+      });
+      expect(handled).toBe(true);
+      expect(ensureListening).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls[0][1]).toContain('ABC123');
+      expect(sendMessage.mock.calls[0][1]).toContain('1/2');
+      expect(sendMessage.mock.calls[0][1]).toMatch(/chưa liên kết nhóm/);
     });
 
     it('rejects private-chat /task', async () => {

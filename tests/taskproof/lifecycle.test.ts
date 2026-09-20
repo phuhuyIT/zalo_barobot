@@ -12,6 +12,7 @@ import {
   cancelStaleTasks,
   cancelTask,
   closeTaskIfQuotaReached,
+  completeTask,
   countDistinctSubmitters,
   countLinkedOpenTasks,
   isTaskStale,
@@ -444,6 +445,37 @@ describe('task-proof listen/stop + auto-remind + stale-cancel (Step 8)', () => {
       const handled = await handleTaskproofCommand(groupText('/gui'), { sendMessage });
       expect(handled).toBe(false);
       expect(sendMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('official bot /dong', () => {
+    it('completes by exact short_code and leaves reported_at null', async () => {
+      const db = openDb();
+      insertTask(db, { id: 'task-1', code: 'ABC123', status: 'collecting' });
+      expect(completeTask(db, 'task-1')).toBe(true);
+      const row = db
+        .prepare(`SELECT status, reported_at FROM tasks WHERE id = 'task-1'`)
+        .get() as { status: string; reported_at: number | null };
+      expect(row.status).toBe('completed');
+      expect(row.reported_at).toBeNull();
+
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const doComplete = vi.fn().mockReturnValue(true);
+      const kickReport = vi.fn().mockResolvedValue([{ reported: true }]);
+      await handleTaskproofCommand(groupText('/dong abc123'), {
+        sendMessage,
+        lookupTask: (code) =>
+          code === 'ABC123'
+            ? { id: 'task-1', short_code: 'ABC123', status: 'collecting', zca_group_id: 'zgr-1' }
+            : null,
+        completeTask: doComplete,
+        kickReport,
+      });
+      expect(doComplete).toHaveBeenCalledWith('task-1');
+      expect(kickReport).toHaveBeenCalledWith('task-1');
+      expect(sendMessage.mock.calls[0][1]).toMatch(/Đã đóng task ABC123/);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/Đã gửi báo cáo/);
+      db.close();
     });
   });
 });

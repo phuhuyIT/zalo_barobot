@@ -1,21 +1,45 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import { Server } from 'http';
+import Database from 'better-sqlite3';
 import { webhookRouter } from '../src/channels/webhook';
+import * as storeModule from '../src/store';
+import { initTaskproofTables } from '../src/taskproof/store';
+import { ZaloClient } from '../src/core/zaloClient';
 
 vi.mock('../src/patrol', () => ({
   handlePatrolCommand: vi.fn().mockResolvedValue({ handled: true, success: true }),
 }));
 
+vi.mock('../src/taskproof/workerClient', () => ({
+  postEnsureListening: vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} }),
+  postLinkGroup: vi.fn(),
+  postRemind: vi.fn(),
+  getWorkerStatus: vi.fn(),
+}));
+
 describe('Webhook Channel Authentication & Handling', () => {
   let server: Server;
   let baseUrl: string;
+  let mockDb: Database.Database;
   const originalSecret = process.env.ZALO_WEBHOOK_SECRET;
   const originalEnforce = process.env.ZALO_WEBHOOK_ENFORCE_SECRET;
 
   beforeEach(async () => {
     process.env.ZALO_WEBHOOK_SECRET = 'test_secret_123';
     delete process.env.ZALO_WEBHOOK_ENFORCE_SECRET;
+    mockDb = new Database(':memory:');
+    storeModule.initTables(mockDb);
+    storeModule.setDatabase(mockDb);
+    initTaskproofTables(mockDb);
+    vi.spyOn(ZaloClient.prototype, 'sendMessage').mockResolvedValue({
+      messageId: 'mock',
+      raw: {},
+    });
+    vi.spyOn(ZaloClient.prototype, 'sendPhoto').mockResolvedValue({
+      messageId: 'mock',
+      raw: {},
+    });
 
     const app = express();
     app.use(
@@ -54,7 +78,9 @@ describe('Webhook Channel Authentication & Handling', () => {
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
-    vi.clearAllMocks();
+    storeModule.setDatabase(null);
+    mockDb.close();
+    vi.restoreAllMocks();
   });
 
   it('accepts valid secret token in x-bot-secret-token header', async () => {

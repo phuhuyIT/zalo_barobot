@@ -78,6 +78,16 @@ describe('official-bot task-proof internal routes (Step 5)', () => {
   const originalKey = process.env.INTERNAL_API_KEY;
   const sendPhoto = vi.fn().mockResolvedValue({ messageId: 'p1' });
   const sendMessage = vi.fn().mockResolvedValue({ messageId: 'm1' });
+  const reportNow = vi.fn().mockResolvedValue([
+    {
+      taskId: 't1',
+      shortCode: 'REP001',
+      reported: true,
+      photosSent: 1,
+      photosSkipped: 0,
+      destination: 'report_group',
+    },
+  ]);
 
   async function listen(adminChatId: string = 'admin_hex'): Promise<void> {
     const app = express();
@@ -89,6 +99,7 @@ describe('official-bot task-proof internal routes (Step 5)', () => {
         getAdminChatId: () => adminChatId,
         getQrTmpDir: () => tmp,
         lookupStoredPath: (id) => (id === 'sub1' ? path.join(tmp, 'proof.jpg') : null),
+        reportNow,
       })
     );
     await new Promise<void>((resolve) => {
@@ -104,6 +115,7 @@ describe('official-bot task-proof internal routes (Step 5)', () => {
     process.env.INTERNAL_API_KEY = 'test-internal-key';
     sendPhoto.mockClear();
     sendMessage.mockClear();
+    reportNow.mockClear();
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-internal-'));
     await listen();
   });
@@ -183,5 +195,55 @@ describe('official-bot task-proof internal routes (Step 5)', () => {
 
     const traversal = await fetch(`${baseUrl}/internal/taskproof/qr/../secret?key=test-internal-key`);
     expect(traversal.status).toBe(404);
+  });
+
+  it('report-now requires INTERNAL_API_KEY and kicks the named task', async () => {
+    const denied = await fetch(`${baseUrl}/internal/taskproof/report-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: 't1' }),
+    });
+    expect(denied.status).toBe(403);
+    expect(reportNow).not.toHaveBeenCalled();
+
+    const res = await fetch(`${baseUrl}/internal/taskproof/report-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': 'test-internal-key' },
+      body: JSON.stringify({ task_id: 't1' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.reports[0].short_code).toBe('REP001');
+    expect(reportNow).toHaveBeenCalledWith('t1');
+  });
+
+  it('scan-result requires the internal key and sendMessages the group', async () => {
+    const denied = await fetch(`${baseUrl}/internal/taskproof/scan-result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reply_chat_id: 'off_group', short_code: 'ABC123', count: 5, recorded: 2 }),
+    });
+    expect(denied.status).toBe(403);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const res = await fetch(`${baseUrl}/internal/taskproof/scan-result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': 'test-internal-key' },
+      body: JSON.stringify({
+        reply_chat_id: 'off_group',
+        short_code: 'ABC123',
+        count: 5,
+        scanned: 4,
+        recorded: 2,
+        skipped: 1,
+        discarded: 1,
+        closed: false,
+        truncated: false,
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(sendMessage).toHaveBeenCalledWith('off_group', expect.stringMatching(/ABC123/));
+    expect(sendMessage.mock.calls[0][1]).toMatch(/ghi 2 minh chứng/);
   });
 });
