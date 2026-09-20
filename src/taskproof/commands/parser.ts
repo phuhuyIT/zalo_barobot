@@ -1,16 +1,18 @@
 /**
  * parser.ts
  *
- * Phân tích /task /tasks /nhac /lienket /dong /huy.
+ * Phân tích /task /tasks /nhac /lienket /dong /huy /quet.
  * Thứ tự field tùy ý; hạn chót theo tường Asia/Ho_Chi_Minh, lưu UTC epoch ms.
  * short_code phải đúng 6 [A-Z0-9] — không nhận UUID.
  */
 
 import {
-  collectHttpUrls,
-  isImageOrStickerEvent,
-  isUnsupportedEvent,
-} from './payload';
+  parseQuetCount,
+  QUET_DEFAULT_COUNT,
+  QUET_MAX_COUNT,
+  QUET_MIN_COUNT,
+} from '../quet';
+import { collectHttpUrls, isImageOrStickerEvent } from './payload';
 import { isUuid, normalizeShortCode } from './shortCode';
 import { ParseCommandResult, ParsedTaskFields, TaskproofCommandName, WebhookInbound } from './types';
 
@@ -21,6 +23,7 @@ const COMMAND_NAMES: TaskproofCommandName[] = [
   'lienket',
   'dong',
   'huy',
+  'quet',
 ];
 
 const FIELD_LABELS = ['Link', 'Caption', 'SoLuong', 'HanChot', 'BaoCao'] as const;
@@ -281,6 +284,57 @@ function parseShortCodeCommand(
   return { ok: true, found: true, command, shortCode };
 }
 
+function parseQuet(rest: string): ParseCommandResult {
+  if (!rest) {
+    return {
+      ok: false,
+      found: true,
+      command: 'quet',
+      error: 'Thiếu mã task. Dùng `/quet ABC123` hoặc `/quet ABC123 20` (số tin, mặc định 5).',
+    };
+  }
+  const parts = rest.split(/\s+/).filter(Boolean);
+  const token = parts[0];
+  if (isUuid(token)) {
+    return {
+      ok: false,
+      found: true,
+      command: 'quet',
+      error: 'Không dùng UUID. Mã task là đúng 6 ký tự [A-Z0-9], không phải đoạn đầu UUID.',
+    };
+  }
+  const shortCode = normalizeShortCode(token);
+  if (!shortCode) {
+    return {
+      ok: false,
+      found: true,
+      command: 'quet',
+      error: 'Mã task phải đúng 6 ký tự [A-Z0-9] (ví dụ ABC123). Không khớp prefix UUID.',
+    };
+  }
+  if (parts.length === 1) {
+    return { ok: true, found: true, command: 'quet', shortCode, count: QUET_DEFAULT_COUNT };
+  }
+  const count = parseQuetCount(parts.slice(1).join(' '));
+  if (count === null) {
+    return {
+      ok: false,
+      found: true,
+      command: 'quet',
+      error: 'Số tin không hợp lệ. Ví dụ: `/quet ABC123`, `/quet ABC123 20` (1–50 tin, mặc định 5).',
+    };
+  }
+  if (count < QUET_MIN_COUNT || count > QUET_MAX_COUNT) {
+    return {
+      ok: false,
+      found: true,
+      command: 'quet',
+      error: `Số tin từ ${QUET_MIN_COUNT} đến ${QUET_MAX_COUNT}.`,
+    };
+  }
+  return { ok: true, found: true, command: 'quet', shortCode, count };
+}
+
 function parseLienket(rest: string): ParseCommandResult {
   if (!rest) {
     return { ok: true, found: true, command: 'lienket', method: 'A', zcaGroupId: null };
@@ -301,18 +355,9 @@ function parseLienket(rest: string): ParseCommandResult {
  * Phân tích lệnh task-proof từ inbound webhook đã extract.
  */
 export function parseTaskproofCommand(inbound: WebhookInbound): ParseCommandResult {
-  if (isUnsupportedEvent(inbound.eventName)) {
-    const detected = detectCommand(inbound.commandText);
-    if (!detected) return { ok: false, found: false };
-    return {
-      ok: false,
-      found: true,
-      command: detected.command,
-      error:
-        'Tin nhắn `message.unsupported.received` không phải lệnh hợp lệ. Gõ lại lệnh dạng văn bản trong nhóm.',
-    };
-  }
-
+  // Spec 8.1: thẻ xem trước — lấy lệnh + URL từ metadata nếu còn.
+  // Official Bot Platform gửi message.unsupported.received + text rỗng khi
+  // Zalo đổi cả tin /task + Facebook URL thành card: không phục hồi được thì found=false.
   const detected = detectCommand(inbound.commandText);
   if (!detected) return { ok: false, found: false };
 
@@ -333,6 +378,8 @@ export function parseTaskproofCommand(inbound: WebhookInbound): ParseCommandResu
     case 'dong':
     case 'huy':
       return parseShortCodeCommand(detected.command, detected.rest);
+    case 'quet':
+      return parseQuet(detected.rest);
     case 'lienket':
       return parseLienket(detected.rest);
     default:

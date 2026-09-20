@@ -16,7 +16,12 @@ import { getConfig, getRecipientChatId } from '../config';
 import { sendSchedule, getEffectiveScheduleConfig } from '../core';
 import { ZaloClient } from '../core/zaloClient';
 import { handlePatrolCommand } from '../patrol';
-import { extractWebhookInbound, handleTaskproofCommand, redactSecrets } from '../taskproof/commands';
+import {
+  extractWebhookInbound,
+  handleTaskproofCommand,
+  isUnsupportedEvent,
+  redactSecrets,
+} from '../taskproof/commands';
 
 export const webhookRouter = Router();
 
@@ -122,6 +127,11 @@ webhookRouter.post('/webhook/zalo', async (req: Request, res: Response) => {
     appendWebhookLog(
       `PARSED: text="${text.slice(0, 300)}" | chatId="${chatId}" | senderId="${senderId}" | msgId="${messageId}" | event="${inbound?.eventName || ''}" | chatType="${inbound?.chatType || '?'}"`
     );
+
+    if (inbound && isUnsupportedEvent(inbound.eventName) && !inbound.commandText) {
+      const preview = JSON.stringify(redactSecrets(body ?? rawBody ?? req.body) ?? {}).slice(0, 2000);
+      appendWebhookLog(`UNSUPPORTED empty commandText payload=${preview}`);
+    }
 
     // Lệnh task-proof: parser nằm ở src/taskproof/commands — webhook chỉ route.
     // /gui, /id, tuantra không đi vào nhánh này.

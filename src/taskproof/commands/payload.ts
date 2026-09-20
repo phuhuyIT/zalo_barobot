@@ -7,7 +7,7 @@
  *   - { ok, result: { event_name, message } } — docs bot.zapps.me
  *
  * Thẻ xem trước / caption: không chỉ đọc message.text.
- * message.unsupported.received không phải lệnh /task hợp lệ.
+ * message.unsupported.received: vẫn thử phục hồi lệnh từ metadata (spec 8.1).
  */
 
 import { WebhookInbound } from './types';
@@ -89,7 +89,19 @@ function findCommandString(value: unknown, depth = 0): string {
   }
   const rec = asRecord(value);
   if (!rec) return '';
-  for (const key of ['text', 'caption', 'content', 'description', 'title', 'body']) {
+  for (const key of [
+    'text',
+    'caption',
+    'content',
+    'description',
+    'title',
+    'body',
+    'href',
+    'url',
+    'link',
+    'preview',
+    'attachments',
+  ]) {
     const found = findCommandString(rec[key], depth + 1);
     if (found) return found;
   }

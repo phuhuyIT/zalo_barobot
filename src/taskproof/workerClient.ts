@@ -66,6 +66,18 @@ export async function postRemind(taskId: string): Promise<{ status: number; json
   return workerFetch('POST', '/internal/taskproof/remind', { task_id: taskId });
 }
 
+export async function postScanHistory(
+  taskId: string,
+  count: number,
+  replyChatId: string
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  return workerFetch('POST', '/internal/taskproof/scan-history', {
+    task_id: taskId,
+    count,
+    reply_chat_id: replyChatId,
+  });
+}
+
 export async function postLinkGroup(
   officialChatId: string,
   zcaGroupId?: string

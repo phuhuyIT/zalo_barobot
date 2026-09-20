@@ -14,6 +14,8 @@ import { getDatabase } from '../store';
 import { rejectIfInvalidInternalKey } from './internalAuth';
 import { notifyAdminWorkerDown } from './notifyAdmin';
 import { getQrTmpDir } from './env';
+import { formatScanResultReply, ScanHistorySummary } from './quet';
+import { kickTaskCompletionReport, reportUnreportedCompletedTasks, TaskReportResult } from './report';
 import { getTaskproofSetting } from './settings';
 
 const SAFE_ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -24,6 +26,7 @@ export interface TaskproofInternalDeps {
   getAdminChatId?: () => string;
   getQrTmpDir?: () => string;
   lookupStoredPath?: (submissionId: string) => string | null;
+  reportNow?: (taskId?: string) => Promise<TaskReportResult[]>;
 }
 
 function defaultSendPhoto(chatId: string, photoUrl: string, caption?: string): Promise<unknown> {
@@ -67,6 +70,12 @@ export function createTaskproofInternalRouter(deps: TaskproofInternalDeps = {}):
   const getAdminChatId = deps.getAdminChatId ?? defaultAdminChatId;
   const qrDir = deps.getQrTmpDir ?? getQrTmpDir;
   const lookupStoredPath = deps.lookupStoredPath ?? defaultLookupStoredPath;
+  const reportNow =
+    deps.reportNow ??
+    ((taskId?: string) =>
+      taskId
+        ? kickTaskCompletionReport(taskId)
+        : reportUnreportedCompletedTasks());
 
   router.post('/internal/taskproof/worker-down', async (req: Request, res: Response) => {
     if (rejectIfInvalidInternalKey(req, res)) return;
@@ -113,7 +122,7 @@ export function createTaskproofInternalRouter(deps: TaskproofInternalDeps = {}):
     const adminChatId = getAdminChatId();
     const text = ok
       ? 'Đăng nhập zca-js thành công. Worker sẵn sàng thu thập minh chứng.'
-      : `Đăng nhập zca-js thất bại${error ? `: ${error}` : ''}. Gõ lại /task, /nhac hoặc /lienket để thử QR mới.`;
+      : `Đăng nhập zca-js thất bại${error ? `: ${error}` : ''}. Gõ lại /task, /nhac, /quet hoặc /lienket để thử QR mới.`;
     if (!adminChatId) {
       console.warn('[TaskProof] login-result: chưa có admin_official_chat_id, chỉ ghi log.');
       res.json({ success: true, sent: false, reason: 'missing_admin_chat_id' });
@@ -125,6 +134,64 @@ export function createTaskproofInternalRouter(deps: TaskproofInternalDeps = {}):
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[TaskProof] login-result sendMessage thất bại:', msg);
+      res.json({ success: true, sent: false, reason: msg });
+    }
+  });
+
+  /**
+   * Worker vừa đóng quota — gửi báo cáo ngay, không chờ cron phút.
+   * Cron /internal/run-due-jobs vẫn là lớp dự phòng.
+   */
+  router.post('/internal/taskproof/report-now', async (req: Request, res: Response) => {
+    if (rejectIfInvalidInternalKey(req, res)) return;
+    const taskId = typeof req.body?.task_id === 'string' ? req.body.task_id.trim() : '';
+    try {
+      const reports = await reportNow(taskId || undefined);
+      res.json({
+        success: true,
+        reports: reports.map((row) => ({
+          task_id: row.taskId,
+          short_code: row.shortCode,
+          reported: row.reported,
+          destination: row.destination,
+          photos_sent: row.photosSent,
+          photos_skipped: row.photosSkipped,
+          error: row.error,
+        })),
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[TaskProof] report-now lỗi:', msg);
+      res.status(500).json({ success: false, error: msg });
+    }
+  });
+
+  router.post('/internal/taskproof/scan-result', async (req: Request, res: Response) => {
+    if (rejectIfInvalidInternalKey(req, res)) return;
+    const replyChatId =
+      typeof req.body?.reply_chat_id === 'string' ? req.body.reply_chat_id.trim() : '';
+    if (!replyChatId) {
+      res.status(400).json({ success: false, error: 'reply_chat_id is required' });
+      return;
+    }
+    const summary: ScanHistorySummary = {
+      shortCode: typeof req.body?.short_code === 'string' ? req.body.short_code : '',
+      count: typeof req.body?.count === 'number' ? req.body.count : 0,
+      scanned: typeof req.body?.scanned === 'number' ? req.body.scanned : 0,
+      recorded: typeof req.body?.recorded === 'number' ? req.body.recorded : 0,
+      skipped: typeof req.body?.skipped === 'number' ? req.body.skipped : 0,
+      discarded: typeof req.body?.discarded === 'number' ? req.body.discarded : 0,
+      closed: req.body?.closed === true,
+      truncated: req.body?.truncated === true,
+      error: typeof req.body?.error === 'string' ? req.body.error : undefined,
+    };
+    const text = formatScanResultReply(summary);
+    try {
+      await sendMessage(replyChatId, text);
+      res.json({ success: true, sent: true });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[TaskProof] scan-result sendMessage thất bại:', msg);
       res.json({ success: true, sent: false, reason: msg });
     }
   });
