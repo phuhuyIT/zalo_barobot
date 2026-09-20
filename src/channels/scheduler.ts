@@ -18,7 +18,9 @@ import { getDatabase, hasSentToday, saveLastMessage } from '../store';
 import { ZaloClient } from '../core/zaloClient';
 import { formatDateDMY, resolveLookupDate, getVietnamTimeParts } from '../sheets/dateUtils';
 import { runPatrolReminders } from '../patrol';
+import { notifyIfWorkerDownWithOpenTasks } from '../taskproof/health';
 import { cancelStaleTasks } from '../taskproof/lifecycle';
+import { reportUnreportedCompletedTasks, TaskReportResult } from '../taskproof/report';
 
 export const schedulerRouter = Router();
 
@@ -85,11 +87,15 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
   schedulesRun: string[];
   remindersRun: string[];
   staleCancelled: string[];
+  reportsSent: string[];
+  workerHealthNotified: boolean;
 }> {
   const config = getConfig();
   const schedulesRun: string[] = [];
   const remindersRun: string[] = [];
   const staleCancelled: string[] = [];
+  const reportsSent: string[] = [];
+  let workerHealthNotified = false;
 
   const vn = getVietnamTimeParts(now);
   const adminChatId = getRecipientChatId('admin', config);
@@ -225,7 +231,38 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
     console.error('[Scheduler] ❌ Lỗi stale-cancel task-proof:', msg);
   }
 
-  return { schedulesRun, remindersRun, staleCancelled };
+  // 5. T6 báo cáo: completed AND reported_at IS NULL — sendPhoto URL https, skip ảnh chết
+  try {
+    const reports: TaskReportResult[] = await reportUnreportedCompletedTasks(getDatabase());
+    for (const row of reports) {
+      if (row.error === 'already_reported') continue;
+      if (row.reported) {
+        reportsSent.push(row.shortCode);
+        console.log(
+          `[Scheduler] Task-proof report ${row.shortCode} → ${row.destination} (skip ${row.photosSkipped})`
+        );
+      } else if (row.error) {
+        console.warn(`[Scheduler] Task-proof report ${row.shortCode} chưa gửi: ${row.error}`);
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[Scheduler] ❌ Lỗi báo cáo task-proof:', msg);
+  }
+
+  // 6. Step 11: worker down + còn task liên kết mở → báo admin (không kéo sập /gui)
+  try {
+    const health = await notifyIfWorkerDownWithOpenTasks(getDatabase());
+    workerHealthNotified = health.notified;
+    if (health.notified) {
+      console.warn(`[Scheduler] Task-proof worker down, đã báo admin (${health.openCount} task mở).`);
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[Scheduler] ❌ Lỗi health worker task-proof:', msg);
+  }
+
+  return { schedulesRun, remindersRun, staleCancelled, reportsSent, workerHealthNotified };
 }
 
 /**
