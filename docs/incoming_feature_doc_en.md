@@ -202,6 +202,7 @@ coding rule #12). Do not route task-proof sends through `send_schedule()`.
 | T11 | Close a task and still send a report | `/dong <short_code>` | Official bot (+ T6) |
 | T12 | Cancel a task, no report, delete files | `/huy <short_code>` + stale job | Official bot + worker |
 | T13 | Edit runtime settings without a redeploy | Web UI (same admin page as the schedule module, same auth) | Official bot writes DB; worker reads DB on each use |
+| T14 | Scan recent group history for proofs posted before `/task` | `/quet <short_code> [count]` | Official bot + worker |
 
 ## 5. Configuration
 
@@ -526,6 +527,26 @@ cache. Call `getGroupInfo` + `getGroupMembersInfo` only when that
 `POST /internal/taskproof/remind`. Worker refreshes the member cache
 once, then reminds immediately (no throttle).
 
+### 8.13 T14 — `/quet` (scan recent history)
+
+Members may screenshot a post from another group and send the proof
+**before** the manager types `/task`. Live ingest never sees those
+photos. `/quet` is a manual lookback, not an automatic scan on create.
+
+- Typed in the task group. Exact 6-char `short_code`.
+- Default window: **last 5 messages**. Optional count:
+  `/quet ABC123`, `/quet ABC123 20` (1–50, Zalo `getrecentv2` cap).
+- Official bot: `ensure-listening` then
+  `POST /internal/taskproof/scan-history`
+  `{ task_id, count, reply_chat_id }`. Replies immediately
+  (OCR can take longer than a webhook). Worker down must not be silent.
+- Worker: `getGroupChatHistory`, images only (skip link cards), OCR
+  against **that task only**, skip uids who already submitted, ignore
+  `processed_messages` so a photo discarded against another caption can
+  rematch. Quota close still HTTP-kicks `report-now`. Worker never
+  `sendPhoto`.
+- Result: `POST /internal/taskproof/scan-result` → group text.
+
 If member metadata cannot be retrieved at all, send a generic group
 message with no mentions rather than blocking.
 
@@ -706,6 +727,7 @@ on this form.
 /task              → 8.1
 /tasks             → 8.3
 /nhac <short_code> → 8.4
+/quet <short_code> [count]   → 8.13
 /lienket           → 8.10
 /dong <short_code> → 8.11
 /huy  <short_code> → 8.11
@@ -744,6 +766,11 @@ POST /internal/taskproof/remind
   body: { task_id }
   - ensure-listening first, then remind that task, no throttle.
 
+POST /internal/taskproof/scan-history
+  body: { task_id, count?, reply_chat_id? }
+  - Default last 5 messages (1–50). Returns 202 { state: "scanning" }
+    then OCR in the background. 409 already_scanning / unlinked / closed.
+
 POST /internal/taskproof/link-group
   body: { official_chat_id, zca_group_id? }
   - zca_group_id present (method B) → write the map now.
@@ -767,12 +794,17 @@ POST /internal/taskproof/login-result
 POST /internal/taskproof/link-result
   body: { official_chat_id, ok, zca_group_id?, display_name?, error? }
   → sendMessage into official_chat_id
+
+POST /internal/taskproof/scan-result
+  body: { reply_chat_id, short_code, count, scanned, recorded,
+          skipped, discarded, closed, truncated, error? }
+  → sendMessage into the group where /quet was typed
 ```
 
 If the worker is down while linked open tasks still exist, the official
 bot's periodic job should notify `admin_official_chat_id` (reuse the
 schedule module's admin-reminder channel). `/task` / `/nhac` / `/lienket`
-must not fail silently.
+/ `/quet` must not fail silently.
 
 ## 11. Implementation task list
 
