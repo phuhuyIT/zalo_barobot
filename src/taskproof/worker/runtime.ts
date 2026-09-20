@@ -4,15 +4,23 @@
  * Trạng thái login worker (Step 5): session trước, QR bất đồng bộ.
  * ensure-listening trả về ngay khi cần QR — webhook không chờ quét.
  * Step 6: /lienket — pending + tin nhóm tiếp theo (zca threadId).
- * Step 7: cache thành viên + /nhac (mention / @all). Timer tự động = Step 8.
- * Ảnh nhóm chưa map không OCR. Listener đầy đủ (stop/idle) = Step 8.
+ * Step 7: cache thành viên + /nhac (mention / @all).
+ * Step 8: listen/stop — chỉ online khi có task liên kết mở, cửa pending, hoặc QR.
+ * Task chưa liên kết không giữ worker. Timer DEADLINE_CHECK_INTERVAL_MS nhắc tự động.
+ * Step 9: ảnh nhóm đã map + task mở → hàng đợi OCR, ghi file, đóng khi đủ quota.
  */
 
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
-import { getInternalApiKey, getPublicBaseUrl, getQrTmpDir, getSessionFilePath } from '../env';
+import { getInternalApiKey, getProofDir, getPublicBaseUrl, getQrTmpDir, getSessionFilePath } from '../env';
+import {
+  countLinkedOpenTasks,
+  listDueAutoReminders,
+  markOverdueTasks,
+  shouldKeepWorkerOnline,
+} from '../lifecycle';
 import { getTaskproofSetting } from '../settings';
 import { peekWorkerDatabase } from '../store';
 import { looksLikeTaskproofCommand } from '../commands/parser';
@@ -29,6 +37,7 @@ import {
   planReminder,
   ReminderKind,
 } from './reminders';
+import { ingestProofImage, ProofIngestResult } from './proofIngest';
 import { loadSession, saveSession, ZcaCredentials } from './session';
 import { createZcaLoginPort, ZcaInboundMessage, ZcaLoginPort } from './zcaAdapter';
 
@@ -81,6 +90,10 @@ export interface WorkerRuntimeDeps {
     error?: string;
   }) => Promise<unknown>;
   scheduleTimeout?: (fn: () => void, ms: number) => () => void;
+  scheduleInterval?: (fn: () => void, ms: number) => () => void;
+  ocrImage?: (image: Buffer) => Promise<string>;
+  downloadImage?: (url: string) => Promise<Buffer | null>;
+  getProofDir?: () => string;
 }
 
 export class WorkerRuntime {
@@ -101,10 +114,18 @@ export class WorkerRuntime {
       | 'postLoginResult'
       | 'postLinkResult'
       | 'scheduleTimeout'
+      | 'scheduleInterval'
     >
-  > & { loginPort: ZcaLoginPort; db: Database.Database | null | undefined };
+  > & {
+    loginPort: ZcaLoginPort;
+    db: Database.Database | null | undefined;
+    ocrImage?: (image: Buffer) => Promise<string>;
+    downloadImage?: (url: string) => Promise<Buffer | null>;
+    getProofDir: () => string;
+  };
 
   private cancelPendingTimer: (() => void) | null = null;
+  private cancelDeadlineTimer: (() => void) | null = null;
   private messageLoopStarted = false;
 
   constructor(deps: WorkerRuntimeDeps = {}) {
@@ -127,6 +148,16 @@ export class WorkerRuntime {
           const t = setTimeout(fn, ms);
           return () => clearTimeout(t);
         }),
+      scheduleInterval:
+        deps.scheduleInterval ??
+        ((fn, ms) => {
+          const t = setInterval(fn, ms);
+          if (typeof t.unref === 'function') t.unref();
+          return () => clearInterval(t);
+        }),
+      ocrImage: deps.ocrImage,
+      downloadImage: deps.downloadImage,
+      getProofDir: deps.getProofDir ?? getProofDir,
     };
   }
 
@@ -144,19 +175,17 @@ export class WorkerRuntime {
   }
 
   countOpenLinkedTasks(): number {
-    const db = this.deps.db === undefined ? peekWorkerDatabase() : this.deps.db;
+    const db = this.db();
     if (!db) return 0;
-    try {
-      const row = db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM tasks
-           WHERE status IN ('collecting', 'overdue') AND zca_group_id IS NOT NULL`
-        )
-        .get() as { n: number };
-      return Number(row?.n || 0);
-    } catch {
-      return 0;
-    }
+    return countLinkedOpenTasks(db);
+  }
+
+  shouldStayOnline(): boolean {
+    return shouldKeepWorkerOnline({
+      linkedOpenCount: this.countOpenLinkedTasks(),
+      pendingLink: this.hasPendingLink(),
+      qrInFlight: this.qrInFlight,
+    });
   }
 
   status(): {
@@ -167,7 +196,7 @@ export class WorkerRuntime {
   } {
     return {
       logged_in: this.loggedIn,
-      listening: this.loggedIn,
+      listening: this.loggedIn && this.messageLoopStarted,
       open_task_count: this.countOpenLinkedTasks(),
       pending_link: this.hasPendingLink(),
     };
@@ -179,6 +208,7 @@ export class WorkerRuntime {
   async ensureListening(_taskId?: string): Promise<ListenResult> {
     if (this.loggedIn) {
       this.startMessageLoop();
+      this.startDeadlineTimer();
       this.refreshStaleLinkedCaches();
       return { httpStatus: 200, state: this.hasPendingLink() ? 'pending_link' : 'listening' };
     }
@@ -193,6 +223,7 @@ export class WorkerRuntime {
         await this.deps.loginPort.login(saved);
         this.loggedIn = true;
         this.startMessageLoop();
+        this.startDeadlineTimer();
         this.refreshStaleLinkedCaches();
         return { httpStatus: 200, state: this.hasPendingLink() ? 'pending_link' : 'reusing_session' };
       } catch (err: unknown) {
@@ -255,6 +286,7 @@ export class WorkerRuntime {
         this.qrInFlight = false;
         this.deleteQrFile(qrPath);
         this.startMessageLoop();
+        this.startDeadlineTimer();
         this.refreshStaleLinkedCaches();
         return this.deps.postLoginResult(true);
       })
@@ -264,6 +296,7 @@ export class WorkerRuntime {
         const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : '';
         const msg = err instanceof Error ? err.message : String(err);
         const state = code === 'qr_timeout' || msg === 'qr_timeout' ? 'qr_timeout' : 'login_failed';
+        this.maybeStopListening();
         return this.deps.postLoginResult(false, state === 'qr_timeout' ? 'qr_timeout' : msg);
       });
   }
@@ -304,35 +337,157 @@ export class WorkerRuntime {
         ok: false,
         error: 'hết hạn 2 phút, không thấy tin nhóm. Gõ /lienket rồi gửi ok.',
       });
+      this.maybeStopListening();
     }, ms);
+  }
+
+  /**
+   * Không còn task liên kết mở / pending / QR → logout zca-js, dừng listener.
+   * Không xóa session file — lần ensure-listening sau tái sử dụng.
+   */
+  maybeStopListening(): boolean {
+    if (this.shouldStayOnline()) return false;
+    this.stopDeadlineTimer();
+    if (!this.loggedIn && !this.messageLoopStarted) return false;
+
+    console.log('[TaskProofWorker] Không còn task liên kết mở — logout zca-js, dừng listener.');
+    try {
+      this.deps.loginPort.stopMessageLoop?.();
+    } catch {
+      // best-effort
+    }
+    try {
+      this.deps.loginPort.logout?.();
+    } catch {
+      // best-effort
+    }
+    this.loggedIn = false;
+    this.messageLoopStarted = false;
+    return true;
+  }
+
+  private startDeadlineTimer(): void {
+    if (this.cancelDeadlineTimer || !this.loggedIn) return;
+    const db = this.db();
+    const ms = db
+      ? getTaskproofSetting('deadline_check_interval_ms', db)
+      : getTaskproofSetting('deadline_check_interval_ms');
+    this.cancelDeadlineTimer = this.deps.scheduleInterval(() => {
+      void this.runDeadlineTick();
+    }, ms);
+  }
+
+  private stopDeadlineTimer(): void {
+    this.cancelDeadlineTimer?.();
+    this.cancelDeadlineTimer = null;
+  }
+
+  /**
+   * Tick DEADLINE_CHECK_INTERVAL_MS: lật overdue, nhắc tự động, rồi xét stop.
+   * Lỗi một task không chặn các task còn lại.
+   */
+  async runDeadlineTick(): Promise<void> {
+    try {
+      if (!this.loggedIn) {
+        this.maybeStopListening();
+        return;
+      }
+      const db = this.db();
+      if (!db) {
+        this.maybeStopListening();
+        return;
+      }
+
+      const now = this.deps.now();
+      const flipped = markOverdueTasks(db, now);
+      if (flipped > 0) {
+        console.log(`[TaskProofWorker] ${flipped} task quá hạn → overdue (không đóng).`);
+      }
+
+      const due = listDueAutoReminders(db, now, {
+        maxAutoReminders: getTaskproofSetting('max_auto_reminders', db),
+        reminderIntervalMs: getTaskproofSetting('reminder_interval_ms', db),
+      });
+      for (const task of due) {
+        try {
+          await this.deliverReminder(task.id, { forceRefresh: false, onlyWhenEmpty: true });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[TaskProofWorker] Auto-remind ${task.short_code} lỗi:`, msg);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[TaskProofWorker] Deadline tick lỗi:', msg);
+    } finally {
+      this.maybeStopListening();
+    }
   }
 
   /**
    * Ảnh / tin zca-js. Nhóm chưa map → không OCR.
    * Cửa /lienket A: tin nhóm không phải lệnh → lấy threadId.
+   * Ảnh hợp lệ: enqueue OCR (không chặn listener). Lỗi một ảnh không chặn ảnh sau.
    */
-  handleZcaMessage(msg: ZcaInboundMessage): { linked: boolean; ocr: boolean } {
-    if (msg.hasImage && !msg.isGroup) {
-      return { linked: false, ocr: false };
-    }
-    if (msg.hasImage) {
-      const db = this.db();
-      const ocr = Boolean(db && shouldOcrZcaGroup(db, msg.threadId));
-      if (!ocr) {
-        console.log(`[TaskProofWorker] Bỏ ảnh — nhóm chưa liên kết hoặc không có task mở: ${msg.threadId}`);
-      }
-      if (this.hasPendingLink() && msg.isGroup && !isSlashCommand(msg.text)) {
-        this.completePendingLink(msg.threadId, msg.displayName);
-        return { linked: true, ocr };
-      }
-      return { linked: false, ocr };
-    }
-
+  handleZcaMessage(msg: ZcaInboundMessage): {
+    linked: boolean;
+    ocr: boolean;
+    job?: Promise<ProofIngestResult>;
+  } {
+    let linked = false;
     if (this.hasPendingLink() && msg.isGroup && !isSlashCommand(msg.text)) {
       this.completePendingLink(msg.threadId, msg.displayName);
-      return { linked: true, ocr: false };
+      linked = true;
     }
-    return { linked: false, ocr: false };
+
+    if (!msg.hasImage || !msg.isGroup) {
+      return { linked, ocr: false };
+    }
+
+    const db = this.db();
+    const ocr = Boolean(db && shouldOcrZcaGroup(db, msg.threadId));
+    if (!ocr) {
+      console.log(
+        `[TaskProofWorker] Bỏ ảnh — nhóm chưa liên kết hoặc không có task mở: ${msg.threadId}`
+      );
+      return { linked, ocr: false };
+    }
+
+    const job = this.ingestProof(msg);
+    return { linked, ocr: true, job };
+  }
+
+  private async ingestProof(msg: ZcaInboundMessage): Promise<ProofIngestResult> {
+    const db = this.db();
+    if (!db) return { outcome: 'skipped', reason: 'no_db' };
+    try {
+      const result = await ingestProofImage(
+        db,
+        {
+          threadId: msg.threadId,
+          msgId: msg.msgId || '',
+          uidFrom: msg.uidFrom || '',
+          displayName: msg.displayName,
+          href: msg.href,
+          thumb: msg.thumb,
+        },
+        {
+          now: this.deps.now,
+          ocrImage: this.deps.ocrImage,
+          downloadImage: this.deps.downloadImage,
+          loadSession: () => loadSession(this.deps.getSessionFilePath()),
+          proofDir: this.deps.getProofDir(),
+        }
+      );
+      if (result.outcome === 'recorded' && result.closed) {
+        this.maybeStopListening();
+      }
+      return result;
+    } catch (err: unknown) {
+      const text = err instanceof Error ? err.message : String(err);
+      console.error('[TaskProofWorker] Ingest minh chứng lỗi:', text);
+      return { outcome: 'discarded', reason: text };
+    }
   }
 
   shouldOcrGroup(zcaGroupId: string): boolean {
@@ -342,7 +497,6 @@ export class WorkerRuntime {
 
   /**
    * /nhac: ensure-listening, refresh cache một lần, nhắc ngay (không throttle).
-   * Timer DEADLINE_CHECK_INTERVAL_MS = Step 8.
    */
   async remind(taskId: string): Promise<RemindResult> {
     const listen = await this.ensureListening(taskId);
@@ -365,12 +519,22 @@ export class WorkerRuntime {
       };
     }
 
+    const result = await this.deliverReminder(taskId, { forceRefresh: true });
+    return { ...result, state: result.state ?? listen.state };
+  }
+
+  /**
+   * Gửi đúng một tin nhắc. /nhac: forceRefresh. Timer: onlyWhenEmpty, có throttle ở shouldAutoRemind.
+   */
+  private async deliverReminder(
+    taskId: string,
+    opts: { forceRefresh: boolean; onlyWhenEmpty?: boolean }
+  ): Promise<RemindResult> {
     const db = this.db();
     if (!db) {
       return {
         httpStatus: 409,
         reminded: false,
-        state: listen.state,
         error: 'worker database is not open',
         task_id: taskId,
       };
@@ -409,7 +573,8 @@ export class WorkerRuntime {
       port: this.deps.loginPort,
       zcaGroupId: task.zca_group_id,
       now: this.deps.now(),
-      forceRefresh: true,
+      forceRefresh: opts.forceRefresh,
+      onlyWhenEmpty: opts.onlyWhenEmpty,
     });
 
     const members = listCachedMembers(db, task.zca_group_id);
@@ -441,7 +606,6 @@ export class WorkerRuntime {
         reminded: false,
         kind: 'none',
         missing_count: 0,
-        state: listen.state,
         task_id: taskId,
       };
     }
@@ -452,7 +616,6 @@ export class WorkerRuntime {
         reminded: false,
         kind: plan.kind,
         missing_count: plan.missingCount,
-        state: listen.state,
         error: 'sendGroupMessage is not available',
         task_id: taskId,
       };
@@ -471,7 +634,6 @@ export class WorkerRuntime {
         reminded: false,
         kind: plan.kind,
         missing_count: plan.missingCount,
-        state: listen.state,
         error: msg,
         task_id: taskId,
       };
@@ -486,7 +648,6 @@ export class WorkerRuntime {
       reminded: true,
       kind: plan.kind,
       missing_count: plan.missingCount,
-      state: listen.state,
       task_id: taskId,
       error: refresh.ok ? undefined : 'member_cache_unavailable',
     };

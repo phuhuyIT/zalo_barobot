@@ -22,6 +22,12 @@ export interface ZcaInboundMessage {
   text: string;
   displayName: string;
   hasImage: boolean;
+  msgId?: string;
+  uidFrom?: string;
+  href?: string;
+  thumb?: string;
+  contentType?: string;
+  msgType?: string;
 }
 
 export interface ZcaMention {
@@ -49,6 +55,7 @@ export interface ZcaLoginPort {
   loginQR(opts: QrLoginOpts): Promise<ZcaCredentials>;
   startMessageLoop?(handler: (msg: ZcaInboundMessage) => void): void;
   stopMessageLoop?(): void;
+  logout?(): void;
   getOwnId?(): string;
   getGroupInfo?(groupId: string): Promise<ZcaGroupInfoSnapshot | null>;
   getGroupMembersInfo?(ids: string[]): Promise<ZcaMemberProfile[]>;
@@ -73,23 +80,44 @@ function credsFromContext(api: { getContext: () => unknown }): ZcaCredentials | 
   };
 }
 
-function normalizeInbound(message: {
+export function normalizeZcaInbound(message: {
   type: number;
   threadId: string;
-  data: { content?: unknown; dName?: string };
+  data: {
+    content?: unknown;
+    dName?: string;
+    msgId?: string;
+    realMsgId?: string;
+    uidFrom?: string;
+    msgType?: string;
+  };
 }): ZcaInboundMessage {
   const content = message.data.content;
   const text = typeof content === 'string' ? content : '';
-  const hasImage =
-    Boolean(content) &&
-    typeof content === 'object' &&
-    ('href' in (content as object) || 'thumb' in (content as object));
+  let href = '';
+  let thumb = '';
+  let contentType = '';
+  if (content && typeof content === 'object') {
+    const rec = content as Record<string, unknown>;
+    href = typeof rec.href === 'string' ? rec.href : '';
+    thumb = typeof rec.thumb === 'string' ? rec.thumb : '';
+    contentType = typeof rec.type === 'string' ? rec.type : '';
+  }
+  const msgType = message.data.msgType || '';
+  const isGif = /gif/i.test(contentType) || /gif/i.test(msgType) || /\.gif(\?|#|$)/i.test(href);
+  const hasImage = Boolean((href || thumb) && !isGif);
   return {
     threadId: message.threadId,
     isGroup: message.type === ThreadType.Group,
     text,
     displayName: message.data.dName || '',
     hasImage,
+    msgId: message.data.msgId || message.data.realMsgId || '',
+    uidFrom: message.data.uidFrom || '',
+    href: href || undefined,
+    thumb: thumb || undefined,
+    contentType: contentType || undefined,
+    msgType: msgType || undefined,
   };
 }
 
@@ -103,7 +131,7 @@ export function createZcaLoginPort(): ZcaLoginPort {
     wired = true;
     api.listener.on('message', (message) => {
       try {
-        loopHandler?.(normalizeInbound(message));
+        loopHandler?.(normalizeZcaInbound(message));
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[TaskProofWorker] Lỗi xử lý tin zca-js:', msg);
@@ -204,6 +232,18 @@ export function createZcaLoginPort(): ZcaLoginPort {
       } catch {
         // best-effort
       }
+      wired = false;
+    },
+
+    logout(): void {
+      loopHandler = null;
+      try {
+        activeApi?.listener.stop();
+      } catch {
+        // best-effort
+      }
+      activeApi = null;
+      wired = false;
     },
 
     getOwnId(): string {

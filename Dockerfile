@@ -28,8 +28,20 @@ COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node config/ ./config/
 COPY --chown=node:node public/ ./public/
 
+# Tessdata baked into the worker image so first OCR does not download at runtime.
+ENV TESSDATA_PATH=/app/tessdata
+RUN mkdir -p /app/tessdata && node --input-type=module -e '\
+import fs from "fs";\
+const langs = ["eng", "vie"];\
+for (const lang of langs) {\
+  const url = "https://tessdata.projectnaptha.com/4.0.0/" + lang + ".traineddata.gz";\
+  const res = await fetch(url);\
+  if (!res.ok) throw new Error("tessdata " + lang + " HTTP " + res.status);\
+  fs.writeFileSync("/app/tessdata/" + lang + ".traineddata.gz", Buffer.from(await res.arrayBuffer()));\
+}'
+
 # Ensure directory for SQLite database volume with correct ownership
-RUN mkdir -p /data && chown -R node:node /data /app
+RUN mkdir -p /data && chown -R node:node /data /app /app/tessdata
 
 ENV NODE_ENV=production
 ENV PORT=3000
@@ -39,6 +51,7 @@ ENV CONFIG_PATH=./config/schedules.yaml
 ENV TASKPROOF_WORKER_PORT=3001
 ENV ZCA_SESSION_FILE_PATH=/data/zca-session.json
 ENV PROOF_DIR=/data/proofs
+ENV TESSDATA_PATH=/app/tessdata
 
 # Chỉ public cổng official bot. Worker bind 127.0.0.1:3001 trong container.
 EXPOSE 3000

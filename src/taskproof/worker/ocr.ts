@@ -2,7 +2,7 @@
  * ocr.ts
  *
  * Tesseract vie+eng trên buffer ảnh (Section 8.2). Không OCR URL sống —
- * href/thumb phải tải xong rồi mới đưa bytes vào đây (queue Zalo = Step 9).
+ * href/thumb phải tải xong rồi mới đưa bytes vào đây (proofIngest).
  *
  * Một worker Tesseract (singleton) và một job tại một thời điểm
  * (single-flight). tessdata nằm ở TESSDATA_PATH hoặc ./tessdata.
