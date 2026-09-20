@@ -101,7 +101,7 @@ export function planReminder(opts: {
   if (!cacheAvailable) {
     return {
       kind: 'generic',
-      msg: `Nhắc nộp minh chứng cho task ${shortCode}.`,
+      msg: `Nhắc nộp minh chứng cho task ${shortCode}. Không lấy được danh sách thành viên — đưa tài khoản phụ làm phó nhóm (hoặc tắt khóa xem thành viên) rồi /nhac lại.`,
       mentions: [],
       missingCount: 0,
     };

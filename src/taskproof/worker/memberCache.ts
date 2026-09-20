@@ -75,9 +75,51 @@ export function replaceMemberCache(
   tx();
 }
 
-function idsFromGroupInfo(info: ZcaGroupInfoSnapshot): string[] {
-  if (info.memberIds.length > 0) return [...new Set(info.memberIds.filter(Boolean))];
-  return [...new Set(info.currentMems.map((m) => m.id).filter(Boolean))];
+/** Zalo đôi khi trả `uid_version` (`123_0`) trong memVerList. */
+export function stripMemberId(raw: string): string {
+  const value = (raw || '').trim();
+  if (!value) return '';
+  const ver = value.match(/^(.+)_(\d+)$/);
+  return ver ? ver[1] : value;
+}
+
+function addIds(out: Set<string>, ids: Iterable<string>): void {
+  for (const raw of ids) {
+    const id = stripMemberId(raw);
+    if (id) out.add(id);
+  }
+}
+
+export function idsFromGroupInfo(info: ZcaGroupInfoSnapshot): string[] {
+  const out = new Set<string>();
+  addIds(out, info.memberIds || []);
+  addIds(out, info.memVerList || []);
+  addIds(out, (info.currentMems || []).map((m) => m.id));
+  addIds(out, info.adminIds || []);
+  if (info.creatorId) addIds(out, [info.creatorId]);
+  return [...out];
+}
+
+/** Ghi một uid đã thấy trong tin nhóm — bổ sung khi getGroupInfo trả list rỗng. */
+export function observeMember(
+  db: Database.Database,
+  zcaGroupId: string,
+  userId: string,
+  displayName: string,
+  now: number
+): void {
+  const uid = stripMemberId(userId);
+  if (!zcaGroupId || !uid) return;
+  db.prepare(
+    `INSERT INTO group_members_cache (zca_group_id, user_id, display_name, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(zca_group_id, user_id) DO UPDATE SET
+       display_name = CASE
+         WHEN excluded.display_name != excluded.user_id THEN excluded.display_name
+         ELSE group_members_cache.display_name
+       END,
+       updated_at = excluded.updated_at`
+  ).run(zcaGroupId, uid, (displayName || '').trim() || uid, now);
 }
 
 function displayNameOf(
@@ -99,8 +141,9 @@ async function fetchProfiles(
     try {
       const profiles: ZcaMemberProfile[] = await port.getGroupMembersInfo(batch);
       for (const profile of profiles) {
-        if (!profile.id) continue;
-        out.set(profile.id, profile.displayName || profile.id);
+        const id = stripMemberId(profile.id);
+        if (!id) continue;
+        out.set(id, profile.displayName || id);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -168,28 +211,50 @@ export async function refreshMemberCache(opts: {
   }
 
   const ids = idsFromGroupInfo(info);
+  const ownId = stripMemberId(port.getOwnId?.() || '');
+  const usableIds = ownId ? ids.filter((id) => id !== ownId) : ids;
   let warning: string | undefined;
-  if (info.hasMoreMember || (info.totalMember > 0 && ids.length < info.totalMember)) {
-    warning = `member list incomplete for ${zcaGroupId}: got ${ids.length}/${info.totalMember}`;
-    console.warn(`[TaskProofWorker] ${warning}`);
+  if (info.lockViewMember) {
+    warning = `lockViewMember=1 for ${zcaGroupId}`;
+    console.warn(`[TaskProofWorker] ${warning} — tài khoản phụ có thể không xem được thành viên.`);
   }
+  if (info.hasMoreMember || (info.totalMember > 0 && ids.length < info.totalMember)) {
+    const incomplete = `member list incomplete for ${zcaGroupId}: got ${ids.length}/${info.totalMember}`;
+    warning = warning ? `${warning}; ${incomplete}` : incomplete;
+    console.warn(`[TaskProofWorker] ${incomplete}`);
+  }
+  console.log(
+    `[TaskProofWorker] getGroupInfo ${zcaGroupId}: ids=${ids.length} usable=${usableIds.length} total=${info.totalMember} hasMore=${info.hasMoreMember} lockViewMember=${info.lockViewMember} currentMems=${info.currentMems.length} memVerList=${(info.memVerList || []).length}`
+  );
 
-  if (ids.length === 0) {
+  if (usableIds.length === 0) {
     if (existing.length > 0) {
-      console.warn('[TaskProofWorker] getGroupInfo trả 0 id — không xóa cache', zcaGroupId);
+      console.warn('[TaskProofWorker] getGroupInfo không có thành viên dùng được — giữ cache cũ', zcaGroupId);
       return { ok: true, usedStale: true, memberCount: existing.length, warning };
     }
     return { ok: false, usedStale: false, memberCount: 0, warning };
   }
 
-  const currentNames = new Map(info.currentMems.map((m) => [m.id, m.dName || m.id]));
+  const currentNames = new Map(
+    info.currentMems.map((m) => [stripMemberId(m.id), m.dName || m.id])
+  );
   const profiles = await fetchProfiles(port, ids);
   const members: CachedMember[] = ids.map((id) => ({
     user_id: id,
     display_name: displayNameOf(id, profiles, currentNames),
   }));
 
-  replaceMemberCache(db, zcaGroupId, members, now);
+  const incomplete =
+    Boolean(info.lockViewMember) ||
+    Boolean(info.hasMoreMember) ||
+    (info.totalMember > 0 && ids.length < info.totalMember);
+  if (incomplete && existing.length > 0) {
+    const merged = new Map(existing.map((m) => [m.user_id, m]));
+    for (const member of members) merged.set(member.user_id, member);
+    replaceMemberCache(db, zcaGroupId, [...merged.values()], now);
+  } else {
+    replaceMemberCache(db, zcaGroupId, members, now);
+  }
 
   if (info.name) {
     db.prepare(
