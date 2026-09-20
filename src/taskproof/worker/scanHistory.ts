@@ -1,0 +1,101 @@
+/**
+ * scanHistory.ts
+ *
+ * Lọc ảnh trong N tin /quet rồi ingest chỉ đúng task được gọi.
+ * Không gọi zca-js — runtime fetch history, hàm này chỉ lọc + OCR.
+ */
+
+import Database from 'better-sqlite3';
+import { looksLikeTaskproofCommand } from '../commands/parser';
+import {
+  HISTORY_API_MAX_COUNT,
+  historyFetchCount,
+  ScanHistorySummary,
+} from '../quet';
+import { ingestProofImage, ProofImage, ProofIngestDeps, ProofIngestResult } from './proofIngest';
+import { ZcaInboundMessage } from './zcaAdapter';
+
+export interface ScanHistoryInput {
+  taskId: string;
+  shortCode: string;
+  zcaGroupId: string;
+  count: number;
+  messages: ZcaInboundMessage[];
+  more?: number;
+}
+
+export function selectLookbackImages(messages: ZcaInboundMessage[]): ZcaInboundMessage[] {
+  return messages
+    .filter((msg) => {
+      if (!msg.hasImage || msg.isLinkCard) return false;
+      if (!msg.msgId || !msg.uidFrom) return false;
+      if (looksLikeTaskproofCommand(msg.text || '')) return false;
+      return true;
+    })
+    .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+}
+
+export function historyWasTruncated(
+  messages: ZcaInboundMessage[],
+  fetchCount: number,
+  more = 0
+): boolean {
+  if (fetchCount < HISTORY_API_MAX_COUNT) return false;
+  if (more > 0) return true;
+  return messages.length >= HISTORY_API_MAX_COUNT;
+}
+
+export async function scanGroupHistoryForTask(
+  db: Database.Database,
+  input: ScanHistoryInput,
+  deps: ProofIngestDeps = {}
+): Promise<ScanHistorySummary> {
+  const fetchCount = historyFetchCount(input.count);
+  const images = selectLookbackImages(input.messages);
+  const truncated = historyWasTruncated(input.messages, fetchCount, input.more || 0);
+
+  const summary: ScanHistorySummary = {
+    shortCode: input.shortCode,
+    count: fetchCount,
+    scanned: images.length,
+    recorded: 0,
+    skipped: 0,
+    discarded: 0,
+    closed: false,
+    truncated,
+  };
+
+  for (const msg of images) {
+    const image: ProofImage = {
+      threadId: msg.threadId || input.zcaGroupId,
+      msgId: msg.msgId || '',
+      uidFrom: msg.uidFrom || '',
+      displayName: msg.displayName,
+      href: msg.href,
+      thumb: msg.thumb,
+    };
+    let result: ProofIngestResult;
+    try {
+      result = await ingestProofImage(db, image, deps, {
+        onlyTaskId: input.taskId,
+        ignoreProcessed: true,
+        skipIfAlreadySubmitted: true,
+      });
+    } catch (err: unknown) {
+      const text = err instanceof Error ? err.message : String(err);
+      console.error('[TaskProofWorker] /quet ingest lỗi:', text);
+      summary.discarded += 1;
+      continue;
+    }
+    if (result.outcome === 'recorded') {
+      summary.recorded += 1;
+      if (result.closed) summary.closed = true;
+    } else if (result.outcome === 'skipped') {
+      summary.skipped += 1;
+    } else {
+      summary.discarded += 1;
+    }
+  }
+
+  return summary;
+}

@@ -8,7 +8,7 @@
  * Ghi processed_messages trước OCR: crash giữa chừng không OCR lại
  * (at-most-once). Ảnh dưới ngưỡng: không row, không đổi task.
  * UNIQUE(task_id, uid_from) ghi đè lần nộp trước, không lưu lịch sử.
- * Worker không gửi báo cáo (T6 = official bot, Step 10).
+ * Worker không sendPhoto (T6 = official bot); đủ quota thì HTTP kick report-now.
  */
 
 import crypto from 'crypto';
@@ -40,6 +40,15 @@ export interface ProofIngestDeps {
   loadSession?: () => ZcaCredentials | null;
   proofDir?: string;
   newId?: () => string;
+  /** Official bot gửi T6; worker không sendPhoto. */
+  kickReport?: (taskId: string) => Promise<unknown>;
+}
+
+/** /quet: chỉ chấm một task, cho phép ảnh đã processed dưới ngưỡng. */
+export interface ProofIngestOptions {
+  onlyTaskId?: string;
+  ignoreProcessed?: boolean;
+  skipIfAlreadySubmitted?: boolean;
 }
 
 export type ProofIngestResult =
@@ -87,7 +96,20 @@ export function claimProcessedMessage(
   return Number(result.changes || 0) > 0;
 }
 
-function listOpenCandidates(db: Database.Database, zcaGroupId: string): OpenTaskRow[] {
+function listOpenCandidates(
+  db: Database.Database,
+  zcaGroupId: string,
+  onlyTaskId?: string
+): OpenTaskRow[] {
+  if (onlyTaskId) {
+    return db
+      .prepare(
+        `SELECT id, short_code, reference_text, created_at FROM tasks
+         WHERE id = ? AND zca_group_id = ? AND status IN ('collecting', 'overdue')
+         ORDER BY created_at ASC, id ASC`
+      )
+      .all(onlyTaskId, zcaGroupId) as OpenTaskRow[];
+  }
   return db
     .prepare(
       `SELECT id, short_code, reference_text, created_at FROM tasks
@@ -153,7 +175,8 @@ function upsertSubmission(
 export async function ingestProofImage(
   db: Database.Database,
   image: ProofImage,
-  deps: ProofIngestDeps = {}
+  deps: ProofIngestDeps = {},
+  opts: ProofIngestOptions = {}
 ): Promise<ProofIngestResult> {
   const now = deps.now ?? Date.now;
   const proofDir = deps.proofDir ?? getProofDir();
@@ -169,7 +192,13 @@ export async function ingestProofImage(
   if (!shouldOcrZcaGroup(db, zcaGroupId)) {
     return { outcome: 'skipped', reason: 'unmapped_or_closed' };
   }
-  if (alreadyProcessed(db, zcaGroupId, msgId)) {
+  if (opts.onlyTaskId && listOpenCandidates(db, zcaGroupId, opts.onlyTaskId).length === 0) {
+    return { outcome: 'skipped', reason: 'task_not_open' };
+  }
+  if (opts.skipIfAlreadySubmitted && opts.onlyTaskId && findExistingSubmission(db, opts.onlyTaskId, uidFrom)) {
+    return { outcome: 'skipped', reason: 'already_submitted' };
+  }
+  if (!opts.ignoreProcessed && alreadyProcessed(db, zcaGroupId, msgId)) {
     return { outcome: 'skipped', reason: 'already_processed' };
   }
 
@@ -183,7 +212,9 @@ export async function ingestProofImage(
   }
 
   // Ghi trước OCR — crash giữa recognize không chạy lại cùng msg.
-  if (!claimProcessedMessage(db, zcaGroupId, msgId, now())) {
+  // /quet (ignoreProcessed): INSERT OR IGNORE, không bỏ vì lần live đã dưới ngưỡng.
+  const claimed = claimProcessedMessage(db, zcaGroupId, msgId, now());
+  if (!opts.ignoreProcessed && !claimed) {
     return { outcome: 'skipped', reason: 'already_processed' };
   }
 
@@ -196,7 +227,7 @@ export async function ingestProofImage(
     return { outcome: 'discarded', reason: 'ocr_failed' };
   }
 
-  const candidates: MatchCandidate[] = listOpenCandidates(db, zcaGroupId).map((row) => ({
+  const candidates: MatchCandidate[] = listOpenCandidates(db, zcaGroupId, opts.onlyTaskId).map((row) => ({
     id: row.id,
     referenceText: row.reference_text,
     createdAt: row.created_at,
@@ -230,6 +261,16 @@ export async function ingestProofImage(
     console.log(
       `[TaskProofWorker] Task ${taskRow?.short_code || winner.candidate.id} đủ quota → completed.`
     );
+    const kick = deps.kickReport;
+    if (kick) {
+      void Promise.resolve(kick(winner.candidate.id)).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[TaskProofWorker] kick báo cáo ${taskRow?.short_code || winner.candidate.id} lỗi:`,
+          msg
+        );
+      });
+    }
   }
 
   return {

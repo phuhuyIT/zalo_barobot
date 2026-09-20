@@ -9,7 +9,8 @@ import { getInternalApiKey, getOfficialBotOrigin } from '../env';
 
 export async function postToOfficialBot(
   pathname: string,
-  body: unknown
+  body: unknown,
+  timeoutMs = 15_000
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   const res = await fetch(`${getOfficialBotOrigin()}${pathname}`, {
     method: 'POST',
@@ -18,7 +19,7 @@ export async function postToOfficialBot(
       'x-internal-key': getInternalApiKey(),
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   let json: Record<string, unknown>;
   try {
@@ -51,4 +52,27 @@ export async function postLinkResult(body: {
   error?: string;
 }): Promise<{ status: number; json: Record<string, unknown> }> {
   return postToOfficialBot('/internal/taskproof/link-result', body);
+}
+
+/** Quota vừa đủ — official bot gửi T6 ngay. Timeout dài vì sendPhoto. */
+export async function postReportNow(
+  taskId: string
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  return postToOfficialBot('/internal/taskproof/report-now', { task_id: taskId }, 60_000);
+}
+
+/** /quet xong — official bot gửi kết quả vào nhóm. */
+export async function postScanResult(body: {
+  reply_chat_id: string;
+  short_code: string;
+  count: number;
+  scanned: number;
+  recorded: number;
+  skipped: number;
+  discarded: number;
+  closed: boolean;
+  truncated: boolean;
+  error?: string;
+}): Promise<{ status: number; json: Record<string, unknown> }> {
+  return postToOfficialBot('/internal/taskproof/scan-result', body);
 }

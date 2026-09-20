@@ -36,6 +36,13 @@ export function isGifUrl(url: string): boolean {
   return /\.gif(\?|#|$)/i.test(url.trim());
 }
 
+export function isImageHref(url: string): boolean {
+  const value = (url || '').trim();
+  if (!value) return false;
+  if (/\.(?:jpe?g|png|webp|bmp)(?:[?#]|$)/i.test(value)) return true;
+  return /(?:^|\.)(?:zdn\.vn|zalo(?:cdn)?\.me)|photo-stal-|fsh-|za-chat/i.test(value);
+}
+
 export function looksLikeGifBuffer(buf: Buffer): boolean {
   if (buf.length < 6) return false;
   const mag = buf.subarray(0, 6).toString('ascii');

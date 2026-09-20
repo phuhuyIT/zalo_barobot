@@ -10,6 +10,7 @@ import http from 'http';
 import express, { Express } from 'express';
 import { getWorkerPort, WORKER_BIND_HOST } from '../env';
 import { rejectIfInvalidInternalKey } from '../internalAuth';
+import { historyFetchCount, QUET_DEFAULT_COUNT, QUET_MAX_COUNT, QUET_MIN_COUNT } from '../quet';
 import { getWorkerRuntime, WorkerRuntime } from './runtime';
 
 export interface WorkerAppDeps {
@@ -59,6 +60,37 @@ export function createWorkerApp(deps: WorkerAppDeps = {}): Express {
       missing_count: result.missing_count,
       task_id: result.task_id || taskId,
       error: result.error,
+    });
+  });
+
+  app.post('/internal/taskproof/scan-history', (req, res) => {
+    if (rejectIfInvalidInternalKey(req, res)) return;
+    const taskId = typeof req.body?.task_id === 'string' ? req.body.task_id.trim() : '';
+    if (!taskId) {
+      res.status(400).json({ success: false, error: 'task_id is required' });
+      return;
+    }
+    const rawCount = req.body?.count;
+    let count = QUET_DEFAULT_COUNT;
+    if (typeof rawCount === 'number' && Number.isFinite(rawCount)) {
+      count = Math.floor(rawCount);
+    } else if (rawCount !== undefined && rawCount !== null && rawCount !== '') {
+      res.status(400).json({ success: false, error: `count must be ${QUET_MIN_COUNT}–${QUET_MAX_COUNT}` });
+      return;
+    }
+    if (count < QUET_MIN_COUNT || count > QUET_MAX_COUNT) {
+      res.status(400).json({ success: false, error: `count must be ${QUET_MIN_COUNT}–${QUET_MAX_COUNT}` });
+      return;
+    }
+    count = historyFetchCount(count);
+    const replyChatId =
+      typeof req.body?.reply_chat_id === 'string' ? req.body.reply_chat_id.trim() : '';
+    const result = runtimeOf().enqueueScanHistory(taskId, count, replyChatId);
+    res.status(result.httpStatus).json({
+      state: result.state,
+      error: result.error,
+      count: result.count,
+      task_id: result.task_id || taskId,
     });
   });
 

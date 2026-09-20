@@ -7,7 +7,17 @@
 
 import fs from 'fs';
 import path from 'path';
-import { Zalo, LoginQRCallbackEventType, ThreadType, type Credentials, type API } from 'zca-js';
+import {
+  Zalo,
+  LoginQRCallbackEventType,
+  ThreadType,
+  GroupMessage,
+  type Credentials,
+  type API,
+  type Message,
+} from 'zca-js';
+import { HISTORY_API_MAX_COUNT, parseZcaTs } from '../quet';
+import { isImageHref } from './imageFetch';
 import { ZcaCredentials } from './session';
 
 export interface QrLoginOpts {
@@ -22,12 +32,20 @@ export interface ZcaInboundMessage {
   text: string;
   displayName: string;
   hasImage: boolean;
+  isLinkCard?: boolean;
+  shareHref?: string;
   msgId?: string;
   uidFrom?: string;
   href?: string;
   thumb?: string;
   contentType?: string;
   msgType?: string;
+  ts?: number;
+}
+
+export interface ZcaHistoryPage {
+  more: number;
+  messages: ZcaInboundMessage[];
 }
 
 export interface ZcaMention {
@@ -43,6 +61,10 @@ export interface ZcaGroupInfoSnapshot {
   currentMems: Array<{ id: string; dName: string }>;
   totalMember: number;
   hasMoreMember: boolean;
+  memVerList: string[];
+  adminIds: string[];
+  creatorId: string;
+  lockViewMember: boolean;
 }
 
 export interface ZcaMemberProfile {
@@ -63,6 +85,216 @@ export interface ZcaLoginPort {
     threadId: string,
     content: { msg: string; mentions?: ZcaMention[] }
   ): Promise<void>;
+  getGroupChatHistory?(groupId: string, count?: number): Promise<ZcaHistoryPage>;
+}
+
+type RecentHistoryApi = API & {
+  fetchRecentGroup?: (props: { groupId: string; count: number }) => Promise<unknown>;
+};
+
+type HistoryUtils = {
+  makeURL: (baseURL: string, params?: Record<string, string | number>, apiVersion?: boolean) => string;
+  encodeAES: (data: string) => string | null;
+  request: (url: string, options?: { method?: string; body?: URLSearchParams }) => Promise<Response>;
+  resolve: (res: Response, cb?: (result: { data: unknown }) => unknown) => Promise<unknown>;
+};
+
+const HARDCODED_CM_HOST = 'https://tt-group-cm.chat.zalo.me';
+const HISTORY_GLOBAL_MSG_ID = 10000000000000000;
+
+export function recentGroupHosts(map: {
+  group_cloud_message?: string[];
+  group?: string[];
+}): string[] {
+  const hosts: string[] = [];
+  const push = (raw: string) => {
+    const clean = (raw || '').replace(/\/$/, '');
+    if (clean && !hosts.includes(clean)) hosts.push(clean);
+  };
+  if (map.group_cloud_message?.[0]) push(map.group_cloud_message[0]);
+  const groupHost = (map.group?.[0] || '').replace(/\/$/, '');
+  if (groupHost.includes('tt-group-wpa')) {
+    push(groupHost.replace('tt-group-wpa', 'tt-group-cm'));
+  }
+  push(HARDCODED_CM_HOST);
+  return hosts;
+}
+
+export function capHistoryCount(count: number): number {
+  const n = Number(count);
+  if (!Number.isFinite(n) || n < 1) return 50;
+  return Math.min(HISTORY_API_MAX_COUNT, Math.max(1, Math.floor(n)));
+}
+
+/** Payload zlapi getRecentGroup — getrecentv2 không nhận count > 50. */
+export function buildRecentGroupParams(
+  groupId: string,
+  count: number,
+  imei: string
+): Record<string, unknown> {
+  return {
+    groupId: String(groupId),
+    globalMsgId: HISTORY_GLOBAL_MSG_ID,
+    count: capHistoryCount(count),
+    msgIds: [],
+    imei,
+    src: 1,
+  };
+}
+
+export function formatHistoryApiError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const code =
+    err && typeof err === 'object' && 'code' in err
+      ? (err as { code?: unknown }).code
+      : undefined;
+  const detail =
+    code !== undefined && code !== null && String(code) !== ''
+      ? `#${code} ${msg}`
+      : msg;
+  return `Zalo không trả lịch sử nhóm (${detail}). Thử /nhac để người đã gửi ảnh gửi lại.`;
+}
+
+export function unwrapHistoryPayload(raw: unknown): { groupMsgs: unknown[]; more: number } {
+  let data: unknown = raw;
+  for (let i = 0; i < 4; i++) {
+    if (typeof data === 'string') {
+      try {
+        data = JSON.parse(data);
+      } catch {
+        break;
+      }
+      continue;
+    }
+    if (!data || typeof data !== 'object') break;
+    const rec = data as Record<string, unknown>;
+    if (Array.isArray(rec.groupMsgs)) {
+      return { groupMsgs: rec.groupMsgs, more: Number(rec.more || 0) };
+    }
+    if (Array.isArray(rec.msgs)) {
+      return { groupMsgs: rec.msgs, more: Number(rec.more || 0) };
+    }
+    if (rec.data !== undefined) {
+      data = rec.data;
+      continue;
+    }
+    break;
+  }
+  return { groupMsgs: [], more: 0 };
+}
+
+function mapHistoryMessages(groupId: string, ownUid: string, raw: unknown): ZcaHistoryPage {
+  const { groupMsgs, more } = unwrapHistoryPayload(raw);
+  const messages = groupMsgs.map((item) => {
+    const inbound = normalizeZcaInbound(new GroupMessage(ownUid, item as ConstructorParameters<typeof GroupMessage>[1]));
+    if (!inbound.threadId) inbound.threadId = groupId;
+    return inbound;
+  });
+  return { more, messages };
+}
+
+async function requestRecentGroup(
+  utils: HistoryUtils,
+  ctx: { imei: string },
+  host: string,
+  groupId: string,
+  count: number,
+  method: 'GET' | 'POST'
+): Promise<unknown> {
+  const encryptedParams = utils.encodeAES(
+    JSON.stringify(buildRecentGroupParams(groupId, count, ctx.imei))
+  );
+  if (!encryptedParams) throw new Error('Failed to encrypt params');
+  const query: Record<string, string | number> = { nretry: 0 };
+  if (method === 'GET') query.params = encryptedParams;
+  const url = utils.makeURL(`${host}/api/cm/getrecentv2`, query);
+  const response = await utils.request(
+    url,
+    method === 'POST'
+      ? { method: 'POST', body: new URLSearchParams({ params: encryptedParams }) }
+      : { method: 'GET' }
+  );
+  return utils.resolve(response);
+}
+
+function wireRecentHistoryApi(api: RecentHistoryApi): void {
+  if (api.fetchRecentGroup) return;
+  api.custom('fetchRecentGroup', async ({ ctx, utils, props }) => {
+    const groupId = String(props.groupId || '');
+    const count = capHistoryCount(Number(props.count) || 50);
+    const hosts = recentGroupHosts(
+      api.zpwServiceMap as { group_cloud_message?: string[]; group?: string[] }
+    );
+    const attempts: Array<{ host: string; method: 'GET' | 'POST' }> = [
+      ...hosts.map((host) => ({ host, method: 'GET' as const })),
+      { host: hosts[hosts.length - 1] || HARDCODED_CM_HOST, method: 'POST' },
+    ];
+    let lastErr: unknown;
+    const seen = new Set<string>();
+    for (const attempt of attempts) {
+      const key = `${attempt.method} ${attempt.host}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      try {
+        return await requestRecentGroup(
+          utils as HistoryUtils,
+          ctx,
+          attempt.host,
+          groupId,
+          count,
+          attempt.method
+        );
+      } catch (err: unknown) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        const code =
+          err && typeof err === 'object' && 'code' in err
+            ? (err as { code?: unknown }).code
+            : '';
+        console.error(
+          '[TaskProofWorker] getrecentv2 lỗi:',
+          attempt.method,
+          attempt.host,
+          'count=',
+          count,
+          code || '',
+          msg
+        );
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr || 'getrecentv2 failed'));
+  });
+}
+
+function fetchOldGroupMessagesViaWs(
+  api: API,
+  groupId: string,
+  timeoutMs = 8000
+): Promise<ZcaHistoryPage> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      api.listener.off('old_messages', onOld);
+      fn();
+    };
+    const timer = setTimeout(() => {
+      finish(() => reject(new Error('websocket timeout')));
+    }, timeoutMs);
+    const onOld = (messages: Message[], type: ThreadType) => {
+      if (type !== ThreadType.Group) return;
+      finish(() => {
+        const mapped = messages
+          .filter((m) => String(m.threadId || '') === String(groupId))
+          .map((m) => normalizeZcaInbound(m));
+        resolve({ more: 0, messages: mapped });
+      });
+    };
+    api.listener.on('old_messages', onOld);
+    api.listener.requestOldMessages(ThreadType.Group);
+  });
 }
 
 function credsFromContext(api: { getContext: () => unknown }): ZcaCredentials | null {
@@ -80,6 +312,21 @@ function credsFromContext(api: { getContext: () => unknown }): ZcaCredentials | 
   };
 }
 
+function asIdList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value === 'string' && value.trim()) {
+    const trimmed = value.trim();
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    } catch {
+      // comma / space separated
+    }
+    return trimmed.split(/[,\s]+/).filter(Boolean);
+  }
+  return [];
+}
+
 export function normalizeZcaInbound(message: {
   type: number;
   threadId: string;
@@ -90,6 +337,7 @@ export function normalizeZcaInbound(message: {
     realMsgId?: string;
     uidFrom?: string;
     msgType?: string;
+    ts?: string | number;
   };
 }): ZcaInboundMessage {
   const content = message.data.content;
@@ -105,19 +353,31 @@ export function normalizeZcaInbound(message: {
   }
   const msgType = message.data.msgType || '';
   const isGif = /gif/i.test(contentType) || /gif/i.test(msgType) || /\.gif(\?|#|$)/i.test(href);
-  const hasImage = Boolean((href || thumb) && !isGif);
+  const isPhotoType = /^(chat\.photo)$/i.test(msgType) || /photo/i.test(contentType);
+  const isLinkType =
+    /^(chat\.link|chat\.recommended)$/i.test(msgType) ||
+    /^(recommend|link|share)$/i.test(contentType);
+  const hrefLooksLikeImage = isImageHref(href);
+  const isLinkCard =
+    !isGif &&
+    Boolean(href) &&
+    (isLinkType || (!isPhotoType && !hrefLooksLikeImage && !/^https?:\/\/(?:photo-|fsh-)/i.test(href)));
+  const hasImage = Boolean((href || thumb) && !isGif && !isLinkCard);
   return {
     threadId: message.threadId,
     isGroup: message.type === ThreadType.Group,
     text,
     displayName: message.data.dName || '',
     hasImage,
+    isLinkCard,
+    shareHref: isLinkCard ? href : undefined,
     msgId: message.data.msgId || message.data.realMsgId || '',
     uidFrom: message.data.uidFrom || '',
     href: href || undefined,
     thumb: thumb || undefined,
     contentType: contentType || undefined,
     msgType: msgType || undefined,
+    ts: parseZcaTs(message.data.ts) || undefined,
   };
 }
 
@@ -144,6 +404,7 @@ export function createZcaLoginPort(): ZcaLoginPort {
     async login(credentials: ZcaCredentials): Promise<void> {
       const zalo = new Zalo();
       activeApi = await zalo.login(credentials as Credentials);
+      wireRecentHistoryApi(activeApi);
       wireListener(activeApi);
     },
 
@@ -206,6 +467,7 @@ export function createZcaLoginPort(): ZcaLoginPort {
         })
         .then((api) => {
           activeApi = api;
+          wireRecentHistoryApi(api);
           wireListener(api);
           const fromCtx = credsFromContext(api);
           return gotCreds || fromCtx;
@@ -260,16 +522,24 @@ export function createZcaLoginPort(): ZcaLoginPort {
       const map = res?.gridInfoMap || {};
       const info = map[groupId] || Object.values(map)[0];
       if (!info) return null;
+      const extra = info as typeof info & {
+        memVerList?: unknown;
+        setting?: { lockViewMember?: number };
+      };
       return {
         groupId: info.groupId || groupId,
         name: info.name || '',
-        memberIds: Array.isArray(info.memberIds) ? info.memberIds.map(String) : [],
+        memberIds: asIdList(info.memberIds),
         currentMems: (info.currentMems || []).map((m) => ({
           id: String(m.id),
           dName: m.dName || '',
         })),
         totalMember: Number(info.totalMember || 0),
         hasMoreMember: Boolean(info.hasMoreMember),
+        memVerList: asIdList(extra.memVerList),
+        adminIds: asIdList(info.adminIds),
+        creatorId: info.creatorId ? String(info.creatorId) : '',
+        lockViewMember: Number(extra.setting?.lockViewMember || 0) === 1,
       };
     },
 
@@ -293,6 +563,29 @@ export function createZcaLoginPort(): ZcaLoginPort {
         threadId,
         ThreadType.Group
       );
+    },
+
+    async getGroupChatHistory(groupId: string, count = 50): Promise<ZcaHistoryPage> {
+      if (!activeApi) return { more: 0, messages: [] };
+      // zca-js getGroupChatHistory (/api/group/history) 404 trên Zalo hiện tại.
+      wireRecentHistoryApi(activeApi);
+      const fetchRecent = (activeApi as RecentHistoryApi).fetchRecentGroup;
+      if (!fetchRecent) {
+        throw new Error('fetchRecentGroup is not available');
+      }
+      try {
+        const raw = await fetchRecent({ groupId, count: capHistoryCount(count) });
+        return mapHistoryMessages(groupId, activeApi.getOwnId() || '', raw);
+      } catch (err: unknown) {
+        console.error('[TaskProofWorker] getrecentv2 hết cách HTTP, thử websocket:', formatHistoryApiError(err));
+        try {
+          return await fetchOldGroupMessagesViaWs(activeApi, groupId);
+        } catch (wsErr: unknown) {
+          const wsMsg = wsErr instanceof Error ? wsErr.message : String(wsErr);
+          console.error('[TaskProofWorker] websocket history lỗi:', wsMsg);
+          throw new Error(formatHistoryApiError(err));
+        }
+      }
     },
   };
 }

@@ -21,14 +21,16 @@ import {
   markOverdueTasks,
   shouldKeepWorkerOnline,
 } from '../lifecycle';
-import { getTaskproofSetting } from '../settings';
+import { getTaskproofSetting, setTaskproofSetting } from '../settings';
 import { peekWorkerDatabase } from '../store';
 import { looksLikeTaskproofCommand } from '../commands/parser';
-import { deliverQr, postLoginResult, postLinkResult } from './callbacks';
-import { conflictForPair, shouldOcrZcaGroup, upsertGroupMap } from './groupMap';
+import { historyFetchCount, QUET_DEFAULT_COUNT, ScanHistorySummary } from '../quet';
+import { deliverQr, postLoginResult, postLinkResult, postReportNow, postScanResult } from './callbacks';
+import { conflictForPair, isMappedZcaGroup, shouldOcrZcaGroup, upsertGroupMap } from './groupMap';
 import {
   listCachedMembers,
   listLinkedOpenZcaGroups,
+  observeMember,
   refreshMemberCache,
 } from './memberCache';
 import {
@@ -38,8 +40,26 @@ import {
   ReminderKind,
 } from './reminders';
 import { ingestProofImage, ProofIngestResult } from './proofIngest';
+import { scanGroupHistoryForTask } from './scanHistory';
 import { loadSession, saveSession, ZcaCredentials } from './session';
 import { createZcaLoginPort, ZcaInboundMessage, ZcaLoginPort } from './zcaAdapter';
+
+async function defaultKickReport(taskId: string): Promise<unknown> {
+  try {
+    const { status, json } = await postReportNow(taskId);
+    if (status >= 400) {
+      console.warn(
+        `[TaskProofWorker] report-now ${taskId} HTTP ${status}`,
+        typeof json.error === 'string' ? json.error : ''
+      );
+    }
+    return json;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[TaskProofWorker] report-now ${taskId} lỗi:`, msg);
+    return undefined;
+  }
+}
 
 export type ListenState =
   | 'listening'
@@ -94,6 +114,25 @@ export interface WorkerRuntimeDeps {
   ocrImage?: (image: Buffer) => Promise<string>;
   downloadImage?: (url: string) => Promise<Buffer | null>;
   getProofDir?: () => string;
+  kickReport?: (taskId: string) => Promise<unknown>;
+  postScanResult?: (body: {
+    reply_chat_id: string;
+    short_code: string;
+    count: number;
+    scanned: number;
+    recorded: number;
+    skipped: number;
+    discarded: number;
+    closed: boolean;
+    truncated: boolean;
+    error?: string;
+  }) => Promise<unknown>;
+}
+
+export interface ScanHistoryResult extends ScanHistorySummary {
+  httpStatus: number;
+  state?: ListenState;
+  task_id?: string;
 }
 
 export class WorkerRuntime {
@@ -122,11 +161,25 @@ export class WorkerRuntime {
     ocrImage?: (image: Buffer) => Promise<string>;
     downloadImage?: (url: string) => Promise<Buffer | null>;
     getProofDir: () => string;
+    kickReport: (taskId: string) => Promise<unknown>;
+    postScanResult: (body: {
+      reply_chat_id: string;
+      short_code: string;
+      count: number;
+      scanned: number;
+      recorded: number;
+      skipped: number;
+      discarded: number;
+      closed: boolean;
+      truncated: boolean;
+      error?: string;
+    }) => Promise<unknown>;
   };
 
   private cancelPendingTimer: (() => void) | null = null;
   private cancelDeadlineTimer: (() => void) | null = null;
   private messageLoopStarted = false;
+  private readonly scanInFlight = new Set<string>();
 
   constructor(deps: WorkerRuntimeDeps = {}) {
     this.deps = {
@@ -158,6 +211,8 @@ export class WorkerRuntime {
       ocrImage: deps.ocrImage,
       downloadImage: deps.downloadImage,
       getProofDir: deps.getProofDir ?? getProofDir,
+      kickReport: deps.kickReport ?? defaultKickReport,
+      postScanResult: deps.postScanResult ?? postScanResult,
     };
   }
 
@@ -222,6 +277,7 @@ export class WorkerRuntime {
       try {
         await this.deps.loginPort.login(saved);
         this.loggedIn = true;
+        this.persistOwnUid();
         this.startMessageLoop();
         this.startDeadlineTimer();
         this.refreshStaleLinkedCaches();
@@ -285,6 +341,7 @@ export class WorkerRuntime {
         this.loggedIn = true;
         this.qrInFlight = false;
         this.deleteQrFile(qrPath);
+        this.persistOwnUid();
         this.startMessageLoop();
         this.startDeadlineTimer();
         this.refreshStaleLinkedCaches();
@@ -428,23 +485,36 @@ export class WorkerRuntime {
    * Ảnh / tin zca-js. Nhóm chưa map → không OCR.
    * Cửa /lienket A: tin nhóm không phải lệnh → lấy threadId.
    * Ảnh hợp lệ: enqueue OCR (không chặn listener). Lỗi một ảnh không chặn ảnh sau.
+   * Thẻ xem trước web (chat.link): không OCR, không ghi submission.
    */
   handleZcaMessage(msg: ZcaInboundMessage): {
     linked: boolean;
     ocr: boolean;
     job?: Promise<ProofIngestResult>;
   } {
+    const db = this.db();
+    if (db && msg.isGroup && msg.uidFrom && isMappedZcaGroup(db, msg.threadId)) {
+      observeMember(db, msg.threadId, msg.uidFrom, msg.displayName, this.deps.now());
+    }
+
     let linked = false;
     if (this.hasPendingLink() && msg.isGroup && !isSlashCommand(msg.text)) {
       this.completePendingLink(msg.threadId, msg.displayName);
       linked = true;
     }
 
+    if (looksLikeTaskproofCommand(msg.text)) {
+      return { linked, ocr: false };
+    }
+
+    if (msg.isLinkCard) {
+      return { linked, ocr: false };
+    }
+
     if (!msg.hasImage || !msg.isGroup) {
       return { linked, ocr: false };
     }
 
-    const db = this.db();
     const ocr = Boolean(db && shouldOcrZcaGroup(db, msg.threadId));
     if (!ocr) {
       console.log(
@@ -477,6 +547,7 @@ export class WorkerRuntime {
           downloadImage: this.deps.downloadImage,
           loadSession: () => loadSession(this.deps.getSessionFilePath()),
           proofDir: this.deps.getProofDir(),
+          kickReport: this.deps.kickReport,
         }
       );
       if (result.outcome === 'recorded' && result.closed) {
@@ -487,6 +558,23 @@ export class WorkerRuntime {
       const text = err instanceof Error ? err.message : String(err);
       console.error('[TaskProofWorker] Ingest minh chứng lỗi:', text);
       return { outcome: 'discarded', reason: text };
+    }
+  }
+
+  /** Spec: zca_own_uid có thể tự điền sau getOwnId(). Không ghi đè uid số người dùng đã set. */
+  private persistOwnUid(): void {
+    const db = this.db();
+    const own = (this.deps.loginPort.getOwnId?.() || '').trim();
+    if (!db || !own) return;
+    const current = (getTaskproofSetting('zca_own_uid', db) || '').trim();
+    if (current === own) return;
+    if (/^\d{6,}$/.test(current) && current !== own) return;
+    try {
+      setTaskproofSetting('zca_own_uid', own, db);
+      console.log(`[TaskProofWorker] Ghi zca_own_uid=${own}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[TaskProofWorker] Không ghi được zca_own_uid:', msg);
     }
   }
 
@@ -521,6 +609,232 @@ export class WorkerRuntime {
 
     const result = await this.deliverReminder(taskId, { forceRefresh: true });
     return { ...result, state: result.state ?? listen.state };
+  }
+
+  /**
+   * /quet: validate rồi chạy scan nền. HTTP trả 202 ngay — OCR có thể lâu.
+   */
+  enqueueScanHistory(
+    taskId: string,
+    count: number,
+    replyChatId: string
+  ): { httpStatus: number; state: string; error?: string; count?: number; task_id?: string } {
+    const prepared = this.prepareScanHistory(taskId);
+    if (prepared.httpStatus >= 400) {
+      return {
+        httpStatus: prepared.httpStatus,
+        state: prepared.error || 'error',
+        error: prepared.error,
+        task_id: taskId,
+      };
+    }
+    if (this.scanInFlight.has(taskId)) {
+      return {
+        httpStatus: 409,
+        state: 'already_scanning',
+        error: 'already_scanning',
+        task_id: taskId,
+      };
+    }
+    this.scanInFlight.add(taskId);
+    void this.scanHistory(taskId, count, replyChatId)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[TaskProofWorker] /quet lỗi:', msg);
+        const chatId = replyChatId.trim();
+        if (!chatId) return;
+        return this.deps.postScanResult({
+          reply_chat_id: chatId,
+          short_code: prepared.shortCode || '',
+          count,
+          scanned: 0,
+          recorded: 0,
+          skipped: 0,
+          discarded: 0,
+          closed: false,
+          truncated: false,
+          error: msg,
+        });
+      })
+      .finally(() => {
+        this.scanInFlight.delete(taskId);
+      });
+    return {
+      httpStatus: 202,
+      state: 'scanning',
+      count,
+      task_id: taskId,
+    };
+  }
+
+  /**
+   * Quét lịch sử nhóm cho một task. Test gọi trực tiếp (không qua HTTP 202).
+   */
+  async scanHistory(
+    taskId: string,
+    count: number = QUET_DEFAULT_COUNT,
+    replyChatId?: string
+  ): Promise<ScanHistoryResult> {
+    const fetchCount = historyFetchCount(count);
+    const prepared = this.prepareScanHistory(taskId);
+    if (prepared.httpStatus >= 400 || !prepared.task || !prepared.db) {
+      const failed: ScanHistoryResult = {
+        httpStatus: prepared.httpStatus,
+        shortCode: prepared.shortCode || '',
+        count: fetchCount,
+        scanned: 0,
+        recorded: 0,
+        skipped: 0,
+        discarded: 0,
+        closed: false,
+        truncated: false,
+        error: prepared.error,
+        task_id: taskId,
+        state: prepared.state,
+      };
+      await this.maybePostScanResult(replyChatId || prepared.officialChatId, failed);
+      return failed;
+    }
+
+    let messages: ZcaInboundMessage[] = [];
+    let more = 0;
+    try {
+      const page = await this.deps.loginPort.getGroupChatHistory?.(prepared.task.zca_group_id, fetchCount);
+      messages = page?.messages || [];
+      more = page?.more || 0;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const failed: ScanHistoryResult = {
+        httpStatus: 502,
+        shortCode: prepared.task.short_code,
+        count: fetchCount,
+        scanned: 0,
+        recorded: 0,
+        skipped: 0,
+        discarded: 0,
+        closed: false,
+        truncated: false,
+        error: msg,
+        task_id: taskId,
+      };
+      await this.maybePostScanResult(replyChatId || prepared.task.official_chat_id, failed);
+      return failed;
+    }
+
+    const summary = await scanGroupHistoryForTask(
+      prepared.db,
+      {
+        taskId,
+        shortCode: prepared.task.short_code,
+        zcaGroupId: prepared.task.zca_group_id,
+        count: fetchCount,
+        messages,
+        more,
+      },
+      {
+        now: this.deps.now,
+        ocrImage: this.deps.ocrImage,
+        downloadImage: this.deps.downloadImage,
+        loadSession: () => loadSession(this.deps.getSessionFilePath()),
+        proofDir: this.deps.getProofDir(),
+        kickReport: this.deps.kickReport,
+      }
+    );
+    const result: ScanHistoryResult = { ...summary, httpStatus: 200, task_id: taskId };
+    await this.maybePostScanResult(replyChatId || prepared.task.official_chat_id, result);
+    if (result.closed) this.maybeStopListening();
+    return result;
+  }
+
+  private prepareScanHistory(
+    taskId: string
+  ): {
+    httpStatus: number;
+    error?: string;
+    state?: ListenState;
+    db?: Database.Database;
+    task?: {
+      id: string;
+      short_code: string;
+      zca_group_id: string;
+      official_chat_id: string;
+      status: string;
+    };
+    shortCode?: string;
+    officialChatId?: string;
+  } {
+    const db = this.db();
+    if (!db) {
+      return { httpStatus: 409, error: 'worker database is not open' };
+    }
+    if (!this.loggedIn) {
+      return { httpStatus: 409, error: 'not_logged_in', state: 'login_failed' };
+    }
+    const task = db
+      .prepare(
+        `SELECT id, short_code, zca_group_id, official_chat_id, status FROM tasks WHERE id = ?`
+      )
+      .get(taskId) as
+      | {
+          id: string;
+          short_code: string;
+          zca_group_id: string | null;
+          official_chat_id: string;
+          status: string;
+        }
+      | undefined;
+    if (!task) {
+      return { httpStatus: 404, error: 'task not found' };
+    }
+    if (task.status !== 'collecting' && task.status !== 'overdue') {
+      return { httpStatus: 409, error: `task is ${task.status}`, shortCode: task.short_code };
+    }
+    if (!task.zca_group_id) {
+      return {
+        httpStatus: 409,
+        error: 'unlinked',
+        shortCode: task.short_code,
+        officialChatId: task.official_chat_id,
+      };
+    }
+    return {
+      httpStatus: 200,
+      db,
+      shortCode: task.short_code,
+      officialChatId: task.official_chat_id,
+      task: {
+        id: task.id,
+        short_code: task.short_code,
+        zca_group_id: task.zca_group_id,
+        official_chat_id: task.official_chat_id,
+        status: task.status,
+      },
+    };
+  }
+
+  private async maybePostScanResult(
+    replyChatId: string | undefined,
+    summary: ScanHistoryResult
+  ): Promise<void> {
+    const chatId = (replyChatId || '').trim();
+    if (!chatId) return;
+    try {
+      await this.deps.postScanResult({
+        reply_chat_id: chatId,
+        short_code: summary.shortCode,
+        count: summary.count,
+        scanned: summary.scanned,
+        recorded: summary.recorded,
+        skipped: summary.skipped,
+        discarded: summary.discarded,
+        closed: summary.closed,
+        truncated: summary.truncated,
+        error: summary.error,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[TaskProofWorker] scan-result gửi official bot lỗi:', msg);
+    }
   }
 
   /**
@@ -578,19 +892,19 @@ export class WorkerRuntime {
     });
 
     const members = listCachedMembers(db, task.zca_group_id);
-    const cacheAvailable = members.length > 0;
-    const submitted = (
-      db
-        .prepare(`SELECT uid_from FROM submissions WHERE task_id = ?`)
-        .all(task.id) as Array<{ uid_from: string }>
-    ).map((row) => row.uid_from);
-
     const exclude = collectExcludeUids({
       officialBotUid: getTaskproofSetting('official_bot_uid', db),
       zcaOwnUid: getTaskproofSetting('zca_own_uid', db),
       liveOwnId: this.deps.loginPort.getOwnId?.(),
       extra: getTaskproofSetting('remind_exclude_uids', db),
     });
+    const cacheAvailable = members.some((member) => member.user_id && !exclude.has(member.user_id));
+    const submitted = (
+      db
+        .prepare(`SELECT uid_from FROM submissions WHERE task_id = ?`)
+        .all(task.id) as Array<{ uid_from: string }>
+    ).map((row) => row.uid_from);
+
     const missing = computeMissing(members, submitted, exclude);
     const plan = planReminder({
       missing,
