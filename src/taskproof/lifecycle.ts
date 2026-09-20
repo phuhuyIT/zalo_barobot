@@ -8,6 +8,7 @@
  * overdue không đóng task — chỉ lật status và bắt đầu nhắc.
  * Job stale (official bot): collecting|overdue già hơn TASK_STALE_AFTER_MS → /huy.
  * Quota (Step 9): distinct uid_from ≥ required_count → completed; không xóa proofs.
+ * /dong (Step 10): completed, reported_at NULL — T6 gửi báo cáo rồi mới xóa proofs.
  */
 
 import fs from 'fs';
@@ -148,6 +149,19 @@ export function closeTaskIfQuotaReached(db: Database.Database, taskId: string): 
   if (!task) return false;
   if (task.status !== 'collecting' && task.status !== 'overdue') return false;
   if (countDistinctSubmitters(db, taskId) < task.required_count) return false;
+  const result = db
+    .prepare(
+      `UPDATE tasks SET status = 'completed'
+       WHERE id = ? AND status IN ('collecting', 'overdue')`
+    )
+    .run(taskId);
+  return Number(result.changes || 0) > 0;
+}
+
+/**
+ * /dong: status=completed, để reported_at NULL — T6 gửi báo cáo rồi mới xóa proofs.
+ */
+export function completeTask(db: Database.Database, taskId: string): boolean {
   const result = db
     .prepare(
       `UPDATE tasks SET status = 'completed'
