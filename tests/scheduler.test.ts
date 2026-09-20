@@ -3,6 +3,7 @@ import { runDueJobs } from '../src/channels/scheduler';
 import { ZaloClient } from '../src/core/zaloClient';
 import * as configModule from '../src/config';
 import * as storeModule from '../src/store';
+import { initTaskproofTables } from '../src/taskproof/store';
 import Database from 'better-sqlite3';
 
 describe('Scheduler runDueJobs() reminders and failure alert', () => {
@@ -102,5 +103,33 @@ describe('Scheduler runDueJobs() reminders and failure alert', () => {
 
     expect(result.remindersRun).not.toContain('alert_failed_culi_duty');
     expect(sentMessages.length).toBe(0);
+  });
+
+  it('cancels stale task-proof rows (collecting|overdue older than TASK_STALE_AFTER_MS)', async () => {
+    initTaskproofTables(mockDb);
+    mockDb
+      .prepare(
+        `INSERT INTO tasks (id, short_code, official_chat_id, zca_group_id, report_group_id,
+          link, reference_text, required_count, deadline, status, created_at)
+         VALUES ('old', 'OLD001', 'off', 'zgr-1', 'rep', 'https://x', 'c', 1, 0, 'collecting', 0)`
+      )
+      .run();
+    mockDb
+      .prepare(
+        `INSERT INTO tasks (id, short_code, official_chat_id, report_group_id,
+          link, reference_text, required_count, deadline, status, created_at)
+         VALUES ('fresh', 'NEW001', 'off', 'rep', 'https://x', 'c', 1, 0, 'overdue', ?)`
+      )
+      .run(Date.now());
+
+    const result = await runDueJobs(new Date('2026-09-13T06:00:00+07:00'));
+    expect(result.staleCancelled).toEqual(['OLD001']);
+    const rows = mockDb
+      .prepare(`SELECT short_code, status FROM tasks ORDER BY short_code`)
+      .all() as Array<{ short_code: string; status: string }>;
+    expect(rows).toEqual([
+      { short_code: 'NEW001', status: 'overdue' },
+      { short_code: 'OLD001', status: 'cancelled' },
+    ]);
   });
 });

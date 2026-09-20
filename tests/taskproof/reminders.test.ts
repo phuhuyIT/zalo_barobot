@@ -189,7 +189,7 @@ describe('task-proof reminders (Step 7)', () => {
     });
   });
 
-  describe('shouldAutoRemind (timer is Step 8)', () => {
+  describe('shouldAutoRemind', () => {
     const base = {
       status: 'overdue',
       deadline: 100,

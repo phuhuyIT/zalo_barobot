@@ -14,10 +14,11 @@ import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { getConfig, getRecipientChatId } from '../config';
 import { getEffectiveScheduleConfig, sendSchedule } from '../core';
-import { hasSentToday, saveLastMessage } from '../store';
+import { getDatabase, hasSentToday, saveLastMessage } from '../store';
 import { ZaloClient } from '../core/zaloClient';
 import { formatDateDMY, resolveLookupDate, getVietnamTimeParts } from '../sheets/dateUtils';
 import { runPatrolReminders } from '../patrol';
+import { cancelStaleTasks } from '../taskproof/lifecycle';
 
 export const schedulerRouter = Router();
 
@@ -83,10 +84,12 @@ function subtractMinutesFromTime(timeStr: string, minutesToSubtract: number): st
 export async function runDueJobs(now: Date = new Date()): Promise<{
   schedulesRun: string[];
   remindersRun: string[];
+  staleCancelled: string[];
 }> {
   const config = getConfig();
   const schedulesRun: string[] = [];
   const remindersRun: string[] = [];
+  const staleCancelled: string[] = [];
 
   const vn = getVietnamTimeParts(now);
   const adminChatId = getRecipientChatId('admin', config);
@@ -210,7 +213,19 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
     console.error(`[Scheduler] ❌ Lỗi thực thi runPatrolReminders:`, err.message);
   }
 
-  return { schedulesRun, remindersRun };
+  // 4. Task-proof stale-cancel: collecting|overdue già hơn TASK_STALE_AFTER_MS → /huy
+  try {
+    const cancelled = cancelStaleTasks(getDatabase(), now.getTime());
+    for (const row of cancelled) {
+      staleCancelled.push(row.short_code);
+      console.log(`[Scheduler] Task-proof stale → cancelled: ${row.short_code}`);
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[Scheduler] ❌ Lỗi stale-cancel task-proof:', msg);
+  }
+
+  return { schedulesRun, remindersRun, staleCancelled };
 }
 
 /**

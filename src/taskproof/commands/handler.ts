@@ -4,12 +4,14 @@
  * Official bot nhận lệnh task-proof.
  * /lienket gọi worker (Section 8.10). Webhook không chờ QR.
  * /nhac: exact short_code → ensure-listening → remind (Section 8.4).
- * /task /tasks /dong /huy bước này vẫn parse-ack (insert = bước sau).
+ * /huy: exact short_code → cancelled, không report, xóa proofs (Section 8.11).
+ * /task /tasks /dong bước này vẫn parse-ack (insert T1 / report T6 = bước sau).
  */
 
 import { ZaloClient } from '../../core/zaloClient';
 import { getVietnamTimeParts } from '../../sheets/dateUtils';
 import { getDatabase } from '../../store';
+import { cancelTask } from '../lifecycle';
 import { postEnsureListening, postLinkGroup, postRemind, EnsureListeningResponse } from '../workerClient';
 import { parseTaskproofCommand } from './parser';
 import { redactSecrets } from './payload';
@@ -25,6 +27,7 @@ export interface TaskproofCommandDeps {
   ) => Promise<{ status: number; json: Record<string, unknown> }>;
   remind?: (taskId: string) => Promise<{ status: number; json: Record<string, unknown> }>;
   lookupTask?: (shortCode: string) => TaskShortCodeRow | null;
+  cancelTask?: (taskId: string) => boolean;
 }
 
 function defaultSendMessage(chatId: string, text: string): Promise<unknown> {
@@ -34,6 +37,10 @@ function defaultSendMessage(chatId: string, text: string): Promise<unknown> {
 
 function defaultLookupTask(shortCode: string): TaskShortCodeRow | null {
   return getTaskByExactShortCode(getDatabase(), shortCode);
+}
+
+function defaultCancelTask(taskId: string): boolean {
+  return cancelTask(getDatabase(), taskId);
 }
 
 function formatVnDeadline(utcMs: number): string {
@@ -257,6 +264,39 @@ async function handleNhac(
   await deps.sendMessage(inbound.chatId, remindReply(code, result.status, result.json));
 }
 
+async function handleHuy(
+  inbound: WebhookInbound,
+  parsed: { shortCode: string },
+  deps: TaskproofCommandDeps
+): Promise<void> {
+  const lookupTask = deps.lookupTask ?? defaultLookupTask;
+  const doCancel = deps.cancelTask ?? defaultCancelTask;
+  const code = parsed.shortCode;
+
+  const task = lookupTask(code);
+  if (!task) {
+    await deps.sendMessage(
+      inbound.chatId,
+      `Không tìm thấy mã ${code}. Mã phải đúng 6 ký tự [A-Z0-9], không dùng UUID.`
+    );
+    return;
+  }
+  if (task.status !== 'collecting' && task.status !== 'overdue') {
+    await deps.sendMessage(inbound.chatId, `Task ${code} đã đóng hoặc hủy trước đó.`);
+    return;
+  }
+
+  const ok = doCancel(task.id);
+  if (!ok) {
+    await deps.sendMessage(inbound.chatId, `Không hủy được ${code}.`);
+    return;
+  }
+  await deps.sendMessage(
+    inbound.chatId,
+    `Đã hủy task ${code}. Không gửi báo cáo. Worker sẽ dừng nếu không còn task liên kết mở.`
+  );
+}
+
 /**
  * @returns true nếu đây là lệnh task-proof (kể cả khi parse lỗi) — webhook không đi tiếp /gui.
  */
@@ -297,6 +337,12 @@ export async function handleTaskproofCommand(
   if (parsed.ok && parsed.command === 'nhac') {
     if (!inbound.chatId) return true;
     await handleNhac(inbound, parsed, deps);
+    return true;
+  }
+
+  if (parsed.ok && parsed.command === 'huy') {
+    if (!inbound.chatId) return true;
+    await handleHuy(inbound, parsed, deps);
     return true;
   }
 

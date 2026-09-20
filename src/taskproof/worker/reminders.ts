@@ -5,13 +5,16 @@
  *   0 missing → không gửi
  *   ít người + text ngắn → mention từng uid
  *   quá MAX_MENTIONS_PER_MESSAGE hoặc quá MAX_REMINDER_TEXT_LEN → một @all (uid -1)
- * Không tách nhiều tin mention. Timer tự động = Step 8.
+ * Không tách nhiều tin mention. Timer tự động chạy khi worker đang listen.
  *
  * @all vs từng người: mention từng uid khi vừa một tin; @all khi không vừa.
  */
 
+import { shouldAutoRemind } from '../lifecycle';
 import { CachedMember } from './memberCache';
 import { ZcaMention } from './zcaAdapter';
+
+export { shouldAutoRemind };
 
 export const ALL_MENTION_UID = '-1';
 
@@ -130,23 +133,3 @@ export function planReminder(opts: {
   };
 }
 
-/**
- * Điều kiện nhắc tự động (timer gắn ở Step 8). overdue không đóng task.
- */
-export function shouldAutoRemind(opts: {
-  status: string;
-  deadline: number;
-  remindCount: number;
-  remindedAt: number | null;
-  now: number;
-  maxAutoReminders: number;
-  reminderIntervalMs: number;
-}): boolean {
-  if (opts.status !== 'collecting' && opts.status !== 'overdue') return false;
-  if (opts.now <= opts.deadline) return false;
-  if (opts.remindCount >= opts.maxAutoReminders) return false;
-  if (opts.remindedAt !== null && opts.now - opts.remindedAt < opts.reminderIntervalMs) {
-    return false;
-  }
-  return true;
-}

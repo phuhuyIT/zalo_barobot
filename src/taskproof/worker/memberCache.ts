@@ -118,7 +118,9 @@ export interface RefreshMemberCacheResult {
 }
 
 /**
- * /nhac: forceRefresh = true. Listen: chỉ khi cache trống / quá hạn.
+ * /nhac: forceRefresh = true.
+ * Listen: chỉ khi cache trống / quá hạn.
+ * Nhắc tự động: onlyWhenEmpty — không gọi getGroupInfo nếu đã có cache.
  */
 export async function refreshMemberCache(opts: {
   db: Database.Database;
@@ -126,11 +128,16 @@ export async function refreshMemberCache(opts: {
   zcaGroupId: string;
   now: number;
   forceRefresh: boolean;
+  onlyWhenEmpty?: boolean;
   maxAgeMs?: number;
 }): Promise<RefreshMemberCacheResult> {
   const { db, port, zcaGroupId, now, forceRefresh } = opts;
   const maxAgeMs = opts.maxAgeMs ?? getTaskproofSetting('member_cache_max_age_ms', db);
   const existing = listCachedMembers(db, zcaGroupId);
+
+  if (!forceRefresh && opts.onlyWhenEmpty && existing.length > 0) {
+    return { ok: true, usedStale: false, memberCount: existing.length };
+  }
 
   if (!forceRefresh && !isMemberCacheStale(db, zcaGroupId, now, maxAgeMs)) {
     return { ok: true, usedStale: false, memberCount: existing.length };
