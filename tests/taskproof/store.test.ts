@@ -16,6 +16,7 @@ import {
   TASKPROOF_SETTING_DEFAULTS,
   getAllTaskproofSettings,
   getTaskproofSetting,
+  seedTaskproofSettings,
   setTaskproofSetting,
 } from '../../src/taskproof/settings';
 
@@ -48,7 +49,13 @@ describe('task-proof schema (Step 2)', () => {
         name: string;
       }>
     ).map((row) => row.name);
-    expect(indexes).toEqual(expect.arrayContaining(['idx_tasks_short_code', 'idx_tasks_open']));
+    expect(indexes).toEqual(
+      expect.arrayContaining(['idx_tasks_short_code', 'idx_tasks_open', 'idx_task_group_picks_admin'])
+    );
+    const tables = (
+      db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    expect(tables).toContain('task_group_picks');
   });
 
   it('does not touch PRAGMA user_version', () => {
@@ -111,7 +118,8 @@ describe('task-proof settings reader (Step 2)', () => {
 
   it('seeds in-code defaults when rows are missing', () => {
     expect(getTaskproofSetting('ocr_match_threshold', db)).toBe(0.5);
-    expect(getTaskproofSetting('default_required_count', db)).toBe(1);
+    expect(getTaskproofSetting('default_required_count', db)).toBe(12);
+    expect(getTaskproofSetting('default_deadline_offset_ms', db)).toBe(3_600_000);
     expect(getTaskproofSetting('link_pending_ms', db)).toBe(120_000);
     expect(getTaskproofSetting('remind_exclude_uids', db)).toEqual([]);
     expect(getAllTaskproofSettings(db)).toMatchObject(TASKPROOF_SETTING_DEFAULTS);
@@ -125,7 +133,17 @@ describe('task-proof settings reader (Step 2)', () => {
     expect(getTaskproofSetting('ocr_match_threshold', db)).toBe(0.8);
     expect(getTaskproofSetting('max_mentions_per_message', db)).toBe(12);
     expect(getTaskproofSetting('remind_exclude_uids', db)).toEqual(['111', '222']);
-    expect(getTaskproofSetting('default_required_count', db)).toBe(1);
+    expect(getTaskproofSetting('default_required_count', db)).toBe(12);
+  });
+
+  it('bumps leftover default_required_count 1 to 12 and keeps other values', () => {
+    setTaskproofSetting('default_required_count', 1, db);
+    seedTaskproofSettings(db);
+    expect(getTaskproofSetting('default_required_count', db)).toBe(12);
+
+    setTaskproofSetting('default_required_count', 5, db);
+    seedTaskproofSettings(db);
+    expect(getTaskproofSetting('default_required_count', db)).toBe(5);
   });
 
   it('falls back to default when stored JSON is the wrong type', () => {

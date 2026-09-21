@@ -82,6 +82,20 @@ function groupText(text: string) {
   return inbound;
 }
 
+const ADMIN = 'admin_dm';
+
+function adminText(text: string) {
+  const inbound = extractWebhookInbound({
+    message: {
+      text,
+      chat: { id: ADMIN, chat_type: 'PRIVATE' },
+      from: { id: ADMIN },
+    },
+  });
+  if (!inbound) throw new Error('expected inbound');
+  return inbound;
+}
+
 describe('task-proof /quet history scan', () => {
   const dirs: string[] = [];
 
@@ -303,8 +317,9 @@ describe('task-proof /quet history scan', () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const ensureListening = vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} });
       const scanHistory = vi.fn().mockResolvedValue({ status: 202, json: { state: 'scanning' } });
-      const handled = await handleTaskproofCommand(groupText('/quet abc123 20'), {
+      const handled = await handleTaskproofCommand(adminText('/quet abc123 20'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         ensureListening,
         scanHistory,
         lookupTask: (code) =>
@@ -314,15 +329,16 @@ describe('task-proof /quet history scan', () => {
       });
       expect(handled).toBe(true);
       expect(ensureListening).toHaveBeenCalledOnce();
-      expect(scanHistory).toHaveBeenCalledWith('task-1', 20, 'off_group');
+      expect(scanHistory).toHaveBeenCalledWith('task-1', 20, ADMIN);
       expect(sendMessage.mock.calls[0][1]).toMatch(/Đang quét 20 tin/);
     });
 
     it('does not call worker when the worker is down', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const scanHistory = vi.fn();
-      await handleTaskproofCommand(groupText('/quet ABC123'), {
+      await handleTaskproofCommand(adminText('/quet ABC123'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         scanHistory,
         ensureListening: async () => {
           throw new Error('ECONNREFUSED');

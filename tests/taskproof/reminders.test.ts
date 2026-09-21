@@ -40,6 +40,20 @@ function inboundFrom(body: unknown) {
   return inbound;
 }
 
+const ADMIN = 'admin_dm';
+
+function adminText(text: string) {
+  const inbound = extractWebhookInbound({
+    message: {
+      text,
+      chat: { id: ADMIN, chat_type: 'PRIVATE' },
+      from: { id: ADMIN },
+    },
+  });
+  if (!inbound) throw new Error('expected inbound');
+  return inbound;
+}
+
 function groupText(text: string, chatId = 'off_group') {
   return inboundFrom({
     message: {
@@ -520,8 +534,9 @@ describe('task-proof reminders (Step 7)', () => {
         status: 200,
         json: { reminded: true, kind: 'mentions', missing_count: 2 },
       });
-      const handled = await handleTaskproofCommand(groupText('/nhac abc123'), {
+      const handled = await handleTaskproofCommand(adminText('/nhac abc123'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         ensureListening,
         remind,
         lookupTask: (code) =>
@@ -538,8 +553,9 @@ describe('task-proof reminders (Step 7)', () => {
     it('does not call worker for a missing or UUID-like code', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const remind = vi.fn();
-      await handleTaskproofCommand(groupText('/nhac ABC123'), {
+      await handleTaskproofCommand(adminText('/nhac ABC123'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         remind,
         lookupTask: () => null,
       });
@@ -548,8 +564,8 @@ describe('task-proof reminders (Step 7)', () => {
 
       sendMessage.mockClear();
       const uuidHandled = await handleTaskproofCommand(
-        groupText('/nhac a1b2c3d4-e5f6-7890-abcd-ef1234567890'),
-        { sendMessage, remind }
+        adminText('/nhac a1b2c3d4-e5f6-7890-abcd-ef1234567890'),
+        { sendMessage, remind, getAdminChatId: () => ADMIN }
       );
       expect(uuidHandled).toBe(true);
       expect(remind).not.toHaveBeenCalled();
@@ -559,8 +575,9 @@ describe('task-proof reminders (Step 7)', () => {
     it('asks for /lienket when the task has no zca_group_id', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const remind = vi.fn();
-      await handleTaskproofCommand(groupText('/nhac ABC123'), {
+      await handleTaskproofCommand(adminText('/nhac ABC123'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         remind,
         lookupTask: () => ({
           id: 't1',
@@ -582,8 +599,9 @@ describe('task-proof reminders (Step 7)', () => {
 
     it('does not fail silently when the worker is down', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
-      await handleTaskproofCommand(groupText('/nhac ABC123'), {
+      await handleTaskproofCommand(adminText('/nhac ABC123'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         ensureListening: async () => {
           throw new Error('ECONNREFUSED');
         },

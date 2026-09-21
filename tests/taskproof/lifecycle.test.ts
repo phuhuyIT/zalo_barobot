@@ -76,6 +76,20 @@ function groupText(text: string, chatId = 'off_group') {
   return inbound;
 }
 
+const ADMIN = 'admin_dm';
+
+function adminText(text: string) {
+  const inbound = extractWebhookInbound({
+    message: {
+      text,
+      chat: { id: ADMIN, chat_type: 'PRIVATE' },
+      from: { id: ADMIN },
+    },
+  });
+  if (!inbound) throw new Error('expected inbound');
+  return inbound;
+}
+
 function mockPort(overrides: Partial<ZcaLoginPort> = {}): ZcaLoginPort {
   return {
     login: async () => undefined,
@@ -406,8 +420,9 @@ describe('task-proof listen/stop + auto-remind + stale-cancel (Step 8)', () => {
     it('cancels by exact short_code and does not report', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const doCancel = vi.fn().mockReturnValue(true);
-      const handled = await handleTaskproofCommand(groupText('/huy abc123'), {
+      const handled = await handleTaskproofCommand(adminText('/huy abc123'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         lookupTask: (code) =>
           code === 'ABC123'
             ? { id: 'task-1', short_code: 'ABC123', status: 'collecting', zca_group_id: 'zgr-1' }
@@ -423,8 +438,9 @@ describe('task-proof listen/stop + auto-remind + stale-cancel (Step 8)', () => {
     it('does not cancel a missing or UUID-like code', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const doCancel = vi.fn();
-      await handleTaskproofCommand(groupText('/huy ABC123'), {
+      await handleTaskproofCommand(adminText('/huy ABC123'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         lookupTask: () => null,
         cancelTask: doCancel,
       });
@@ -432,8 +448,9 @@ describe('task-proof listen/stop + auto-remind + stale-cancel (Step 8)', () => {
       expect(sendMessage.mock.calls[0][1]).toMatch(/Không tìm thấy mã ABC123/);
 
       sendMessage.mockClear();
-      await handleTaskproofCommand(groupText('/huy a1b2c3d4-e5f6-7890-abcd-ef1234567890'), {
+      await handleTaskproofCommand(adminText('/huy a1b2c3d4-e5f6-7890-abcd-ef1234567890'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         cancelTask: doCancel,
       });
       expect(doCancel).not.toHaveBeenCalled();
@@ -462,8 +479,9 @@ describe('task-proof listen/stop + auto-remind + stale-cancel (Step 8)', () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const doComplete = vi.fn().mockReturnValue(true);
       const kickReport = vi.fn().mockResolvedValue([{ reported: true }]);
-      await handleTaskproofCommand(groupText('/dong abc123'), {
+      await handleTaskproofCommand(adminText('/dong abc123'), {
         sendMessage,
+        getAdminChatId: () => ADMIN,
         lookupTask: (code) =>
           code === 'ABC123'
             ? { id: 'task-1', short_code: 'ABC123', status: 'collecting', zca_group_id: 'zgr-1' }

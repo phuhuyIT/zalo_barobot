@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
-import { configureSqliteConnection, initTables } from '../../src/store';
+import { configureSqliteConnection, initTables, setDatabase } from '../../src/store';
 import { initTaskproofTables } from '../../src/taskproof/store';
 import {
   collectHttpUrls,
@@ -8,14 +8,21 @@ import {
   formatParseReply,
   generateShortCode,
   getTaskByExactShortCode,
+  GROUP_COMMAND_HINT,
   handleTaskproofCommand,
+  NO_LINKED_GROUPS_HINT,
   PREVIEW_CARD_HINT,
+  PRIVATE_NOT_ADMIN_HINT,
   resetPreviewHintThrottle,
   isExactShortCode,
   looksLikeTaskproofCommand,
   parseDeadlineToUtcMs,
   parseTaskproofCommand,
   redactSecrets,
+  TASK_NOT_FACEBOOK,
+  TASK_USAGE,
+  UNFURL_FAIL_REPLY,
+  UNFURL_PENDING_REPLY,
 } from '../../src/taskproof/commands';
 import { WebhookInbound } from '../../src/taskproof/commands/types';
 
@@ -35,6 +42,38 @@ function textMessage(text: string, extra: Record<string, unknown> = {}): Webhook
       ...extra,
     },
   });
+}
+
+const ADMIN = 'admin_dm';
+
+function adminMessage(text: string, extra: Record<string, unknown> = {}): WebhookInbound {
+  return inboundFrom({
+    message: {
+      text,
+      chat: { id: ADMIN, chat_type: 'PRIVATE' },
+      from: { id: ADMIN },
+      message_id: 'm1',
+      ...extra,
+    },
+  });
+}
+
+const ONE_GROUP = [
+  { official_chat_id: 'group_task', zca_group_id: 'zca-1', display_name: 'Phú Huy' },
+];
+
+function createdTask(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'uuid-1',
+    short_code: 'ABC123',
+    official_chat_id: 'group_task',
+    zca_group_id: 'zca-1',
+    report_group_id: 'rep',
+    required_count: 1,
+    deadline: Date.UTC(2026, 8, 19, 11, 0, 0),
+    status: 'collecting' as const,
+    ...overrides,
+  };
 }
 
 const TASK_BASE = `/task
@@ -281,16 +320,63 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       }
     });
 
-    it('requires Caption and HanChot', () => {
-      const missingCaption = parseTaskproofCommand(
-        textMessage('/task Link: https://example.com/x HanChot: 19/09/2026 18:00')
-      );
-      expect(missingCaption.ok).toBe(false);
+    it('rejects /task with no URL and no labeled fields', () => {
+      const parsed = parseTaskproofCommand(textMessage('/task'));
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok && parsed.found) {
+        expect(parsed.error).toBe(TASK_USAGE);
+      }
+    });
 
-      const missingDeadline = parseTaskproofCommand(
-        textMessage('/task Link: https://example.com/x Caption: hi')
+    it('rejects a non-Facebook URL without Caption and does not unfurl', () => {
+      const parsed = parseTaskproofCommand(textMessage('/task https://example.com/x'));
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok && parsed.found) {
+        expect(parsed.error).toBe(TASK_NOT_FACEBOOK);
+      }
+    });
+
+    it('accepts /task <facebook_url> for unfurl without Caption or HanChot', () => {
+      const parsed = parseTaskproofCommand(
+        textMessage('/task xem giúp https://www.facebook.com/share/v/1FS7f9MknZ/ gấp')
       );
-      expect(missingDeadline.ok).toBe(false);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok && parsed.command === 'task') {
+        expect(parsed.fields.link).toBe('https://www.facebook.com/share/v/1FS7f9MknZ/');
+        expect(parsed.fields.caption).toBe('');
+        expect(parsed.fields.needsUnfurl).toBe(true);
+        expect(parsed.fields.deadlineUtcMs).toBeNull();
+        expect(parsed.fields.requiredCount).toBeNull();
+      }
+    });
+
+    it('does not use Zalo card caption as reference_text when unfurling', () => {
+      const inbound = inboundFrom({
+        message: {
+          text: '/task https://www.facebook.com/page/posts/123456789',
+          caption: 'Zalo preview title that must not become OCR caption',
+          chat: { id: ADMIN, chat_type: 'PRIVATE' },
+          from: { id: ADMIN },
+        },
+      });
+      const parsed = parseTaskproofCommand(inbound);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok && parsed.command === 'task') {
+        expect(parsed.fields.needsUnfurl).toBe(true);
+        expect(parsed.fields.caption).toBe('');
+      }
+    });
+
+    it('keeps typed Caption and defaults HanChot when omitted', () => {
+      const parsed = parseTaskproofCommand(
+        textMessage('/task Link: https://example.com/x Caption: hi typed by hand')
+      );
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok && parsed.command === 'task') {
+        expect(parsed.fields.caption).toBe('hi typed by hand');
+        expect(parsed.fields.needsUnfurl).toBe(false);
+        expect(parsed.fields.deadlineUtcMs).toBeNull();
+      }
     });
 
     it('does not treat /gui or tuantra as task-proof', () => {
@@ -426,8 +512,20 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
   });
 
   describe('handler routing', () => {
+    let db: Database.Database;
+
     beforeEach(() => {
       resetPreviewHintThrottle();
+      db = new Database(':memory:');
+      configureSqliteConnection(db);
+      initTables(db);
+      initTaskproofTables(db);
+      setDatabase(db);
+    });
+
+    afterEach(() => {
+      setDatabase(null);
+      db.close();
     });
 
     it('hints to resend /task as plain text when Zalo sends an empty preview card', async () => {
@@ -456,9 +554,27 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       expect(sendMessage).not.toHaveBeenCalled();
     });
 
-    it('does not hint on unsupported private chats or on /gui', async () => {
+    it('hints on admin 1-1 preview cards and ignores stranger DMs and /gui', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
-      const priv = inboundFrom({
+      const adminCard = inboundFrom({
+        event_name: 'message.unsupported.received',
+        message: {
+          text: '',
+          chat: { id: ADMIN, chat_type: 'PRIVATE' },
+          from: { id: ADMIN },
+        },
+      });
+      expect(
+        await handleTaskproofCommand(adminCard, {
+          sendMessage,
+          getAdminChatId: () => ADMIN,
+          now: () => 1_000,
+        })
+      ).toBe(true);
+      expect(sendMessage).toHaveBeenCalledWith(ADMIN, PREVIEW_CARD_HINT);
+
+      sendMessage.mockClear();
+      const stranger = inboundFrom({
         event_name: 'message.unsupported.received',
         message: {
           text: '',
@@ -466,36 +582,35 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
           from: { id: 'c9ee' },
         },
       });
-      expect(await handleTaskproofCommand(priv, { sendMessage })).toBe(false);
+      expect(await handleTaskproofCommand(stranger, { sendMessage, getAdminChatId: () => ADMIN })).toBe(
+        false
+      );
       expect(await handleTaskproofCommand(textMessage('/gui'), { sendMessage })).toBe(false);
       expect(sendMessage).not.toHaveBeenCalled();
     });
 
-    it('inserts /task, replies with short_code, and does not swallow /gui', async () => {
+    it('inserts /task from admin 1-1 into the only linked group and posts the link there', async () => {
       const sendMessage = vi.fn().mockResolvedValue({ messageId: 'm' });
-      const insertTask = vi.fn().mockReturnValue({
-        id: 'uuid-1',
-        short_code: 'ABC123',
-        official_chat_id: 'group_task',
-        zca_group_id: 'zca-1',
-        report_group_id: 'rep',
-        required_count: 1,
-        deadline: 1,
-        status: 'collecting',
-      });
+      const insertTask = vi.fn().mockReturnValue(createdTask());
       const ensureListening = vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} });
-      const handledTask = await handleTaskproofCommand(textMessage(TASK_BASE), {
+      const handledTask = await handleTaskproofCommand(adminMessage(TASK_BASE), {
         sendMessage,
         insertTask,
         ensureListening,
+        getAdminChatId: () => ADMIN,
+        listLinkedGroups: () => ONE_GROUP,
       });
       expect(handledTask).toBe(true);
       expect(insertTask).toHaveBeenCalledOnce();
+      expect(insertTask.mock.calls[0][0].officialChatId).toBe('group_task');
       expect(ensureListening).toHaveBeenCalledWith('uuid-1');
-      expect(sendMessage).toHaveBeenCalledOnce();
-      expect(sendMessage.mock.calls[0][1]).toContain('Đã tạo task ABC123');
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage.mock.calls[0][0]).toBe('group_task');
+      expect(sendMessage.mock.calls[0][1]).toContain('Nhiệm vụ ABC123');
       expect(sendMessage.mock.calls[0][1]).toContain('https://example.com/post');
-      expect(sendMessage.mock.calls[0][1]).not.toMatch(/chưa liên kết/);
+      expect(sendMessage.mock.calls[1][0]).toBe(ADMIN);
+      expect(sendMessage.mock.calls[1][1]).toContain('Đã tạo task ABC123');
+      expect(sendMessage.mock.calls[1][1]).toContain('Phú Huy');
 
       sendMessage.mockClear();
       const handledGui = await handleTaskproofCommand(textMessage('/gui'), { sendMessage });
@@ -503,57 +618,45 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       expect(sendMessage).not.toHaveBeenCalled();
     });
 
-    it('tells the manager to /lienket when the group is unmapped', async () => {
+    it('asks /lienket when no group is linked yet and does not insert', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
-      await handleTaskproofCommand(textMessage(TASK_BASE), {
+      const insertTask = vi.fn();
+      await handleTaskproofCommand(adminMessage(TASK_BASE), {
         sendMessage,
-        insertTask: () => ({
-          id: 'uuid-2',
-          short_code: 'UNL001',
-          official_chat_id: 'group_task',
-          zca_group_id: null,
-          report_group_id: '',
-          required_count: 1,
-          deadline: 1,
-          status: 'collecting',
-        }),
-        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+        insertTask,
+        getAdminChatId: () => ADMIN,
+        listLinkedGroups: () => [],
       });
-      expect(sendMessage.mock.calls[0][1]).toMatch(/chưa liên kết/);
-      expect(sendMessage.mock.calls[0][1]).toMatch(/\/lienket/);
+      expect(insertTask).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls[0][1]).toBe(NO_LINKED_GROUPS_HINT);
     });
 
     it('keeps the /task row and does not fail silently when the worker is down', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
-      const insertTask = vi.fn().mockReturnValue({
-        id: 'uuid-3',
-        short_code: 'DWN001',
-        official_chat_id: 'group_task',
-        zca_group_id: 'zca-1',
-        report_group_id: 'rep',
-        required_count: 1,
-        deadline: 1,
-        status: 'collecting',
-      });
-      await handleTaskproofCommand(textMessage(TASK_BASE), {
+      const insertTask = vi.fn().mockReturnValue(createdTask({ id: 'uuid-3', short_code: 'DWN001' }));
+      await handleTaskproofCommand(adminMessage(TASK_BASE), {
         sendMessage,
         insertTask,
+        getAdminChatId: () => ADMIN,
+        listLinkedGroups: () => ONE_GROUP,
         ensureListening: async () => {
           throw new Error('fetch failed');
         },
       });
       expect(insertTask).toHaveBeenCalledOnce();
-      expect(sendMessage.mock.calls[0][1]).toContain('Đã tạo task DWN001');
-      expect(sendMessage.mock.calls[0][1]).toMatch(/Worker không chạy/);
-      expect(sendMessage.mock.calls[0][1]).toMatch(/\/gui vẫn dùng được/);
+      const adminReply = sendMessage.mock.calls.find((call) => call[0] === ADMIN)?.[1] as string;
+      expect(adminReply).toContain('Đã tạo task DWN001');
+      expect(adminReply).toMatch(/Worker không chạy/);
+      expect(adminReply).toMatch(/\/gui vẫn dùng được/);
     });
 
-    it('lists /tasks from DB and does not wake the worker', async () => {
+    it('lists /tasks from DB across groups and does not wake the worker', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const ensureListening = vi.fn();
-      const handled = await handleTaskproofCommand(textMessage('/tasks'), {
+      const handled = await handleTaskproofCommand(adminMessage('/tasks'), {
         sendMessage,
         ensureListening,
+        getAdminChatId: () => ADMIN,
         listTasks: () => [
           {
             id: 't1',
@@ -571,28 +674,124 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
             reminded_at: null,
             reported_at: null,
             submitted_count: 1,
+            group_display_name: 'Phú Huy',
           },
         ],
       });
       expect(handled).toBe(true);
       expect(ensureListening).not.toHaveBeenCalled();
       expect(sendMessage.mock.calls[0][1]).toContain('ABC123');
+      expect(sendMessage.mock.calls[0][1]).toContain('Phú Huy');
       expect(sendMessage.mock.calls[0][1]).toContain('1/2');
       expect(sendMessage.mock.calls[0][1]).toMatch(/chưa liên kết nhóm/);
     });
 
-    it('rejects private-chat /task', async () => {
+    it('redirects group /task to 1-1 and rejects stranger DMs', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
-      const inbound = inboundFrom({
+      const insertTask = vi.fn();
+      const groupHandled = await handleTaskproofCommand(textMessage(TASK_BASE), {
+        sendMessage,
+        insertTask,
+        getAdminChatId: () => ADMIN,
+      });
+      expect(groupHandled).toBe(true);
+      expect(insertTask).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls[0][1]).toBe(GROUP_COMMAND_HINT);
+
+      sendMessage.mockClear();
+      const stranger = inboundFrom({
         message: {
           text: TASK_BASE,
           chat: { id: 'user_private', chat_type: 'PRIVATE' },
           from: { id: 'user_private' },
         },
       });
-      const handled = await handleTaskproofCommand(inbound, { sendMessage });
+      const handled = await handleTaskproofCommand(stranger, {
+        sendMessage,
+        insertTask,
+        getAdminChatId: () => ADMIN,
+      });
       expect(handled).toBe(true);
-      expect(sendMessage.mock.calls[0][1]).toMatch(/nhóm nhiệm vụ/);
+      expect(insertTask).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls[0][1]).toBe(PRIVATE_NOT_ADMIN_HINT);
+    });
+
+    it('sends picker links when several groups are linked, then binds on reply', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const insertTask = vi.fn().mockReturnValue(
+        createdTask({ official_chat_id: 'group_b', zca_group_id: 'zca-b' })
+      );
+      const groups = [
+        { official_chat_id: 'group_a', zca_group_id: 'zca-a', display_name: 'Nhóm A' },
+        { official_chat_id: 'group_b', zca_group_id: 'zca-b', display_name: 'Nhóm B' },
+      ];
+      await handleTaskproofCommand(adminMessage(TASK_BASE), {
+        sendMessage,
+        insertTask,
+        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+        getAdminChatId: () => ADMIN,
+        listLinkedGroups: () => groups,
+        publicBaseUrl: () => 'https://public.example',
+        now: () => 1_000,
+      });
+      expect(insertTask).not.toHaveBeenCalled();
+      const picker = sendMessage.mock.calls[0][1] as string;
+      expect(picker).toContain('Nhóm A');
+      expect(picker).toContain('Nhóm B');
+      expect(picker).toMatch(/https:\/\/public\.example\/taskproof\/pick\/[a-f0-9]+\/1/);
+      expect(picker).toMatch(/https:\/\/public\.example\/taskproof\/pick\/[a-f0-9]+\/2/);
+
+      sendMessage.mockClear();
+      const replied = await handleTaskproofCommand(adminMessage('2'), {
+        sendMessage,
+        insertTask,
+        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+        getAdminChatId: () => ADMIN,
+        now: () => 2_000,
+      });
+      expect(replied).toBe(true);
+      expect(insertTask).toHaveBeenCalledOnce();
+      expect(insertTask.mock.calls[0][0].officialChatId).toBe('group_b');
+      expect(sendMessage.mock.calls[0][0]).toBe('group_b');
+      expect(sendMessage.mock.calls[0][1]).toContain('https://example.com/post');
+    });
+
+    it('unfurls /task <facebook_url> then inserts; fail does not insert', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const insertTask = vi.fn().mockReturnValue(createdTask({ required_count: 12 }));
+      const fb = 'https://www.facebook.com/share/v/1FS7f9MknZ/';
+      await handleTaskproofCommand(adminMessage(`/task ${fb}`), {
+        sendMessage,
+        insertTask,
+        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+        getAdminChatId: () => ADMIN,
+        listLinkedGroups: () => ONE_GROUP,
+        enqueueUnfurl: (job) => job(),
+        unfurlFacebook: async () => ({
+          ok: true,
+          caption: 'Lydia Hallie ky su Anthropic chia se ve AI Agent',
+          canonicalUrl: 'https://www.facebook.com/page/posts/99',
+          source: 'og:description',
+        }),
+      });
+      expect(sendMessage.mock.calls[0][1]).toBe(UNFURL_PENDING_REPLY);
+      expect(insertTask).toHaveBeenCalledOnce();
+      expect(insertTask.mock.calls[0][0].referenceText).toMatch(/Lydia Hallie/);
+      expect(insertTask.mock.calls[0][0].link).toBe('https://www.facebook.com/page/posts/99');
+      expect(insertTask.mock.calls[0][0].officialChatId).toBe('group_task');
+
+      sendMessage.mockClear();
+      insertTask.mockClear();
+      await handleTaskproofCommand(adminMessage(`/task ${fb}`), {
+        sendMessage,
+        insertTask,
+        getAdminChatId: () => ADMIN,
+        listLinkedGroups: () => ONE_GROUP,
+        enqueueUnfurl: (job) => job(),
+        unfurlFacebook: async () => ({ ok: false }),
+      });
+      expect(insertTask).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls.some((call) => call[1] === UNFURL_FAIL_REPLY)).toBe(true);
     });
 
     it('redacts secrets when logging a missing Link payload', () => {

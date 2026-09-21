@@ -7,6 +7,7 @@ import {
   formatTasksListReply,
   insertNewTask,
   listTasksForOfficialChat,
+  resolveTaskDeadline,
 } from '../../src/taskproof/tasks';
 
 function openDb(): Database.Database {
@@ -47,6 +48,14 @@ describe('insertNewTask / listTasks (T1, T3)', () => {
     expect(created.required_count).toBe(3);
     expect(created.report_group_id).toBe('default_rep');
     expect(created.status).toBe('collecting');
+    db.close();
+  });
+
+  it('defaults deadline to now + default_deadline_offset_ms', () => {
+    const db = openDb();
+    setTaskproofSetting('default_deadline_offset_ms', 3_600_000, db);
+    expect(resolveTaskDeadline(null, 1_000, db)).toBe(3_601_000);
+    expect(resolveTaskDeadline(9_000, 1_000, db)).toBe(9_000);
     db.close();
   });
 
