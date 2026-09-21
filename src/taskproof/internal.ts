@@ -14,9 +14,16 @@ import { getDatabase } from '../store';
 import { rejectIfInvalidInternalKey } from './internalAuth';
 import { notifyAdminWorkerDown } from './notifyAdmin';
 import { getQrTmpDir } from './env';
+import {
+  completePickByIndex,
+  groupLabel,
+  pickResultHtml,
+  PlaceTaskDeps,
+} from './groupPick';
 import { formatScanResultReply, ScanHistorySummary } from './quet';
 import { kickTaskCompletionReport, reportUnreportedCompletedTasks, TaskReportResult } from './report';
 import { getTaskproofSetting } from './settings';
+import { EnsureListeningResponse } from './workerClient';
 
 const SAFE_ID_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -27,6 +34,8 @@ export interface TaskproofInternalDeps {
   getQrTmpDir?: () => string;
   lookupStoredPath?: (submissionId: string) => string | null;
   reportNow?: (taskId?: string) => Promise<TaskReportResult[]>;
+  ensureListening?: (taskId?: string) => Promise<EnsureListeningResponse>;
+  insertTask?: PlaceTaskDeps['insertTask'];
 }
 
 function defaultSendPhoto(chatId: string, photoUrl: string, caption?: string): Promise<unknown> {
@@ -217,6 +226,39 @@ export function createTaskproofInternalRouter(deps: TaskproofInternalDeps = {}):
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[TaskProof] link-result sendMessage thất bại:', msg);
       res.json({ success: true, sent: false, reason: msg });
+    }
+  });
+
+  router.get('/taskproof/pick/:token/:n', async (req: Request, res: Response) => {
+    const token = typeof req.params.token === 'string' ? req.params.token.trim() : '';
+    const index1 = parseInt(typeof req.params.n === 'string' ? req.params.n : '', 10);
+    if (!token || !SAFE_ID_RE.test(token) || !Number.isInteger(index1) || index1 < 1 || index1 > 50) {
+      res.status(404).type('html').send(pickResultHtml('Không tìm thấy', 'Link không hợp lệ.'));
+      return;
+    }
+    try {
+      const result = await completePickByIndex(token, index1, {
+        sendMessage,
+        insertTask: deps.insertTask,
+        ensureListening: deps.ensureListening,
+      });
+      if (!result.ok) {
+        res.status(result.status).type('html').send(pickResultHtml(result.title, result.body));
+        return;
+      }
+      res
+        .status(200)
+        .type('html')
+        .send(
+          pickResultHtml(
+            'Đã gửi nhiệm vụ',
+            `Đã gửi ${result.created.short_code} vào nhóm ${groupLabel(result.group)}.\nCó thể đóng trang này.`
+          )
+        );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[TaskProof] pick URL lỗi:', msg);
+      res.status(500).type('html').send(pickResultHtml('Lỗi', 'Không gửi được nhiệm vụ. Gõ /task lại.'));
     }
   });
 

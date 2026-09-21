@@ -7,6 +7,10 @@
  */
 
 import {
+  firstFacebookPostUrl,
+  parseFacebookPostUrl,
+} from '../facebookUrl';
+import {
   parseQuetCount,
   QUET_DEFAULT_COUNT,
   QUET_MAX_COUNT,
@@ -15,6 +19,10 @@ import {
 import { collectHttpUrls, isImageOrStickerEvent } from './payload';
 import { isUuid, normalizeShortCode } from './shortCode';
 import { ParseCommandResult, ParsedTaskFields, TaskproofCommandName, WebhookInbound } from './types';
+
+export const TASK_USAGE = '/task <link bài Facebook>';
+export const TASK_NOT_FACEBOOK =
+  'Link không phải bài Facebook. Dùng /task <link facebook.com/...> hoặc flow cũ kèm Caption: ...';
 
 const COMMAND_NAMES: TaskproofCommandName[] = [
   'tasks',
@@ -173,40 +181,25 @@ function resolveTaskLink(
   return nested[0] || '';
 }
 
-function parseTaskFields(rest: string, inbound: WebhookInbound): ParseCommandResult {
-  const labeled = extractLabeledFields(rest);
-  const link = resolveTaskLink(labeled.Link, inbound.commandText || rest, inbound);
-  const caption = (labeled.Caption || '').trim();
-  const deadlineRaw = (labeled.HanChot || '').trim();
-  const soLuongRaw = (labeled.SoLuong || '').trim();
-  const reportGroupId = (labeled.BaoCao || '').trim();
+function facebookUrlFromInbound(inbound: WebhookInbound): string {
+  const fromUrl = parseFacebookPostUrl(inbound.url);
+  if (fromUrl) return fromUrl.href;
+  for (const candidate of collectHttpUrls(inbound.message)) {
+    if (isImageOrStickerEvent(inbound.eventName)) {
+      if (candidate === inbound.photo) continue;
+    }
+    const parsed = parseFacebookPostUrl(candidate);
+    if (parsed) return parsed.href;
+  }
+  return '';
+}
 
-  if (!link) {
-    return {
-      ok: false,
-      found: true,
-      command: 'task',
-      error:
-        'Không đọc được Link. Thêm `Link: https://...` hoặc dán URL vào lệnh (kể cả khi Zalo đổi thành thẻ xem trước).',
-    };
-  }
-  if (!caption) {
-    return {
-      ok: false,
-      found: true,
-      command: 'task',
-      error: 'Thiếu Caption. Dùng `Caption: <nội dung cần khớp OCR>`.',
-    };
-  }
-  if (!deadlineRaw) {
-    return {
-      ok: false,
-      found: true,
-      command: 'task',
-      error: 'Thiếu HanChot. Ví dụ: `HanChot: 19/09/2026 18:00`.',
-    };
-  }
+type OptionalNumberParse =
+  | { ok: true; value: number | null }
+  | { ok: false; found: true; command: 'task'; error: string };
 
+function parseOptionalDeadline(deadlineRaw: string): OptionalNumberParse {
+  if (!deadlineRaw) return { ok: true, value: null };
   const deadlineUtcMs = parseDeadlineToUtcMs(deadlineRaw);
   if (deadlineUtcMs === null) {
     return {
@@ -217,30 +210,105 @@ function parseTaskFields(rest: string, inbound: WebhookInbound): ParseCommandRes
         'HanChot không hợp lệ. Dùng `DD/MM/YYYY HH:mm`, `HH:mm DD/MM/YYYY` hoặc `YYYY-MM-DD HH:mm` (giờ Việt Nam).',
     };
   }
+  return { ok: true, value: deadlineUtcMs };
+}
 
-  let requiredCount: number | null = null;
-  if (soLuongRaw) {
-    const parsed = Number.parseInt(soLuongRaw, 10);
-    if (!/^\d+$/.test(soLuongRaw) || parsed < 1) {
+function parseOptionalSoLuong(soLuongRaw: string): OptionalNumberParse {
+  if (!soLuongRaw) return { ok: true, value: null };
+  const parsed = Number.parseInt(soLuongRaw, 10);
+  if (!/^\d+$/.test(soLuongRaw) || parsed < 1) {
+    return {
+      ok: false,
+      found: true,
+      command: 'task',
+      error: 'SoLuong phải là số nguyên ≥ 1.',
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+function parseTaskFields(rest: string, inbound: WebhookInbound): ParseCommandResult {
+  const labeled = extractLabeledFields(rest);
+  const commandText = inbound.commandText || rest;
+  const labeledCaption = (labeled.Caption || '').trim();
+  const deadlineRaw = (labeled.HanChot || '').trim();
+  const soLuongRaw = (labeled.SoLuong || '').trim();
+  const reportGroupId = (labeled.BaoCao || '').trim();
+  const hasOldFields = Boolean(
+    labeled.Caption || labeled.Link || labeled.SoLuong || labeled.HanChot || labeled.BaoCao
+  );
+
+  const facebookUrl =
+    (labeled.Link && parseFacebookPostUrl(labeled.Link)?.href) ||
+    firstFacebookPostUrl(labeled.Link || '') ||
+    firstFacebookPostUrl(commandText) ||
+    facebookUrlFromInbound(inbound);
+
+  const anyLink = resolveTaskLink(labeled.Link, commandText, inbound);
+
+  const deadline = parseOptionalDeadline(deadlineRaw);
+  if (!deadline.ok) return deadline;
+  const soLuong = parseOptionalSoLuong(soLuongRaw);
+  if (!soLuong.ok) return soLuong;
+
+  if (labeledCaption) {
+    if (!anyLink) {
       return {
         ok: false,
         found: true,
         command: 'task',
-        error: 'SoLuong phải là số nguyên ≥ 1.',
+        error:
+          'Không đọc được Link. Thêm `Link: https://...` hoặc dán URL vào lệnh (kể cả khi Zalo đổi thành thẻ xem trước).',
       };
     }
-    requiredCount = parsed;
+    const fields: ParsedTaskFields = {
+      link: anyLink,
+      caption: labeledCaption,
+      requiredCount: soLuong.value,
+      deadlineUtcMs: deadline.value,
+      reportGroupId,
+      needsUnfurl: false,
+    };
+    return { ok: true, found: true, command: 'task', fields };
   }
 
-  const fields: ParsedTaskFields = {
-    link,
-    caption,
-    requiredCount,
-    deadlineUtcMs,
-    reportGroupId,
-  };
+  if (facebookUrl) {
+    const fields: ParsedTaskFields = {
+      link: facebookUrl,
+      caption: '',
+      requiredCount: soLuong.value,
+      deadlineUtcMs: deadline.value,
+      reportGroupId,
+      needsUnfurl: true,
+    };
+    return { ok: true, found: true, command: 'task', fields };
+  }
 
-  return { ok: true, found: true, command: 'task', fields };
+  if (anyLink) {
+    return {
+      ok: false,
+      found: true,
+      command: 'task',
+      error: TASK_NOT_FACEBOOK,
+    };
+  }
+
+  if (hasOldFields) {
+    return {
+      ok: false,
+      found: true,
+      command: 'task',
+      error:
+        'Không đọc được Link. Thêm `Link: https://...` hoặc dán URL vào lệnh (kể cả khi Zalo đổi thành thẻ xem trước).',
+    };
+  }
+
+  return {
+    ok: false,
+    found: true,
+    command: 'task',
+    error: TASK_USAGE,
+  };
 }
 
 function parseShortCodeCommand(

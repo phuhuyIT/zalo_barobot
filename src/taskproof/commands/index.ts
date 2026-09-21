@@ -11,7 +11,13 @@ export {
   parseWebhookBody,
   isUnsupportedEvent,
 } from './payload';
-export { parseTaskproofCommand, parseDeadlineToUtcMs, looksLikeTaskproofCommand } from './parser';
+export {
+  parseTaskproofCommand,
+  parseDeadlineToUtcMs,
+  looksLikeTaskproofCommand,
+  TASK_USAGE,
+  TASK_NOT_FACEBOOK,
+} from './parser';
 export {
   parseQuetCount,
   QUET_DEFAULT_COUNT,
@@ -27,7 +33,14 @@ export {
 export {
   handleTaskproofCommand,
   formatParseReply,
+  isPrivateChat,
   PREVIEW_CARD_HINT,
+  UNFURL_FAIL_REPLY,
+  UNFURL_PENDING_REPLY,
   resetPreviewHintThrottle,
+  GROUP_COMMAND_HINT,
+  LIENKET_IN_GROUP_HINT,
+  NO_LINKED_GROUPS_HINT,
+  PRIVATE_NOT_ADMIN_HINT,
 } from './handler';
 export type { WebhookInbound, ParseCommandResult, ParsedTaskFields, TaskproofCommandName } from './types';

@@ -35,8 +35,11 @@ export interface ParsedTaskFields {
   link: string;
   caption: string;
   requiredCount: number | null;
-  deadlineUtcMs: number;
+  /** null = default_deadline_offset_ms lúc insert. */
+  deadlineUtcMs: number | null;
   reportGroupId: string;
+  /** true: official bot unfurl Facebook, không dùng caption thẻ Zalo. */
+  needsUnfurl?: boolean;
 }
 
 export type ParseCommandResult =

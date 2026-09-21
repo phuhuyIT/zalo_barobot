@@ -13,6 +13,7 @@ import { getDatabase, getRecipient } from '../store';
 export interface TaskproofSettings {
   ocr_match_threshold: number;
   default_required_count: number;
+  default_deadline_offset_ms: number;
   deadline_check_interval_ms: number;
   reminder_interval_ms: number;
   max_auto_reminders: number;
@@ -34,7 +35,8 @@ export type TaskproofSettingKey = keyof TaskproofSettings;
 
 export const TASKPROOF_SETTING_DEFAULTS: TaskproofSettings = {
   ocr_match_threshold: 0.5,
-  default_required_count: 1,
+  default_required_count: 12,
+  default_deadline_offset_ms: 3_600_000,
   deadline_check_interval_ms: 60_000,
   reminder_interval_ms: 3_600_000,
   max_auto_reminders: 3,
@@ -77,6 +79,7 @@ export const TASKPROOF_UI_SETTING_KEYS: TaskproofSettingKey[] = [
   'max_reminder_text_len',
   'ocr_match_threshold',
   'default_required_count',
+  'default_deadline_offset_ms',
   'max_auto_reminders',
   'reminder_interval_ms',
   'task_stale_after_ms',
@@ -177,6 +180,11 @@ export function seedTaskproofSettings(database: Database.Database): void {
 
   for (const [key, value] of Object.entries(TASKPROOF_SETTING_DEFAULTS)) {
     insert.run(key, JSON.stringify(value), now);
+  }
+
+  // Seed cũ là 1; lần chạy này nâng row 1 → 12. Giá trị UI khác 1 giữ nguyên.
+  if (getTaskproofSetting('default_required_count', database) === 1) {
+    setTaskproofSetting('default_required_count', 12, database);
   }
 
   const currentAdmin = getTaskproofSetting('admin_official_chat_id', database);

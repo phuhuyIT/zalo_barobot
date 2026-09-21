@@ -30,6 +30,7 @@ export interface TaskListRow {
   reminded_at: number | null;
   reported_at: number | null;
   submitted_count: number;
+  group_display_name?: string | null;
 }
 
 export interface InsertTaskInput {
@@ -42,6 +43,17 @@ export interface InsertTaskInput {
   now?: number;
   id?: string;
   shortCode?: string;
+}
+
+export function resolveTaskDeadline(
+  deadlineUtcMs: number | null | undefined,
+  now: number = Date.now(),
+  database?: Database.Database
+): number {
+  if (typeof deadlineUtcMs === 'number' && deadlineUtcMs > 0) return deadlineUtcMs;
+  const offset = Number(getTaskproofSetting('default_deadline_offset_ms', database));
+  const ms = Number.isFinite(offset) && offset > 0 ? offset : 3_600_000;
+  return now + ms;
 }
 
 export interface InsertedTask {
@@ -138,8 +150,10 @@ const TASK_SELECT = `
   SELECT t.id, t.short_code, t.official_chat_id, t.zca_group_id, t.report_group_id,
          t.link, t.reference_text, t.required_count, t.deadline, t.status, t.created_at,
          t.remind_count, t.reminded_at, t.reported_at,
+         m.display_name AS group_display_name,
          (SELECT COUNT(DISTINCT s.uid_from) FROM submissions s WHERE s.task_id = t.id) AS submitted_count
   FROM tasks t
+  LEFT JOIN group_id_map m ON m.official_chat_id = t.official_chat_id
 `;
 
 export function listTasksForOfficialChat(
@@ -165,15 +179,22 @@ export function getTaskListRowById(taskId: string, database?: Database.Database)
   return row || null;
 }
 
-export function formatTasksListReply(rows: TaskListRow[]): string {
+export function formatTasksListReply(
+  rows: TaskListRow[],
+  opts: { allGroups?: boolean } = {}
+): string {
   if (rows.length === 0) {
-    return 'Chưa có task trong nhóm này.';
+    return opts.allGroups ? 'Chưa có task.' : 'Chưa có task trong nhóm này.';
   }
   const lines = ['Danh sách task:'];
   for (const row of rows) {
     const unlinked = row.zca_group_id ? '' : ' — chưa liên kết nhóm';
+    const group =
+      opts.allGroups
+        ? ` — ${row.group_display_name || row.official_chat_id}`
+        : '';
     lines.push(
-      `• ${row.short_code} — ${row.submitted_count}/${row.required_count} — ${row.status}${unlinked} — nhắc ${row.remind_count}`
+      `• ${row.short_code}${group} — ${row.submitted_count}/${row.required_count} — ${row.status}${unlinked} — nhắc ${row.remind_count}`
     );
   }
   return lines.join('\n');

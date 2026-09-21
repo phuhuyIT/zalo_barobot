@@ -2,33 +2,62 @@
  * handler.ts
  *
  * Official bot nhận lệnh task-proof.
- * /lienket gọi worker (Section 8.10). Webhook không chờ QR.
- * /nhac: exact short_code → ensure-listening → remind (Section 8.4).
- * /huy: exact short_code → cancelled, không report, xóa proofs (Section 8.11).
- * /dong: completed, reported_at NULL — kick T6 ngay, cron phút là dự phòng.
- * /task: INSERT + ensure-listening, không chờ QR (Section 8.1).
- * /tasks: đọc DB, không đánh thức worker (Section 8.3).
- * /quet: exact short_code + số tin gần nhất → worker quét lịch sử nhóm.
+ * /task /tasks /nhac /huy /dong /quet: chat riêng 1-1 với admin.
+ * /lienket vẫn gõ trong nhóm. Worker (OCR, nhắc, báo cáo) không đổi.
  */
 
 import { ZaloClient } from '../../core/zaloClient';
-import { getVietnamTimeParts } from '../../sheets/dateUtils';
 import { getDatabase } from '../../store';
+import {
+  GROUP_COMMAND_HINT,
+  LIENKET_IN_GROUP_HINT,
+  NO_LINKED_GROUPS_HINT,
+  PRIVATE_NOT_ADMIN_HINT,
+  LinkedGroup,
+  consumeGroupPick,
+  createGroupPick,
+  fieldsFromPick,
+  formatPickerMessage,
+  formatVnDeadline,
+  getOpenGroupPickForAdmin,
+  listLinkedGroups,
+  placeTaskInGroup,
+  resolveGroupChoice,
+} from '../groupPick';
 import { cancelTask, completeTask } from '../lifecycle';
 import { kickTaskCompletionReport, TaskReportResult } from '../report';
+import { getTaskproofSetting } from '../settings';
 import {
   formatTasksListReply,
   insertNewTask,
   InsertedTask,
-  listTasksForOfficialChat,
+  InsertTaskInput,
+  listRecentTasks,
   TaskListRow,
 } from '../tasks';
 import { historyFetchCount } from '../quet';
 import { postEnsureListening, postLinkGroup, postRemind, postScanHistory, EnsureListeningResponse } from '../workerClient';
+import { unfurlFacebookPost, UnfurlFacebookResult } from '../unfurlFacebook';
+import { enqueueUnfurl } from '../unfurlQueue';
 import { parseTaskproofCommand } from './parser';
 import { isUnsupportedEvent, redactSecrets } from './payload';
 import { getTaskByExactShortCode, TaskShortCodeRow } from './shortCode';
 import { ParseCommandResult, ParsedTaskFields, WebhookInbound } from './types';
+
+export const UNFURL_PENDING_REPLY = 'Đang lấy nội dung bài…';
+
+export const UNFURL_FAIL_REPLY = [
+  'Không lấy được nội dung bài viết từ link này.',
+  'Hãy kiểm tra link là bài public rồi gửi lại: /task <link>',
+  'Hoặc dùng flow cũ kèm Caption: ...',
+].join('\n');
+
+export {
+  GROUP_COMMAND_HINT,
+  LIENKET_IN_GROUP_HINT,
+  NO_LINKED_GROUPS_HINT,
+  PRIVATE_NOT_ADMIN_HINT,
+} from '../groupPick';
 
 export interface TaskproofCommandDeps {
   sendMessage: (chatId: string, text: string) => Promise<unknown>;
@@ -47,16 +76,14 @@ export interface TaskproofCommandDeps {
   cancelTask?: (taskId: string) => boolean;
   completeTask?: (taskId: string) => boolean;
   kickReport?: (taskId: string) => Promise<TaskReportResult[]>;
-  insertTask?: (input: {
-    officialChatId: string;
-    link: string;
-    referenceText: string;
-    requiredCount: number | null;
-    deadlineUtcMs: number;
-    reportGroupId: string;
-  }) => InsertedTask;
-  listTasks?: (officialChatId: string) => TaskListRow[];
+  insertTask?: (input: InsertTaskInput) => InsertedTask;
+  listTasks?: () => TaskListRow[];
+  listLinkedGroups?: () => LinkedGroup[];
+  getAdminChatId?: () => string;
+  publicBaseUrl?: () => string;
   now?: () => number;
+  unfurlFacebook?: (url: string) => Promise<UnfurlFacebookResult>;
+  enqueueUnfurl?: (job: () => Promise<void>) => void | Promise<void>;
 }
 
 function defaultSendMessage(chatId: string, text: string): Promise<unknown> {
@@ -80,24 +107,20 @@ function defaultKickReport(taskId: string): Promise<TaskReportResult[]> {
   return kickTaskCompletionReport(taskId);
 }
 
-function defaultInsertTask(input: {
-  officialChatId: string;
-  link: string;
-  referenceText: string;
-  requiredCount: number | null;
-  deadlineUtcMs: number;
-  reportGroupId: string;
-}): InsertedTask {
+function defaultInsertTask(input: InsertTaskInput): InsertedTask {
   return insertNewTask(input);
 }
 
-function defaultListTasks(officialChatId: string): TaskListRow[] {
-  return listTasksForOfficialChat(officialChatId);
+function defaultListTasks(): TaskListRow[] {
+  return listRecentTasks();
 }
 
-function formatVnDeadline(utcMs: number): string {
-  const parts = getVietnamTimeParts(new Date(utcMs));
-  return `${parts.dateDMY} ${parts.timeHM}`;
+function defaultAdminChatId(): string {
+  return (getTaskproofSetting('admin_official_chat_id') || '').trim();
+}
+
+function defaultListLinkedGroups(): LinkedGroup[] {
+  return listLinkedGroups();
 }
 
 export function formatParseReply(inbound: WebhookInbound): string | null {
@@ -109,12 +132,16 @@ export function formatParseReply(inbound: WebhookInbound): string | null {
     case 'task': {
       const soLuong = parsed.fields.requiredCount === null ? 'mặc định' : String(parsed.fields.requiredCount);
       const baoCao = parsed.fields.reportGroupId || 'mặc định';
+      const han =
+        parsed.fields.deadlineUtcMs && parsed.fields.deadlineUtcMs > 0
+          ? `${formatVnDeadline(parsed.fields.deadlineUtcMs)} (Asia/Ho_Chi_Minh)`
+          : 'mặc định (1 giờ sau khi tạo)';
       return [
         'Lệnh /task hợp lệ.',
         `• Link: ${parsed.fields.link}`,
-        `• Caption: ${parsed.fields.caption}`,
+        `• Caption: ${parsed.fields.caption || '(unfurl)'}`,
         `• Số lượng: ${soLuong}`,
-        `• Hạn chót: ${formatVnDeadline(parsed.fields.deadlineUtcMs)} (Asia/Ho_Chi_Minh)`,
+        `• Hạn chót: ${han}`,
         `• Báo cáo: ${baoCao}`,
       ].join('\n');
     }
@@ -137,13 +164,19 @@ export function formatParseReply(inbound: WebhookInbound): string | null {
   }
 }
 
-function isPrivateChat(inbound: WebhookInbound): boolean {
-  return inbound.chatType === 'PRIVATE';
+export function isPrivateChat(inbound: WebhookInbound): boolean {
+  if (inbound.chatType === 'PRIVATE') return true;
+  if (inbound.chatType === 'GROUP') return false;
+  return Boolean(inbound.chatId && inbound.senderId && inbound.chatId === inbound.senderId);
 }
 
-/** Option B: Zalo ẩn /task sau thẻ xem trước — nhắc gửi lại văn bản, không đánh thức worker. */
+function isAdminDm(inbound: WebhookInbound, adminId: string): boolean {
+  return Boolean(adminId && isPrivateChat(inbound) && inbound.chatId === adminId);
+}
+
+/** Option B: Zalo ẩn /task sau thẻ xem trước — nhắc gửi lại văn bản 1-1, không đánh thức worker. */
 export const PREVIEW_CARD_HINT =
-  'Zalo đổi tin thành thẻ xem trước nên bot không đọc được lệnh. Gửi lại /task dạng văn bản thuần (tắt xem trước, hoặc để Link sang tin sau khi đã gửi Caption/HanChot).';
+  'Zalo đổi tin thành thẻ xem trước nên bot không đọc được lệnh. Gửi lại /task dạng văn bản thuần trong chat riêng 1-1 với bot (tắt xem trước, hoặc để Link sang tin sau).';
 
 export const PREVIEW_HINT_THROTTLE_MS = 5 * 60 * 1000;
 
@@ -258,8 +291,8 @@ function remindReply(code: string, status: number, json: Record<string, unknown>
   if (status === 404 || error === 'task not found') {
     return `Không tìm thấy mã ${code}.`;
   }
-  if (error === 'unlinked' || status === 409 && error === 'unlinked') {
-    return `Nhóm chưa liên kết. Gõ /lienket trong nhóm này rồi /nhac ${code}.`;
+  if (error === 'unlinked' || (status === 409 && error === 'unlinked')) {
+    return `Nhóm chưa liên kết. Gõ /lienket trong nhóm đó rồi /nhac ${code}.`;
   }
   if (status >= 400 && /cancelled|completed/.test(error)) {
     return `Task ${code} đã đóng hoặc hủy, không nhắc.`;
@@ -315,7 +348,7 @@ async function handleNhac(
   if (!task.zca_group_id) {
     await deps.sendMessage(
       inbound.chatId,
-      `Nhóm chưa liên kết. Gõ /lienket trong nhóm này rồi /nhac ${code}.`
+      `Nhóm chưa liên kết. Gõ /lienket trong nhóm đó rồi /nhac ${code}.`
     );
     return;
   }
@@ -366,7 +399,7 @@ function quetReply(
     return `Không tìm thấy mã ${code}.`;
   }
   if (error === 'unlinked' || (status === 409 && error === 'unlinked')) {
-    return `Nhóm chưa liên kết. Gõ /lienket trong nhóm này rồi /quet ${code}.`;
+    return `Nhóm chưa liên kết. Gõ /lienket trong nhóm đó rồi /quet ${code}.`;
   }
   if (status >= 400 && /cancelled|completed/.test(error)) {
     return `Task ${code} đã đóng hoặc hủy, không quét.`;
@@ -408,7 +441,7 @@ async function handleQuet(
   if (!task.zca_group_id) {
     await deps.sendMessage(
       inbound.chatId,
-      `Nhóm chưa liên kết. Gõ /lienket trong nhóm này rồi /quet ${code}.`
+      `Nhóm chưa liên kết. Gõ /lienket trong nhóm đó rồi /quet ${code}.`
     );
     return;
   }
@@ -454,16 +487,35 @@ async function handleQuet(
   await deps.sendMessage(inbound.chatId, quetReply(code, parsed.count, result.status, result.json));
 }
 
-function fieldSummary(fields: ParsedTaskFields): string[] {
-  const soLuong = fields.requiredCount === null ? 'mặc định' : String(fields.requiredCount);
-  const baoCao = fields.reportGroupId || 'mặc định';
-  return [
-    `• Link: ${fields.link}`,
-    `• Caption: ${fields.caption}`,
-    `• Số lượng: ${soLuong}`,
-    `• Hạn chót: ${formatVnDeadline(fields.deadlineUtcMs)} (Asia/Ho_Chi_Minh)`,
-    `• Báo cáo: ${baoCao}`,
-  ];
+async function placeOrPickGroups(
+  fields: ParsedTaskFields,
+  inbound: WebhookInbound,
+  deps: TaskproofCommandDeps
+): Promise<void> {
+  const groups = (deps.listLinkedGroups ?? defaultListLinkedGroups)();
+  if (groups.length === 0) {
+    await deps.sendMessage(inbound.chatId, NO_LINKED_GROUPS_HINT);
+    return;
+  }
+
+  if (groups.length === 1) {
+    await placeTaskInGroup(fields, groups[0], inbound.chatId, {
+      sendMessage: deps.sendMessage,
+      insertTask: deps.insertTask ?? defaultInsertTask,
+      ensureListening: deps.ensureListening,
+    });
+    return;
+  }
+
+  const now = (deps.now ?? Date.now)();
+  const pick = createGroupPick({
+    adminChatId: inbound.chatId,
+    fields,
+    groups,
+    now,
+  });
+  const base = deps.publicBaseUrl?.() ?? '';
+  await deps.sendMessage(inbound.chatId, formatPickerMessage(pick, base || undefined));
 }
 
 async function handleTaskCreate(
@@ -471,49 +523,75 @@ async function handleTaskCreate(
   parsed: Extract<ParseCommandResult, { ok: true; command: 'task' }>,
   deps: TaskproofCommandDeps
 ): Promise<void> {
-  const insert = deps.insertTask ?? defaultInsertTask;
-  const ensureListening = deps.ensureListening ?? ((taskId?: string) => postEnsureListening(taskId));
+  const fields = parsed.fields;
+  if (fields.needsUnfurl && !fields.caption) {
+    const groups = (deps.listLinkedGroups ?? defaultListLinkedGroups)();
+    if (groups.length === 0) {
+      await deps.sendMessage(inbound.chatId, NO_LINKED_GROUPS_HINT);
+      return;
+    }
 
-  let created: InsertedTask;
-  try {
-    created = insert({
-      officialChatId: inbound.chatId,
-      link: parsed.fields.link,
-      referenceText: parsed.fields.caption,
-      requiredCount: parsed.fields.requiredCount,
-      deadlineUtcMs: parsed.fields.deadlineUtcMs,
-      reportGroupId: parsed.fields.reportGroupId,
+    await deps.sendMessage(inbound.chatId, UNFURL_PENDING_REPLY);
+    const enqueue = deps.enqueueUnfurl ?? enqueueUnfurl;
+    const unfurl = deps.unfurlFacebook ?? ((url: string) => unfurlFacebookPost(url));
+    await enqueue(async () => {
+      try {
+        const result = await unfurl(fields.link);
+        if (!result.ok || !result.caption.trim()) {
+          await deps.sendMessage(inbound.chatId, UNFURL_FAIL_REPLY);
+          return;
+        }
+        console.log(`[TaskProof] caption_source=${result.source}`);
+        await placeOrPickGroups(
+          {
+            ...fields,
+            caption: result.caption,
+            link: result.canonicalUrl || fields.link,
+            needsUnfurl: false,
+          },
+          inbound,
+          deps
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[TaskProof] unfurl Facebook lỗi:', msg);
+        await deps.sendMessage(inbound.chatId, UNFURL_FAIL_REPLY);
+      }
     });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[TaskProof] /task INSERT lỗi:', msg);
-    await deps.sendMessage(inbound.chatId, `Không lưu được task: ${msg}`);
     return;
   }
 
-  const lines = [`Đã tạo task ${created.short_code}.`, ...fieldSummary(parsed.fields)];
-  if (!created.zca_group_id) {
-    lines.push('Nhóm chưa liên kết. Gõ /lienket trong nhóm này.');
-  }
+  await placeOrPickGroups(fields, inbound, deps);
+}
 
-  let listen: EnsureListeningResponse | null = null;
-  try {
-    listen = await ensureListening(created.id);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[TaskProof] /task ensure-listening lỗi:', msg);
-    lines.push('Worker không chạy. /gui vẫn dùng được. Task vẫn lưu — thử /lienket hoặc /nhac sau.');
-    await deps.sendMessage(inbound.chatId, lines.join('\n'));
-    return;
+async function maybeHandlePickReply(
+  inbound: WebhookInbound,
+  deps: TaskproofCommandDeps
+): Promise<boolean> {
+  const text = (inbound.commandText || inbound.text || '').trim();
+  if (!text) return false;
+  const now = (deps.now ?? Date.now)();
+  const pick = getOpenGroupPickForAdmin(inbound.chatId, now);
+  if (!pick) return false;
+  const group = resolveGroupChoice(text, pick.groups);
+  if (!group) {
+    await deps.sendMessage(
+      inbound.chatId,
+      'Không khớp nhóm. Bấm link trong tin trước, hoặc trả lời đúng số thứ tự.'
+    );
+    return true;
   }
-
-  if (listen.state === 'login_failed' || listen.state === 'qr_timeout' || listen.status >= 400) {
-    lines.push(loginHint(listen) || `Worker chưa sẵn sàng (${listen.state}).`);
-  } else if (listen.state === 'qr_required') {
-    lines.push(loginHint(listen));
+  const consumed = consumeGroupPick(pick.token, group.official_chat_id, now);
+  if (!consumed) {
+    await deps.sendMessage(inbound.chatId, 'Lựa chọn này đã hết hạn hoặc đã dùng. Gõ /task lại.');
+    return true;
   }
-
-  await deps.sendMessage(inbound.chatId, lines.join('\n'));
+  await placeTaskInGroup(fieldsFromPick(pick), group, inbound.chatId, {
+    sendMessage: deps.sendMessage,
+    insertTask: deps.insertTask ?? defaultInsertTask,
+    ensureListening: deps.ensureListening,
+  });
+  return true;
 }
 
 async function handleTasksList(
@@ -521,8 +599,8 @@ async function handleTasksList(
   deps: TaskproofCommandDeps
 ): Promise<void> {
   const list = deps.listTasks ?? defaultListTasks;
-  const rows = list(inbound.chatId);
-  await deps.sendMessage(inbound.chatId, formatTasksListReply(rows));
+  const rows = list();
+  await deps.sendMessage(inbound.chatId, formatTasksListReply(rows, { allGroups: true }));
 }
 
 async function handleDong(
@@ -604,6 +682,20 @@ async function handleHuy(
   );
 }
 
+async function sendSafe(
+  deps: TaskproofCommandDeps,
+  chatId: string,
+  text: string
+): Promise<void> {
+  try {
+    await deps.sendMessage(chatId, text);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[TaskProof] Không gửi được phản hồi lệnh:', msg);
+    throw err;
+  }
+}
+
 /**
  * @returns true nếu đây là lệnh task-proof (kể cả khi parse lỗi) — webhook không đi tiếp /gui.
  */
@@ -611,25 +703,52 @@ export async function handleTaskproofCommand(
   inbound: WebhookInbound,
   deps: TaskproofCommandDeps = { sendMessage: defaultSendMessage }
 ): Promise<boolean> {
-  if (isPrivateChat(inbound)) {
-    const parsed = parseTaskproofCommand(inbound);
-    if (!parsed.found) return false;
-    try {
-      await deps.sendMessage(
-        inbound.chatId,
-        'Gõ lệnh task-proof trong nhóm nhiệm vụ, không chat riêng với bot.'
-      );
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[TaskProof] Không gửi được phản hồi lệnh (private):', msg);
+  const adminId = (deps.getAdminChatId ?? defaultAdminChatId)();
+  const privateChat = isPrivateChat(inbound);
+  const adminDm = isAdminDm(inbound, adminId);
+  const parsed = parseTaskproofCommand(inbound);
+
+  if (!parsed.found) {
+    if (adminDm) {
+      try {
+        if (await maybeHandlePickReply(inbound, deps)) return true;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[TaskProof] pick-reply lỗi:', msg);
+      }
+      return maybeHintPreviewCard(inbound, deps);
     }
+    if (!privateChat) {
+      return maybeHintPreviewCard(inbound, deps);
+    }
+    return false;
+  }
+
+  if (!inbound.chatId) return true;
+
+  if (parsed.command === 'lienket') {
+    if (privateChat) {
+      await sendSafe(deps, inbound.chatId, LIENKET_IN_GROUP_HINT);
+      return true;
+    }
+    if (!parsed.ok) {
+      const reply = formatParseReply(inbound);
+      if (reply) await sendSafe(deps, inbound.chatId, reply);
+      return true;
+    }
+    await handleLienket(inbound, parsed, deps);
     return true;
   }
 
-  const parsed = parseTaskproofCommand(inbound);
-  if (!parsed.found) {
-    return maybeHintPreviewCard(inbound, deps);
+  if (!adminDm) {
+    if (privateChat) {
+      await sendSafe(deps, inbound.chatId, PRIVATE_NOT_ADMIN_HINT);
+      return true;
+    }
+    await sendSafe(deps, inbound.chatId, GROUP_COMMAND_HINT);
+    return true;
   }
+
   if (!parsed.ok && parsed.command === 'task' && /Không đọc được Link/.test(parsed.error)) {
     console.warn(
       '[TaskProof] /task thiếu Link — payload đã che secret:',
@@ -637,59 +756,32 @@ export async function handleTaskproofCommand(
     );
   }
 
-  if (parsed.ok && parsed.command === 'lienket') {
-    if (!inbound.chatId) return true;
-    await handleLienket(inbound, parsed, deps);
+  if (!parsed.ok) {
+    const reply = formatParseReply(inbound);
+    if (reply) await sendSafe(deps, inbound.chatId, reply);
     return true;
   }
 
-  if (parsed.ok && parsed.command === 'nhac') {
-    if (!inbound.chatId) return true;
-    await handleNhac(inbound, parsed, deps);
-    return true;
+  switch (parsed.command) {
+    case 'task':
+      await handleTaskCreate(inbound, parsed, deps);
+      return true;
+    case 'tasks':
+      await handleTasksList(inbound, deps);
+      return true;
+    case 'nhac':
+      await handleNhac(inbound, parsed, deps);
+      return true;
+    case 'quet':
+      await handleQuet(inbound, parsed, deps);
+      return true;
+    case 'huy':
+      await handleHuy(inbound, parsed, deps);
+      return true;
+    case 'dong':
+      await handleDong(inbound, parsed, deps);
+      return true;
+    default:
+      return false;
   }
-
-  if (parsed.ok && parsed.command === 'quet') {
-    if (!inbound.chatId) return true;
-    await handleQuet(inbound, parsed, deps);
-    return true;
-  }
-
-  if (parsed.ok && parsed.command === 'huy') {
-    if (!inbound.chatId) return true;
-    await handleHuy(inbound, parsed, deps);
-    return true;
-  }
-
-  if (parsed.ok && parsed.command === 'task') {
-    if (!inbound.chatId) return true;
-    await handleTaskCreate(inbound, parsed, deps);
-    return true;
-  }
-
-  if (parsed.ok && parsed.command === 'tasks') {
-    if (!inbound.chatId) return true;
-    await handleTasksList(inbound, deps);
-    return true;
-  }
-
-  if (parsed.ok && parsed.command === 'dong') {
-    if (!inbound.chatId) return true;
-    await handleDong(inbound, parsed, deps);
-    return true;
-  }
-
-  const reply = formatParseReply(inbound);
-  if (reply === null) return false;
-
-  if (!inbound.chatId) return true;
-
-  try {
-    await deps.sendMessage(inbound.chatId, reply);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[TaskProof] Không gửi được phản hồi lệnh:', msg);
-    throw err;
-  }
-  return true;
 }

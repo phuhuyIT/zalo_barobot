@@ -6,8 +6,10 @@
  * Worker chỉ assertTaskproofTablesExist — không CREATE, không PRAGMA user_version.
  *
  * Hai namespace ID (không dùng lẫn):
- * - official_chat_id: webhook Official Bot Platform (lệnh /task, /gui)
+ * - official_chat_id: webhook Official Bot Platform (nhóm sau khi admin chọn
+ *   lúc /task 1-1; /lienket và /gui vẫn gõ trong nhóm)
  * - zca_group_id: threadId zca-js (OCR, mention) — NULL đến khi /lienket
+ * task_group_picks chỉ official bot dùng (chọn nhóm 1-1); worker không cần.
  */
 
 import Database from 'better-sqlite3';
@@ -94,6 +96,23 @@ export function initTaskproofTables(database: Database.Database): void {
       value_json TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS task_group_picks (
+      token TEXT PRIMARY KEY,
+      admin_chat_id TEXT NOT NULL,
+      link TEXT NOT NULL,
+      reference_text TEXT NOT NULL,
+      required_count INTEGER,
+      deadline INTEGER NOT NULL,
+      report_group_id TEXT NOT NULL DEFAULT '',
+      groups_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      consumed_at INTEGER,
+      chosen_official_chat_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_group_picks_admin
+      ON task_group_picks(admin_chat_id, created_at);
   `);
 
   seedTaskproofSettings(database);
