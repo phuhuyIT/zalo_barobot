@@ -8,7 +8,7 @@
 
 import { getConfig, getRecipientChatId, getScheduleConfig, getSquadConfig } from '../config';
 import { fetchDutySchedule, fetchLeaveRoster, fetchLeaveStats } from '../sheets';
-import { resolveLookupDate, formatDateDMY } from '../sheets/dateUtils';
+import { resolveLookupDate, formatDateDMY, getVietnamTimeParts, parseDMYToDate } from '../sheets/dateUtils';
 import { formatMessage } from '../formatters';
 import { ZaloClient } from './zaloClient';
 import {
@@ -141,23 +141,33 @@ export async function buildScheduleMessage(
   const isOvernight = Boolean(squad?.overnight);
   const cutoverTime = squad?.cutover_time || '05:30';
 
+  const nextDayCutover = squad?.next_day_cutover_time || schedule.next_day_cutover_time || '20:00';
+
   let lookupDate: string;
   if (targetDate === 'today') {
-    lookupDate = formatDateDMY(now);
+    lookupDate = getVietnamTimeParts(now).dateDMY;
   } else if (targetDate === 'tomorrow') {
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    lookupDate = formatDateDMY(tomorrow);
+    const today = getVietnamTimeParts(now).dateDMY;
+    const parsed = parseDMYToDate(today);
+    if (parsed) {
+      parsed.setDate(parsed.getDate() + 1);
+      lookupDate = formatDateDMY(parsed);
+    } else {
+      lookupDate = today;
+    }
   } else if (targetDate) {
     lookupDate = targetDate;
   } else {
-    lookupDate = resolveLookupDate(now, isOvernight, cutoverTime, effectiveSendNextDay);
+    lookupDate = resolveLookupDate(now, isOvernight, cutoverTime, effectiveSendNextDay, nextDayCutover);
   }
 
   // 2. Đọc dữ liệu từ Sheet tùy theo loại schedule
   let text: string;
   if (schedule.type === 'leave_roster') {
     const leaveData = await fetchLeaveRoster(spreadsheetId, effectiveTabName, lookupDate);
+    if (!leaveData || !leaveData.entry) {
+      throw new Error(`Không có dữ liệu lịch tranh thủ cho ngày ${lookupDate}`);
+    }
     text = formatMessage(schedule.type, leaveData, lookupDate);
   } else if (schedule.type === 'leave_roster_stats') {
     const leaveStatsData = await fetchLeaveStats(spreadsheetId, effectiveTabName);
@@ -165,6 +175,9 @@ export async function buildScheduleMessage(
   } else {
     const headerStyle = squad?.header_style || 'two_row_merged';
     const dutyData = await fetchDutySchedule(spreadsheetId, effectiveTabName, headerStyle, lookupDate);
+    if (!dutyData || !dutyData.tasks || dutyData.tasks.length === 0) {
+      throw new Error(`Không có dữ liệu lịch trực cổng cho ngày ${lookupDate}`);
+    }
     text = formatMessage(schedule.type, dutyData, lookupDate);
   }
 

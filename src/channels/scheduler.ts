@@ -10,7 +10,6 @@
  */
 
 import cron, { ScheduledTask } from 'node-cron';
-import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { getConfig, getRecipientChatId } from '../config';
 import { getEffectiveScheduleConfig, sendSchedule } from '../core';
@@ -18,32 +17,37 @@ import { getDatabase, hasSentToday, saveLastMessage } from '../store';
 import { ZaloClient } from '../core/zaloClient';
 import { formatDateDMY, resolveLookupDate, getVietnamTimeParts } from '../sheets/dateUtils';
 import { runPatrolReminders } from '../patrol';
+import { getInternalApiKey } from '../taskproof/env';
 import { notifyIfWorkerDownWithOpenTasks } from '../taskproof/health';
+import { readInternalKey, timingSafeCompare } from '../taskproof/internalAuth';
 import { cancelStaleTasks } from '../taskproof/lifecycle';
 import { reportUnreportedCompletedTasks, TaskReportResult } from '../taskproof/report';
+import { pruneTaskproofEphemeral } from '../taskproof/store';
 
 export const schedulerRouter = Router();
 
 // Lưu trữ các cron task đang chạy để có thể cancel / refresh
 const activeCronTasks: ScheduledTask[] = [];
 
-/**
- * So sánh an toàn hai chuỗi để chống timing-attack.
- */
-function timingSafeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, 'utf8');
-  const bufB = Buffer.from(b, 'utf8');
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
-}
+/** Cửa sổ bắt kịp (phút) khi cron Railway trễ hơn mốc HH:MM. */
+export const AUTO_SEND_CATCHUP_MINUTES = 10;
 
 /**
  * Kiểm tra xem công việc có đến hạn gửi lúc này không theo múi giờ Việt Nam.
+ * windowMinutes > 0: từ đúng mốc đến window phút sau (bắt kịp cron trễ).
  */
-function isTimeMatching(targetTimeStr: string, now: Date): boolean {
+export function isTimeMatching(targetTimeStr: string, now: Date, windowMinutes = 0): boolean {
   const [targetH, targetM] = targetTimeStr.split(':').map(Number);
+  if (!Number.isFinite(targetH) || !Number.isFinite(targetM)) return false;
   const vn = getVietnamTimeParts(now);
-  return vn.hours === targetH && vn.minutes === targetM;
+  const nowMin = vn.hours * 60 + vn.minutes;
+  const targetMin = targetH * 60 + targetM;
+  if (windowMinutes <= 0) {
+    return nowMin === targetMin;
+  }
+  let diff = nowMin - targetMin;
+  if (diff < 0) diff += 24 * 60;
+  return diff >= 0 && diff <= windowMinutes;
 }
 
 /**
@@ -80,10 +84,42 @@ function subtractMinutesFromTime(timeStr: string, minutesToSubtract: number): st
   return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
 }
 
+let runDueJobsInFlight = false;
+
+export function resetRunDueJobsLockForTests(): void {
+  runDueJobsInFlight = false;
+}
+
 /**
  * Hàm kiểm tra và chạy tất cả các jobs đến hạn (dùng chung cho cả Cron nội bộ và Railway Cron).
  */
 export async function runDueJobs(now: Date = new Date()): Promise<{
+  schedulesRun: string[];
+  remindersRun: string[];
+  staleCancelled: string[];
+  reportsSent: string[];
+  workerHealthNotified: boolean;
+  skipped?: boolean;
+}> {
+  if (runDueJobsInFlight) {
+    return {
+      schedulesRun: [],
+      remindersRun: [],
+      staleCancelled: [],
+      reportsSent: [],
+      workerHealthNotified: false,
+      skipped: true,
+    };
+  }
+  runDueJobsInFlight = true;
+  try {
+    return await runDueJobsOnce(now);
+  } finally {
+    runDueJobsInFlight = false;
+  }
+}
+
+async function runDueJobsOnce(now: Date): Promise<{
   schedulesRun: string[];
   remindersRun: string[];
   staleCancelled: string[];
@@ -108,7 +144,7 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
       continue;
     }
 
-    if (isTimeMatching(effective.effectiveSendTime, now)) {
+    if (isTimeMatching(effective.effectiveSendTime, now, AUTO_SEND_CATCHUP_MINUTES)) {
       console.log(`[Scheduler] 🚀 [${vn.timeHM} VN] Đến giờ gửi tự động cho schedule '${s.key}' (${effective.effectiveSendTime})`);
       try {
         await sendSchedule(s.key, { isAutomated: true });
@@ -131,7 +167,15 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
       const nowDmy = formatDateDMY(now);
       const isOvernight = Boolean(effective.squad?.overnight);
       const cutoverTime = effective.squad?.cutover_time || '05:30';
-      const lookupDate = resolveLookupDate(now, isOvernight, cutoverTime, effective.effectiveSendNextDay);
+      const nextDayCutover =
+        effective.squad?.next_day_cutover_time || effective.schedule.next_day_cutover_time || '20:00';
+      const lookupDate = resolveLookupDate(
+        now,
+        isOvernight,
+        cutoverTime,
+        effective.effectiveSendNextDay,
+        nextDayCutover
+      );
 
       // 2a. Nhắc nhở TRƯỚC giờ gửi (Heads-up)
       if (effective.effectiveSendTime && rem.remind_before_send_minutes) {
@@ -217,6 +261,13 @@ export async function runDueJobs(now: Date = new Date()): Promise<{
     }
   } catch (err: any) {
     console.error(`[Scheduler] ❌ Lỗi thực thi runPatrolReminders:`, err.message);
+  }
+
+  try {
+    pruneTaskproofEphemeral(getDatabase(), now.getTime());
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[Scheduler] prune task-proof bỏ qua:', msg);
   }
 
   // 4. Task-proof stale-cancel: collecting|overdue già hơn TASK_STALE_AFTER_MS → /huy
@@ -321,18 +372,13 @@ export function refreshSchedules(): void {
  * để đảm bảo không bị miss lịch nếu tiến trình chính bị gián đoạn (Mục 6.3).
  */
 schedulerRouter.post('/internal/run-due-jobs', async (req: Request, res: Response) => {
-  const expectedKey = process.env.INTERNAL_API_KEY;
+  const expectedKey = getInternalApiKey();
   if (!expectedKey) {
     res.status(403).json({ success: false, error: 'INTERNAL_API_KEY is not configured on the server.' });
     return;
   }
 
-  const rawKey =
-    req.headers['x-internal-key'] ||
-    req.headers['authorization']?.replace('Bearer ', '') ||
-    req.query.key;
-
-  const receivedKey = typeof rawKey === 'string' ? rawKey.trim() : Array.isArray(rawKey) ? String(rawKey[0]).trim() : '';
+  const receivedKey = readInternalKey(req);
 
   if (!receivedKey || !timingSafeCompare(receivedKey, expectedKey)) {
     res.status(403).json({ success: false, error: 'Unauthorized internal API key' });

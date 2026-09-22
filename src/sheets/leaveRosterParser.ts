@@ -47,7 +47,7 @@ export function parseLeaveRoster(rows: unknown[][]): LeaveRoster {
     const row = rows[r] || [];
     const isRowEmpty = row.every((cell) => String(cell || '').trim() === '');
     if (isRowEmpty) {
-      continue;
+      break;
     }
 
     const dateVal = row[dateColIndex];

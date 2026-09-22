@@ -148,38 +148,41 @@ export function parseDMYToDate(dmy: string): Date | null {
  *
  * 3. Tiểu đội trực ban ngày thông thường: lookup_date = ngày hôm nay.
  */
+function shiftVietnamDate(dateDMY: string, days: number): string {
+  const parsed = parseDMYToDate(dateDMY);
+  if (!parsed) return dateDMY;
+  parsed.setDate(parsed.getDate() + days);
+  return formatDateDMY(parsed);
+}
+
+function minutesOf(timeHM: string): number {
+  const [h, m] = timeHM.split(':').map(Number);
+  return (Number(h) || 0) * 60 + (Number(m) || 0);
+}
+
 export function resolveLookupDate(
   now: Date,
   isOvernight: boolean = false,
   cutoverTime: string = '05:30',
-  sendNextDay: boolean = false
+  sendNextDay: boolean = false,
+  nextDayCutoverTime: string = '20:00'
 ): string {
-  // 1. Trường hợp gửi trước lịch ngày mai (sendNextDay = true):
-  // Luôn hướng đến ngày mai (now + 1 ngày) để bất kể khi nào chạy (ở mốc 21:00 hay test thủ công),
-  // hệ thống đều nhắm tới lịch của ngày mai.
+  const vn = getVietnamTimeParts(now);
+  const nowMin = vn.hours * 60 + vn.minutes;
+
   if (sendNextDay) {
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return formatDateDMY(tomorrow);
-  }
-
-  // 2. Trường hợp ca trực đêm qua ngày (culi)
-  if (isOvernight) {
-    const [cutHour, cutMinute] = cutoverTime.split(':').map(Number);
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const cutoverMinutes = cutHour * 60 + cutMinute;
-
-    if (currentMinutes < cutoverMinutes) {
-      // Trước giờ cutover -> ca trực đang diễn ra thuộc về ngày hôm qua
-      const yesterday = new Date(now);
-      yesterday.setDate(yesterday.getDate() - 1);
-      return formatDateDMY(yesterday);
-    } else {
-      // Từ giờ cutover trở đi -> ca trực tối nay sắp diễn ra (thuộc về ngày hôm nay)
-      return formatDateDMY(now);
+    if (nowMin >= minutesOf(nextDayCutoverTime || '20:00')) {
+      return shiftVietnamDate(vn.dateDMY, 1);
     }
+    return vn.dateDMY;
   }
 
-  // 3. Mặc định: ngày hôm nay
-  return formatDateDMY(now);
+  if (isOvernight) {
+    if (nowMin < minutesOf(cutoverTime || '05:30')) {
+      return shiftVietnamDate(vn.dateDMY, -1);
+    }
+    return vn.dateDMY;
+  }
+
+  return vn.dateDMY;
 }

@@ -63,19 +63,17 @@ describe('Date & Placeholder Utils', () => {
   });
 
   it('resolves lookup date for main squad sending tomorrow (sendNextDay = true)', () => {
-    // 21:00 on Tuesday (2026-09-01) -> should look up Wednesday (tomorrow: 02/09/2026)
+    // 21:00 on Tuesday (after 20:00 cutover) -> Wednesday
     const atEveningSend = new Date(2026, 8, 1, 21, 0);
     expect(resolveLookupDate(atEveningSend, false, '05:30', true)).toBe('02/09/2026');
 
-    // 15:00 on Tuesday (testing in the afternoon) -> should look up Wednesday (02/09/2026)
+    // Trước 20:00: gửi lại lịch hôm nay (admin sửa ca)
     const afternoon = new Date(2026, 8, 1, 15, 0);
-    expect(resolveLookupDate(afternoon, false, '05:30', true)).toBe('02/09/2026');
+    expect(resolveLookupDate(afternoon, false, '05:30', true)).toBe('01/09/2026');
 
-    // 08:00 on Tuesday (morning) -> should look up Wednesday (02/09/2026)
     const morning = new Date(2026, 8, 1, 8, 0);
-    expect(resolveLookupDate(morning, false, '05:30', true)).toBe('02/09/2026');
+    expect(resolveLookupDate(morning, false, '05:30', true)).toBe('01/09/2026');
 
-    // sendNextDay = false -> returns today (01/09/2026)
     expect(resolveLookupDate(morning, false, '05:30', false)).toBe('01/09/2026');
   });
 
