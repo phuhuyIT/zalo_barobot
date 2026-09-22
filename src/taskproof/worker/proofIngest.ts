@@ -5,8 +5,8 @@
  * (single-flight trong ocr.ts) → chấm mọi task mở trên nhóm → ghi file
  * + submissions → đóng khi đủ quota.
  *
- * Ghi processed_messages trước OCR: crash giữa chừng không OCR lại
- * (at-most-once). Ảnh dưới ngưỡng: không row, không đổi task.
+ * OCR xong mới claim processed_messages — lỗi OCR / OCR trống có thể thử lại.
+ * Ảnh dưới ngưỡng: claim, không row, không đổi task.
  * UNIQUE(task_id, uid_from) ghi đè lần nộp trước, không lưu lịch sử.
  * Worker không sendPhoto (T6 = official bot); đủ quota thì HTTP kick report-now.
  */
@@ -208,14 +208,10 @@ export async function ingestProofImage(
     download: deps.downloadImage,
   });
   if (!downloaded) {
+    console.warn(
+      `[TaskProofWorker] Tải minh chứng thất bại msg=${msgId} group=${zcaGroupId}`
+    );
     return { outcome: 'discarded', reason: 'fetch_failed' };
-  }
-
-  // Ghi trước OCR — crash giữa recognize không chạy lại cùng msg.
-  // /quet (ignoreProcessed): INSERT OR IGNORE, không bỏ vì lần live đã dưới ngưỡng.
-  const claimed = claimProcessedMessage(db, zcaGroupId, msgId, now());
-  if (!opts.ignoreProcessed && !claimed) {
-    return { outcome: 'skipped', reason: 'already_processed' };
   }
 
   let ocrText: string;
@@ -223,8 +219,15 @@ export async function ingestProofImage(
     ocrText = await ocr(downloaded.buffer);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[TaskProofWorker] OCR lỗi (đã claim processed, không retry):', msg);
+    console.error('[TaskProofWorker] OCR lỗi (chưa claim, có thể thử lại):', msg);
     return { outcome: 'discarded', reason: 'ocr_failed' };
+  }
+
+  if (!ocrText.trim()) {
+    console.warn(
+      `[TaskProofWorker] OCR trống (chưa claim) msg=${msgId} bytes=${downloaded.buffer.length}`
+    );
+    return { outcome: 'discarded', reason: 'ocr_empty' };
   }
 
   const candidates: MatchCandidate[] = listOpenCandidates(db, zcaGroupId, opts.onlyTaskId).map((row) => ({
@@ -235,6 +238,13 @@ export async function ingestProofImage(
   const threshold = getTaskproofSetting('ocr_match_threshold', db);
   const winner = pickBestMatch(ocrText, candidates, threshold);
   if (!winner) {
+    const claimed = claimProcessedMessage(db, zcaGroupId, msgId, now());
+    if (!opts.ignoreProcessed && !claimed) {
+      return { outcome: 'skipped', reason: 'already_processed' };
+    }
+    console.log(
+      `[TaskProofWorker] Ảnh dưới ngưỡng msg=${msgId} bytes=${downloaded.buffer.length} ocr="${ocrText.replace(/\s+/g, ' ').slice(0, 120)}"`
+    );
     return { outcome: 'discarded', reason: 'below_threshold' };
   }
 
@@ -251,11 +261,15 @@ export async function ingestProofImage(
     matchScore: winner.result.score,
     createdAt: now(),
   });
+  claimProcessedMessage(db, zcaGroupId, msgId, now());
 
   const closed = closeTaskIfQuotaReached(db, winner.candidate.id);
   const taskRow = db
     .prepare(`SELECT short_code FROM tasks WHERE id = ?`)
     .get(winner.candidate.id) as { short_code: string } | undefined;
+  console.log(
+    `[TaskProofWorker] Ghi minh chứng ${taskRow?.short_code || winner.candidate.id} score=${winner.result.score} uid=${uidFrom} bytes=${downloaded.buffer.length}`
+  );
 
   if (closed) {
     console.log(

@@ -110,6 +110,8 @@ export function observeMember(
 ): void {
   const uid = stripMemberId(userId);
   if (!zcaGroupId || !uid) return;
+  const existingTs = cacheUpdatedAt(db, zcaGroupId);
+  const stamp = existingTs ?? now;
   db.prepare(
     `INSERT INTO group_members_cache (zca_group_id, user_id, display_name, updated_at)
      VALUES (?, ?, ?, ?)
@@ -117,9 +119,8 @@ export function observeMember(
        display_name = CASE
          WHEN excluded.display_name != excluded.user_id THEN excluded.display_name
          ELSE group_members_cache.display_name
-       END,
-       updated_at = excluded.updated_at`
-  ).run(zcaGroupId, uid, (displayName || '').trim() || uid, now);
+       END`
+  ).run(zcaGroupId, uid, (displayName || '').trim() || uid, stamp);
 }
 
 function displayNameOf(

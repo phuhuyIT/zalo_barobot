@@ -5,7 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables } from '../../src/store';
 import { initTaskproofTables } from '../../src/taskproof/store';
-import { cookieHeaderFromCredentials, downloadImageBytes, isGifUrl } from '../../src/taskproof/worker/imageFetch';
+import {
+  cookieHeaderFromCredentials,
+  downloadImageBytes,
+  isGifUrl,
+  isImageHref,
+  isZaloMediaHost,
+} from '../../src/taskproof/worker/imageFetch';
 import { ingestProofImage } from '../../src/taskproof/worker/proofIngest';
 import { WorkerRuntime } from '../../src/taskproof/worker/runtime';
 import { saveSession } from '../../src/taskproof/worker/session';
@@ -113,7 +119,20 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     db.close();
   });
 
-  it('writes processed_messages before OCR so a crash retry is at-most-once', async () => {
+  it('does not claim processed_messages when OCR returns empty text', async () => {
+    const db = openDb();
+    seedOpenTask(db);
+    const result = await ingestProofImage(db, proofImage(), {
+      ocrImage: async () => '   ',
+      downloadImage: async () => PNG,
+      proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
+    });
+    expect(result).toEqual({ outcome: 'discarded', reason: 'ocr_empty' });
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM processed_messages`).get() as { n: number }).n).toBe(0);
+    db.close();
+  });
+
+  it('does not claim processed_messages when OCR fails so a retry can run', async () => {
     const db = openDb();
     seedOpenTask(db);
     const ocrImage = vi.fn(async () => {
@@ -127,17 +146,20 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     });
     expect(first).toEqual({ outcome: 'discarded', reason: 'ocr_failed' });
     expect(ocrImage).toHaveBeenCalledOnce();
+    const claimed = (
+      db.prepare(`SELECT COUNT(*) AS n FROM processed_messages`).get() as { n: number }
+    ).n;
+    expect(claimed).toBe(0);
 
     ocrImage.mockClear();
+    ocrImage.mockResolvedValueOnce('TEST TASK PROOF OCR');
     const retry = await ingestProofImage(db, proofImage(), {
       ocrImage,
       downloadImage: async () => PNG,
       proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
     });
-    expect(retry).toEqual({ outcome: 'skipped', reason: 'already_processed' });
-    expect(ocrImage).not.toHaveBeenCalled();
-    const submissions = db.prepare(`SELECT COUNT(*) AS n FROM submissions`).get() as { n: number };
-    expect(submissions.n).toBe(0);
+    expect(retry.outcome).toBe('recorded');
+    expect(ocrImage).toHaveBeenCalledOnce();
     db.close();
   });
 
@@ -234,6 +256,44 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     expect(photo.href).toBe('https://cdn.example/a.jpg');
     expect(photo.msgId).toBe('p1');
     expect(photo.uidFrom).toBe('u1');
+
+    const undownload = normalizeZcaInbound({
+      type: 1,
+      threadId: 'zgr-1',
+      data: {
+        msgId: 'p2',
+        uidFrom: 'u1',
+        dName: 'An',
+        msgType: 'chat.photo.undownload',
+        content: {
+          params: JSON.stringify({ href: 'https://photo-stal-23.zdn.vn/gr/jpg/x/a.jpg' }),
+        },
+      },
+    });
+    expect(undownload.hasImage).toBe(true);
+    expect(undownload.isLinkCard).toBe(false);
+    expect(undownload.href).toBe('https://photo-stal-23.zdn.vn/gr/jpg/x/a.jpg');
+
+    const album = normalizeZcaInbound({
+      type: 1,
+      threadId: 'zgr-1',
+      data: {
+        msgId: 'p3',
+        uidFrom: 'u1',
+        dName: 'An',
+        msgType: 'chat.photo',
+        content: [{ href: 'https://zpsocial-f54-org.zadn.vn/file', type: 'photo' }],
+      },
+    });
+    expect(album.hasImage).toBe(true);
+    expect(album.href).toBe('https://zpsocial-f54-org.zadn.vn/file');
+  });
+
+  it('treats photo-stal and zadn hosts as Zalo media', () => {
+    expect(isZaloMediaHost('photo-stal-23.zdn.vn')).toBe(true);
+    expect(isZaloMediaHost('zpsocial-f54-org.zadn.vn')).toBe(true);
+    expect(isImageHref('https://zpsocial-f54-org.zadn.vn/file')).toBe(true);
+    expect(isZaloMediaHost('cdn.example')).toBe(false);
   });
 
   it('treats chat.link preview cards as not screenshots and does not OCR them', () => {
@@ -299,6 +359,28 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
 
     const cookie = cookieHeaderFromCredentials([{ name: 'zpw', value: 'abc' }]);
     expect(cookie).toBe('zpw=abc');
+
+    const cookies: Array<string | undefined> = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string> | undefined;
+      cookies.push(headers?.Cookie);
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        arrayBuffer: async () => PNG,
+      };
+    }) as unknown as typeof fetch;
+    await downloadImageBytes('https://photo-stal-23.zdn.vn/gr/jpg/x/a.jpg', {
+      cookieHeader: cookie,
+      fetchImpl,
+    });
+    await downloadImageBytes('https://zpsocial-f54-org.zadn.vn/file', {
+      cookieHeader: cookie,
+      fetchImpl,
+    });
+    await downloadImageBytes('https://cdn.example/a.jpg', { cookieHeader: cookie, fetchImpl });
+    expect(cookies).toEqual(['zpw=abc', 'zpw=abc', undefined]);
 
     const db = openDb();
     seedOpenTask(db);

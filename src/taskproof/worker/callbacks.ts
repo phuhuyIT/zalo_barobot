@@ -58,7 +58,7 @@ export async function postLinkResult(body: {
 export async function postReportNow(
   taskId: string
 ): Promise<{ status: number; json: Record<string, unknown> }> {
-  return postToOfficialBot('/internal/taskproof/report-now', { task_id: taskId }, 60_000);
+  return postToOfficialBot('/internal/taskproof/report-now', { task_id: taskId }, 180_000);
 }
 
 /** /quet xong — official bot gửi kết quả vào nhóm. */

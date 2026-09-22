@@ -2,13 +2,17 @@
  * imageFetch.ts
  *
  * Tải bytes ảnh từ href, fallback thumb. Không OCR URL sống.
- * Gửi cookie/UA session zca-js khi URL Zalo cần đăng nhập.
+ * Cookie/UA session zca-js chỉ gửi tới host Zalo. Chặn IP nội bộ (SSRF).
  */
 
+import dns from 'node:dns/promises';
+import net from 'node:net';
+import { isBlockedIp } from '../unfurlFacebook';
 import { ZcaCredentials } from './session';
 
 export const MAX_PROOF_BYTES = 15 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
+const MAX_REDIRECTS = 3;
 
 export function cookieHeaderFromCredentials(cookie: unknown): string {
   if (!cookie) return '';
@@ -40,7 +44,9 @@ export function isImageHref(url: string): boolean {
   const value = (url || '').trim();
   if (!value) return false;
   if (/\.(?:jpe?g|png|webp|bmp)(?:[?#]|$)/i.test(value)) return true;
-  return /(?:^|\.)(?:zdn\.vn|zalo(?:cdn)?\.me)|photo-stal-|fsh-|za-chat/i.test(value);
+  return /(?:^|\.)(?:zadn\.vn|zdn\.vn|zalo(?:cdn)?\.me|zalo\.vn|zaloapp\.com)|photo-|fsh-|za-chat|z-cdn/i.test(
+    value
+  );
 }
 
 export function looksLikeGifBuffer(buf: Buffer): boolean {
@@ -54,6 +60,63 @@ export function looksLikeHtmlBuffer(buf: Buffer): boolean {
   return head.startsWith('<!doctype') || head.startsWith('<html');
 }
 
+export function isZaloMediaHost(hostname: string): boolean {
+  const host = (hostname || '').replace(/\.$/, '').toLowerCase();
+  if (!host) return false;
+  return (
+    host === 'zalo.me' ||
+    host === 'zalo.vn' ||
+    host.endsWith('.zalo.me') ||
+    host.endsWith('.zalo.vn') ||
+    host.endsWith('.zalocdn.me') ||
+    host.endsWith('.zdn.vn') ||
+    host.endsWith('.zadn.vn') ||
+    host.endsWith('.zaloapp.com') ||
+    host.includes('za-chat') ||
+    host.includes('z-cdn') ||
+    host.startsWith('photo-') ||
+    host.startsWith('fsh-')
+  );
+}
+
+async function assertPublicHttpUrl(raw: string): Promise<URL | null> {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  if (parsed.username || parsed.password) return null;
+  const host = parsed.hostname.replace(/\.$/, '');
+  if (net.isIP(host)) {
+    if (isBlockedIp(host)) return null;
+    return parsed;
+  }
+  try {
+    const rows = await dns.lookup(host, { all: true });
+    const addresses = rows.map((row) => row.address);
+    if (!addresses.length || addresses.some((ip) => isBlockedIp(ip))) return null;
+  } catch {
+    return null;
+  }
+  return parsed;
+}
+
+async function readLimitedBytes(res: Response): Promise<Buffer | null> {
+  const declared = Number(res.headers.get('content-length') || 0);
+  if (Number.isFinite(declared) && declared > MAX_PROOF_BYTES) return null;
+  try {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length === 0 || buf.length > MAX_PROOF_BYTES) return null;
+    return buf;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[TaskProofWorker] Đọc bytes ảnh lỗi:', msg);
+    return null;
+  }
+}
+
 export async function downloadImageBytes(
   url: string,
   opts: {
@@ -61,42 +124,90 @@ export async function downloadImageBytes(
     cookieHeader?: string;
     userAgent?: string;
     fetchImpl?: typeof fetch;
+    lookup?: (hostname: string) => Promise<string[]>;
   } = {}
 ): Promise<Buffer | null> {
   const trimmed = (url || '').trim();
   if (!/^https?:\/\//i.test(trimmed)) return null;
   if (isGifUrl(trimmed)) return null;
 
-  const headers: Record<string, string> = {
-    Accept: 'image/*,*/*;q=0.8',
-  };
-  const cookie =
-    opts.cookieHeader || cookieHeaderFromCredentials(opts.session?.cookie);
-  if (cookie) headers.Cookie = cookie;
+  const cookie = opts.cookieHeader || cookieHeaderFromCredentials(opts.session?.cookie);
   const ua = opts.userAgent || opts.session?.userAgent || '';
-  if (ua) headers['User-Agent'] = ua;
-
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetchImpl(trimmed, {
-      headers,
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length === 0 || buf.length > MAX_PROOF_BYTES) return null;
-    if (looksLikeHtmlBuffer(buf) || looksLikeGifBuffer(buf)) return null;
-    return buf;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn('[TaskProofWorker] Tải ảnh thất bại:', trimmed.slice(0, 120), msg);
-    return null;
-  } finally {
-    clearTimeout(timer);
+
+  let current: URL | null;
+  if (opts.fetchImpl && !opts.lookup) {
+    try {
+      current = new URL(trimmed);
+    } catch {
+      return null;
+    }
+    if (current.protocol !== 'http:' && current.protocol !== 'https:') return null;
+    if (current.username || current.password) return null;
+    if (net.isIP(current.hostname) && isBlockedIp(current.hostname)) return null;
+  } else {
+    current = await assertPublicHttpUrl(trimmed);
+    if (!current) {
+      console.warn('[TaskProofWorker] Bỏ URL ảnh (SSRF/DNS):', trimmed.slice(0, 160));
+    }
   }
+  if (!current) return null;
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const headers: Record<string, string> = { Accept: 'image/*,*/*;q=0.8' };
+    if (ua) headers['User-Agent'] = ua;
+    if (cookie && isZaloMediaHost(current.hostname)) headers.Cookie = cookie;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetchImpl(current.href, {
+        headers,
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[TaskProofWorker] Tải ảnh thất bại:', trimmed.slice(0, 120), msg);
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      if (!location) return null;
+      let next: URL;
+      try {
+        next = new URL(location, current);
+      } catch {
+        return null;
+      }
+      current = await assertPublicHttpUrl(next.href);
+      if (!current) {
+        console.warn('[TaskProofWorker] Bỏ redirect ảnh (SSRF/DNS):', next.href.slice(0, 160));
+        return null;
+      }
+      continue;
+    }
+
+    if (!res.ok) {
+      console.warn(
+        `[TaskProofWorker] Tải ảnh HTTP ${res.status} host=${current.hostname}`
+      );
+      return null;
+    }
+    const buf = await readLimitedBytes(res);
+    if (!buf || looksLikeHtmlBuffer(buf) || looksLikeGifBuffer(buf)) {
+      console.warn(
+        `[TaskProofWorker] Ảnh không dùng được host=${current.hostname} bytes=${buf?.length ?? 0}`
+      );
+      return null;
+    }
+    return buf;
+  }
+  return null;
 }
 
 export async function downloadProofBytes(

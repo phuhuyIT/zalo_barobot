@@ -285,12 +285,11 @@ function fetchOldGroupMessagesViaWs(
     }, timeoutMs);
     const onOld = (messages: Message[], type: ThreadType) => {
       if (type !== ThreadType.Group) return;
-      finish(() => {
-        const mapped = messages
-          .filter((m) => String(m.threadId || '') === String(groupId))
-          .map((m) => normalizeZcaInbound(m));
-        resolve({ more: 0, messages: mapped });
-      });
+      const mapped = messages
+        .filter((m) => String(m.threadId || '') === String(groupId))
+        .map((m) => normalizeZcaInbound(m));
+      if (mapped.length === 0 && messages.length > 0) return;
+      finish(() => resolve({ more: 0, messages: mapped }));
     };
     api.listener.on('old_messages', onOld);
     api.listener.requestOldMessages(ThreadType.Group);
@@ -327,6 +326,50 @@ function asIdList(value: unknown): string[] {
   return [];
 }
 
+function firstNonEmptyString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function mediaFromRecord(rec: Record<string, unknown>): {
+  href: string;
+  thumb: string;
+  contentType: string;
+} {
+  let href = firstNonEmptyString(rec.href);
+  let thumb = firstNonEmptyString(rec.thumb, rec.oriUrl, rec.originUrl);
+  const contentType = typeof rec.type === 'string' ? rec.type : '';
+  const paramsRaw = rec.params;
+  if (typeof paramsRaw === 'string' && paramsRaw.trim().startsWith('{')) {
+    try {
+      const params = JSON.parse(paramsRaw) as Record<string, unknown>;
+      href = href || firstNonEmptyString(params.href, params.imageUrl, params.originUrl, params.oriUrl);
+      thumb = thumb || firstNonEmptyString(params.thumb, params.thumbUrl, params.previewUrl);
+    } catch {
+      // params không phải JSON ảnh
+    }
+  }
+  return { href, thumb, contentType };
+}
+
+function extractMedia(content: unknown): { href: string; thumb: string; contentType: string } {
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      if (item && typeof item === 'object') {
+        const media = mediaFromRecord(item as Record<string, unknown>);
+        if (media.href || media.thumb) return media;
+      }
+    }
+    return { href: '', thumb: '', contentType: '' };
+  }
+  if (content && typeof content === 'object') {
+    return mediaFromRecord(content as Record<string, unknown>);
+  }
+  return { href: '', thumb: '', contentType: '' };
+}
+
 export function normalizeZcaInbound(message: {
   type: number;
   threadId: string;
@@ -342,26 +385,22 @@ export function normalizeZcaInbound(message: {
 }): ZcaInboundMessage {
   const content = message.data.content;
   const text = typeof content === 'string' ? content : '';
-  let href = '';
-  let thumb = '';
-  let contentType = '';
-  if (content && typeof content === 'object') {
-    const rec = content as Record<string, unknown>;
-    href = typeof rec.href === 'string' ? rec.href : '';
-    thumb = typeof rec.thumb === 'string' ? rec.thumb : '';
-    contentType = typeof rec.type === 'string' ? rec.type : '';
-  }
+  const media = extractMedia(content);
+  const href = media.href;
+  const thumb = media.thumb;
+  const contentType = media.contentType;
   const msgType = message.data.msgType || '';
   const isGif = /gif/i.test(contentType) || /gif/i.test(msgType) || /\.gif(\?|#|$)/i.test(href);
-  const isPhotoType = /^(chat\.photo)$/i.test(msgType) || /photo/i.test(contentType);
+  const isPhotoType = /^chat\.photo/i.test(msgType) || /photo/i.test(contentType);
   const isLinkType =
     /^(chat\.link|chat\.recommended)$/i.test(msgType) ||
     /^(recommend|link|share)$/i.test(contentType);
-  const hrefLooksLikeImage = isImageHref(href);
+  const hrefLooksLikeImage = isImageHref(href) || isImageHref(thumb);
   const isLinkCard =
     !isGif &&
-    Boolean(href) &&
-    (isLinkType || (!isPhotoType && !hrefLooksLikeImage && !/^https?:\/\/(?:photo-|fsh-)/i.test(href)));
+    Boolean(href || thumb) &&
+    (isLinkType ||
+      (!isPhotoType && !hrefLooksLikeImage && !/^https?:\/\/(?:photo-|fsh-)/i.test(href || thumb)));
   const hasImage = Boolean((href || thumb) && !isGif && !isLinkCard);
   return {
     threadId: message.threadId,
@@ -412,13 +451,26 @@ export function createZcaLoginPort(): ZcaLoginPort {
       const zalo = new Zalo();
       fs.mkdirSync(path.dirname(opts.qrPath), { recursive: true });
 
-      let abortQr: (() => void) | null = null;
+      const qrCtl: { abort: (() => void) | null } = { abort: null };
       let gotCreds: ZcaCredentials | null = null;
       let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+      let timedOut = false;
+
+      const dropApi = (api: API | null) => {
+        if (!api) return;
+        try {
+          api.listener.stop();
+        } catch {
+          // best-effort
+        }
+        if (activeApi === api) activeApi = null;
+      };
 
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => {
-          abortQr?.();
+          timedOut = true;
+          qrCtl.abort?.();
+          dropApi(activeApi);
           reject(Object.assign(new Error('qr_timeout'), { code: 'qr_timeout' }));
         }, opts.timeoutMs);
       });
@@ -435,14 +487,14 @@ export function createZcaLoginPort(): ZcaLoginPort {
           void (async () => {
             if (event.type === LoginQRCallbackEventType.QRCodeGenerated) {
               await event.actions.saveToFile(opts.qrPath);
-              abortQr = () => {
+              qrCtl.abort = () => {
                 try {
                   event.actions.abort();
                 } catch {
                   // abort best-effort
                 }
               };
-              await opts.onGenerated({ abort: abortQr });
+              await opts.onGenerated({ abort: qrCtl.abort });
             } else if (event.type === LoginQRCallbackEventType.GotLoginInfo) {
               gotCreds = {
                 cookie: event.data.cookie,
@@ -460,23 +512,38 @@ export function createZcaLoginPort(): ZcaLoginPort {
               }
             }
           })().catch((err: unknown) => {
-            abortQr?.();
+            qrCtl.abort?.();
             const wrapped = err instanceof Error ? err : new Error(String(err));
             rejectCallback?.(wrapped);
           });
         })
         .then((api) => {
-          activeApi = api;
-          wireRecentHistoryApi(api);
-          wireListener(api);
+          if (timedOut) {
+            dropApi(api);
+            return { api: null as API | null, creds: null as ZcaCredentials | null };
+          }
           const fromCtx = credsFromContext(api);
-          return gotCreds || fromCtx;
+          return { api, creds: gotCreds || fromCtx };
         });
 
       try {
-        const creds = await Promise.race([loginPromise, timeoutPromise, callbackFailed]);
-        if (!creds) throw new Error('QR login finished without credentials');
-        return creds;
+        const result = (await Promise.race([loginPromise, timeoutPromise, callbackFailed])) as {
+          api: API | null;
+          creds: ZcaCredentials | null;
+        };
+        if (!result?.api || !result.creds) throw new Error('QR login finished without credentials');
+        activeApi = result.api;
+        wireRecentHistoryApi(result.api);
+        wireListener(result.api);
+        return result.creds;
+      } catch (err) {
+        try {
+          qrCtl.abort?.();
+        } catch {
+          // best-effort
+        }
+        dropApi(activeApi);
+        throw err;
       } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle);
       }
