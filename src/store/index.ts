@@ -76,11 +76,25 @@ export function getDatabase(customPath?: string): Database.Database {
 
   const dbPath = resolveDatabasePath(customPath);
   const dir = path.dirname(dbPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Cannot create SQLite directory ${dir} (uid=${process.getuid?.() ?? 'n/a'}): ${msg}`);
   }
 
-  db = new Database(dbPath);
+  console.log(`[Store] Opening SQLite at ${dbPath} (uid=${process.getuid?.() ?? 'n/a'})`);
+  try {
+    db = new Database(dbPath);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Cannot open SQLite at ${dbPath} (uid=${process.getuid?.() ?? 'n/a'}). ` +
+        `On Railway the volume must be mounted at /data and DATABASE_PATH=/data/app.db. ${msg}`
+    );
+  }
   configureSqliteConnection(db);
   initTables(db);
 
