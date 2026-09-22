@@ -271,4 +271,33 @@ describe('T6 completion report (Step 10)', () => {
     expect(row.reported_at).toBeNull();
     db.close();
   });
+
+  it('prefers image_url from Zalo CDN when available to avoid disk/token race conditions', async () => {
+    const db = openDb();
+    insertTask(db, { id: 't-cdn', code: 'CDN001' });
+    insertSub(db, {
+      id: 's-cdn',
+      taskId: 't-cdn',
+      uid: 'u1',
+      name: 'A',
+      storedPath: '/tmp/missing.jpg',
+      imageUrl: 'https://photo-stal-1.zdn.vn/gr/jpg/123/img.jpg',
+    });
+    const sendPhoto = vi.fn().mockResolvedValue({ messageId: 'p' });
+    const sendMessage = vi.fn().mockResolvedValue({ messageId: 'm' });
+    const proofFileUrl = vi.fn((id: string) => `https://public.example/file/${id}`);
+    const results = await reportUnreportedCompletedTasks(db, {
+      sendPhoto,
+      sendMessage,
+      proofFileUrl,
+      proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
+      now: () => 10,
+      getAdminChatId: () => 'admin_dm',
+    });
+    expect(results[0].reported).toBe(true);
+    expect(sendPhoto).toHaveBeenCalledWith('report_group', 'https://photo-stal-1.zdn.vn/gr/jpg/123/img.jpg');
+    // Ensure proofFileUrl was not used when CDN URL succeeded
+    expect(proofFileUrl).not.toHaveBeenCalled();
+    db.close();
+  });
 });

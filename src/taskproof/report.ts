@@ -154,6 +154,15 @@ async function sendOneProofPhoto(
   sendPhoto: (chatId: string, photoUrl: string, caption?: string) => Promise<unknown>,
   proofFileUrl: (submissionId: string) => string
 ): Promise<'ok' | 'skip'> {
+  if (isHttpsUrl(sub.image_url)) {
+    try {
+      await withTimeout(sendPhoto(chatId, sub.image_url), SEND_PHOTO_TIMEOUT_MS, 'sendPhoto timeout');
+      return 'ok';
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[TaskProof] sendPhoto CDN thất bại ${sub.id}:`, msg);
+    }
+  }
   const fileUrl = proofFileUrl(sub.id);
   if (isHttpsUrl(fileUrl)) {
     try {
@@ -161,16 +170,7 @@ async function sendOneProofPhoto(
       return 'ok';
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[TaskProof] sendPhoto file URL thất bại ${sub.id}:`, msg);
-    }
-  }
-  if (isHttpsUrl(sub.image_url)) {
-    try {
-      await withTimeout(sendPhoto(chatId, sub.image_url), SEND_PHOTO_TIMEOUT_MS, 'sendPhoto timeout');
-      return 'ok';
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[TaskProof] sendPhoto CDN fallback thất bại ${sub.id}:`, msg);
+      console.warn(`[TaskProof] sendPhoto file URL fallback thất bại ${sub.id}:`, msg);
     }
   }
   console.warn(`[TaskProof] Bỏ qua ảnh chết ${sub.id} (task ${shortCode})`);
