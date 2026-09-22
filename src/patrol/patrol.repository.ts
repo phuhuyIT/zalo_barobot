@@ -153,20 +153,20 @@ function seedDefaultSiteConfigs(database: Database.Database): void {
   const now = new Date().toISOString();
   const defaultTimes = JSON.stringify(['06:30', '06:35', '06:40']);
 
-  const site1Leader =
+  const site1Leader = (
     process.env.TIUDOI_1_LEADER_USER_ID ||
     process.env.TIEU_DOI_1_LEADER_USER_ID ||
     process.env.SQUAD_1_LEADER_USER_ID ||
-    '';
-  const site1Group =
-    process.env.PATROL_GROUP_ID || process.env.PATROL_CHAT_ID || '';
+    ''
+  ).trim();
+  const site1Group = (process.env.PATROL_GROUP_ID || process.env.PATROL_CHAT_ID || '').trim();
 
-  const site2Leader =
+  const site2Leader = (
     process.env.SITE_2_LEADER_USER_ID ||
     process.env.TIUDOI_2_LEADER_USER_ID ||
-    '';
-  const site2Group =
-    process.env.SITE_2_PATROL_GROUP_ID || '';
+    ''
+  ).trim();
+  const site2Group = (process.env.SITE_2_PATROL_GROUP_ID || '').trim();
 
   const existing1 = database
     .prepare(`SELECT site_key FROM patrol_site_configs WHERE site_key = 'site_1'`)
