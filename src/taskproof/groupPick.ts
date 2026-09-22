@@ -321,15 +321,11 @@ export function fieldSummary(fields: ParsedTaskFields): string[] {
   ];
 }
 
-export function formatGroupTaskPost(created: InsertedTask, fields: ParsedTaskFields): string {
-  return [
-    `Nhiệm vụ ${created.short_code}`,
-    `Link: ${fields.link}`,
-    `Caption: ${fields.caption}`,
-    `Số lượng: ${created.required_count}`,
-    `Hạn chót: ${formatVnDeadline(created.deadline)} (Asia/Ho_Chi_Minh)`,
-    'Gửi ảnh chụp màn hình vào nhóm này làm minh chứng.',
-  ].join('\n');
+/** Tin trong nhóm làm việc: chỉ link bài và một câu ngắn. Chi tiết gửi riêng admin. */
+export function formatGroupTaskPost(_created: InsertedTask, fields: ParsedTaskFields): string {
+  const link = (fields.link || '').trim();
+  const ask = 'Các đồng chí thực hiện nhé!';
+  return link ? `${link}\n${ask}` : ask;
 }
 
 export function resolveGroupChoice(raw: string, groups: LinkedGroup[]): LinkedGroup | null {

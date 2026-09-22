@@ -3,17 +3,19 @@
  *
  * T6 — báo cáo hoàn thành (official bot only, Section 8.6).
  * sendPhoto chỉ nhận URL https (không đường dẫn đĩa).
+ * Nhóm báo cáo chỉ nhận ảnh, không caption và không tin chữ.
+ * Admin 1-1 nhận một câu "Đã báo cáo task …".
  * Một ảnh chết: log + bỏ qua, không hủy cả báo cáo.
- * Gửi thất bại tới report_group_id → gửi lại official_chat_id của nhóm task.
+ * Ảnh không tới report_group_id → gửi ảnh sang official_chat_id của nhóm task.
  * /huy (cancelled) không vào hàng đợi này. Xóa proofs sau khi set reported_at.
  */
 
 import Database from 'better-sqlite3';
-import { getVietnamTimeParts } from '../sheets/dateUtils';
 import { getDatabase } from '../store';
 import { ZaloClient } from '../core/zaloClient';
 import { buildTokenGatedUrl, getProofDir } from './env';
 import { deleteTaskProofDir } from './lifecycle';
+import { getTaskproofSetting } from './settings';
 import { listMissingTaskproofTables } from './store';
 
 export interface ReportSubmission {
@@ -42,6 +44,8 @@ export interface ReportSendDeps {
   proofFileUrl?: (submissionId: string) => string;
   proofDir?: string;
   now?: () => number;
+  /** Chat 1-1 nhận câu đã báo cáo. Mặc định admin_official_chat_id. */
+  getAdminChatId?: () => string;
   /** Chỉ task này — kick ngay khi đủ quota / /dong. Cron không truyền. */
   taskId?: string;
 }
@@ -119,28 +123,28 @@ export function listSubmissionsForTask(
     .all(taskId) as ReportSubmission[];
 }
 
-export function formatCompletionSummary(task: UnreportedTask, submissions: ReportSubmission[]): string {
-  const lines = [
-    `Báo cáo hoàn thành task ${task.short_code}`,
-    `Caption: ${task.reference_text}`,
-    `Link: ${task.link}`,
-    `Đã nộp: ${submissions.length}/${task.required_count}`,
-  ];
-  submissions.forEach((sub, i) => {
-    const when = getVietnamTimeParts(new Date(sub.created_at));
-    const score = Number.isFinite(sub.match_score) ? sub.match_score.toFixed(2) : '?';
-    lines.push(
-      `${i + 1}. ${sub.display_name} (${sub.uid_from}) — ${score} — ${when.dateDMY} ${when.timeHM}`
-    );
-  });
-  if (submissions.length === 0) {
-    lines.push('(Chưa có minh chứng.)');
-  }
-  return lines.join('\n');
+export function formatAdminReportedNotice(shortCode: string): string {
+  return `Đã báo cáo task ${shortCode}.`;
 }
 
 function isHttpsUrl(url: string): boolean {
   return /^https:\/\//i.test(url);
+}
+
+const SEND_PHOTO_TIMEOUT_MS = 15_000;
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function sendOneProofPhoto(
@@ -150,11 +154,10 @@ async function sendOneProofPhoto(
   sendPhoto: (chatId: string, photoUrl: string, caption?: string) => Promise<unknown>,
   proofFileUrl: (submissionId: string) => string
 ): Promise<'ok' | 'skip'> {
-  const caption = `${shortCode} — ${sub.display_name}`;
   const fileUrl = proofFileUrl(sub.id);
   if (isHttpsUrl(fileUrl)) {
     try {
-      await sendPhoto(chatId, fileUrl, caption);
+      await withTimeout(sendPhoto(chatId, fileUrl), SEND_PHOTO_TIMEOUT_MS, 'sendPhoto timeout');
       return 'ok';
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -163,7 +166,7 @@ async function sendOneProofPhoto(
   }
   if (isHttpsUrl(sub.image_url)) {
     try {
-      await sendPhoto(chatId, sub.image_url, caption);
+      await withTimeout(sendPhoto(chatId, sub.image_url), SEND_PHOTO_TIMEOUT_MS, 'sendPhoto timeout');
       return 'ok';
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -174,14 +177,14 @@ async function sendOneProofPhoto(
   return 'skip';
 }
 
-async function deliverReportToChat(
+async function deliverPhotosToChat(
   chatId: string,
   task: UnreportedTask,
   submissions: ReportSubmission[],
-  deps: Required<Pick<ReportSendDeps, 'sendPhoto' | 'sendMessage'>> & {
+  deps: Required<Pick<ReportSendDeps, 'sendPhoto'>> & {
     proofFileUrl: (id: string) => string;
   }
-): Promise<{ photosSent: number; photosSkipped: number; summarySent: boolean; error?: string }> {
+): Promise<{ photosSent: number; photosSkipped: number }> {
   let photosSent = 0;
   let photosSkipped = 0;
   for (const sub of submissions) {
@@ -201,15 +204,31 @@ async function deliverReportToChat(
       console.warn(`[TaskProof] Ảnh ${sub.id} lỗi, bỏ qua:`, msg);
     }
   }
+  return { photosSent, photosSkipped };
+}
 
-  const summary = formatCompletionSummary(task, submissions);
+function photosLanded(submissionCount: number, photosSent: number): boolean {
+  return submissionCount === 0 || photosSent > 0;
+}
+
+async function notifyAdminReported(
+  db: Database.Database,
+  task: UnreportedTask,
+  sendMessage: (chatId: string, text: string) => Promise<unknown>,
+  getAdminChatId?: () => string
+): Promise<void> {
+  const adminChatId = (
+    getAdminChatId ? getAdminChatId() : getTaskproofSetting('admin_official_chat_id', db) || ''
+  ).trim();
+  if (!adminChatId) {
+    console.warn(`[TaskProof] Không có admin_official_chat_id, bỏ qua báo đã báo cáo ${task.short_code}.`);
+    return;
+  }
   try {
-    await deps.sendMessage(chatId, summary);
-    return { photosSent, photosSkipped, summarySent: true };
+    await sendMessage(adminChatId, formatAdminReportedNotice(task.short_code));
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[TaskProof] sendMessage báo cáo thất bại tới ${chatId}:`, msg);
-    return { photosSent, photosSkipped, summarySent: false, error: msg };
+    console.error(`[TaskProof] Không báo được admin task ${task.short_code}:`, msg);
   }
 }
 
@@ -244,7 +263,8 @@ function isAlreadyReported(db: Database.Database, taskId: string): boolean {
 
 /**
  * Gửi một task completed. Ảnh chết không hủy báo cáo.
- * report_group thất bại → gửi lại nhóm task (official_chat_id).
+ * Nhóm chỉ nhận ảnh. Câu chữ chỉ tới admin 1-1, sau khi ảnh đã gửi.
+ * report_group không nhận được ảnh → gửi ảnh sang nhóm task.
  * Kick ngay + cron cùng process: một lần gửi (in-flight + reported_at).
  */
 export async function sendTaskCompletionReport(
@@ -277,58 +297,56 @@ async function sendTaskCompletionReportOnce(
   const now = deps.now ?? Date.now;
   const submissions = listSubmissionsForTask(task.id, db);
 
-  const sendDeps = { sendPhoto, sendMessage, proofFileUrl };
+  const photoDeps = { sendPhoto, proofFileUrl };
   const reportChatId = (task.report_group_id || '').trim();
   const fallbackChatId = (task.official_chat_id || '').trim();
 
+  let photosSent = 0;
+  let photosSkipped = 0;
+  let destination: TaskReportResult['destination'] = null;
+
   if (reportChatId) {
-    const first = await deliverReportToChat(reportChatId, task, submissions, sendDeps);
-    if (first.summarySent) {
-      markReported(db, task.id, now(), proofDir);
-      return {
-        taskId: task.id,
-        shortCode: task.short_code,
-        reported: true,
-        photosSent: first.photosSent,
-        photosSkipped: first.photosSkipped,
-        destination: 'report_group',
-      };
+    const first = await deliverPhotosToChat(reportChatId, task, submissions, photoDeps);
+    photosSent = first.photosSent;
+    photosSkipped = first.photosSkipped;
+    if (photosLanded(submissions.length, first.photosSent)) destination = 'report_group';
+  }
+
+  if (!destination && fallbackChatId && fallbackChatId !== reportChatId) {
+    const second = await deliverPhotosToChat(fallbackChatId, task, submissions, photoDeps);
+    if (photosLanded(submissions.length, second.photosSent)) {
+      photosSent = second.photosSent;
+      photosSkipped = second.photosSkipped;
+      destination = 'fallback_group';
+    } else {
+      photosSent += second.photosSent;
+      photosSkipped += second.photosSkipped;
     }
   }
 
-  if (fallbackChatId && fallbackChatId !== reportChatId) {
-    const second = await deliverReportToChat(fallbackChatId, task, submissions, sendDeps);
-    if (second.summarySent) {
-      markReported(db, task.id, now(), proofDir);
-      return {
-        taskId: task.id,
-        shortCode: task.short_code,
-        reported: true,
-        photosSent: second.photosSent,
-        photosSkipped: second.photosSkipped,
-        destination: 'fallback_group',
-        error: reportChatId ? 'report_group failed, used fallback' : undefined,
-      };
-    }
+  if (!destination) {
     return {
       taskId: task.id,
       shortCode: task.short_code,
       reported: false,
-      photosSent: second.photosSent,
-      photosSkipped: second.photosSkipped,
+      photosSent,
+      photosSkipped,
       destination: null,
-      error: second.error || 'both destinations failed',
+      error: reportChatId || fallbackChatId ? 'both destinations failed' : 'no destination chat id',
     };
   }
 
+  markReported(db, task.id, now(), proofDir);
+  await notifyAdminReported(db, task, sendMessage, deps.getAdminChatId);
   return {
     taskId: task.id,
     shortCode: task.short_code,
-    reported: false,
-    photosSent: 0,
-    photosSkipped: submissions.length,
-    destination: null,
-    error: 'no destination chat id',
+    reported: true,
+    photosSent,
+    photosSkipped,
+    destination,
+    error:
+      destination === 'fallback_group' && reportChatId ? 'report_group failed, used fallback' : undefined,
   };
 }
 

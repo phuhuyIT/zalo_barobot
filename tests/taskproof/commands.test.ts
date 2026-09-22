@@ -606,8 +606,9 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       expect(ensureListening).toHaveBeenCalledWith('uuid-1');
       expect(sendMessage).toHaveBeenCalledTimes(2);
       expect(sendMessage.mock.calls[0][0]).toBe('group_task');
-      expect(sendMessage.mock.calls[0][1]).toContain('Nhiệm vụ ABC123');
-      expect(sendMessage.mock.calls[0][1]).toContain('https://example.com/post');
+      expect(sendMessage.mock.calls[0][1]).toBe(
+        'https://example.com/post\nCác đồng chí thực hiện nhé!'
+      );
       expect(sendMessage.mock.calls[1][0]).toBe(ADMIN);
       expect(sendMessage.mock.calls[1][1]).toContain('Đã tạo task ABC123');
       expect(sendMessage.mock.calls[1][1]).toContain('Phú Huy');
@@ -664,7 +665,7 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
             official_chat_id: 'group_task',
             zca_group_id: null,
             report_group_id: 'rep',
-            link: 'https://x',
+            link: 'https://facebook.com/posts/abc',
             reference_text: 'cap',
             required_count: 2,
             deadline: 1,
@@ -676,14 +677,33 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
             submitted_count: 1,
             group_display_name: 'Phú Huy',
           },
+          {
+            id: 't2',
+            short_code: 'DONE01',
+            official_chat_id: 'group_task',
+            zca_group_id: 'zca-1',
+            report_group_id: 'rep',
+            link: 'https://facebook.com/posts/done',
+            reference_text: 'cap',
+            required_count: 2,
+            deadline: 1,
+            status: 'completed',
+            created_at: 2,
+            remind_count: 0,
+            reminded_at: null,
+            reported_at: 3,
+            submitted_count: 2,
+            group_display_name: 'Phú Huy',
+          },
         ],
       });
       expect(handled).toBe(true);
       expect(ensureListening).not.toHaveBeenCalled();
       expect(sendMessage.mock.calls[0][1]).toContain('ABC123');
-      expect(sendMessage.mock.calls[0][1]).toContain('Phú Huy');
+      expect(sendMessage.mock.calls[0][1]).toContain('https://facebook.com/posts/abc');
+      expect(sendMessage.mock.calls[0][1]).toContain('đang thu');
       expect(sendMessage.mock.calls[0][1]).toContain('1/2');
-      expect(sendMessage.mock.calls[0][1]).toMatch(/chưa liên kết nhóm/);
+      expect(sendMessage.mock.calls[0][1]).not.toContain('DONE01');
     });
 
     it('redirects group /task to 1-1 and rejects stranger DMs', async () => {

@@ -90,9 +90,9 @@ describe('task-proof 1-1 group picker', () => {
     expect(created.short_code).toBe('ABC123');
     expect(sendMessage.mock.calls[0][0]).toBe('g_a');
     expect(sendMessage.mock.calls[0][1]).toBe(
-      formatGroupTaskPost(created, FIELDS)
+      'https://example.com/share\nCác đồng chí thực hiện nhé!'
     );
-    expect(sendMessage.mock.calls[0][1]).toContain('https://example.com/share');
+    expect(sendMessage.mock.calls[0][1]).toBe(formatGroupTaskPost(created, FIELDS));
     expect(sendMessage.mock.calls[1][0]).toBe('admin_dm');
   });
 

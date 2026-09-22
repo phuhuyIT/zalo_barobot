@@ -32,7 +32,7 @@ import {
   insertNewTask,
   InsertedTask,
   InsertTaskInput,
-  listRecentTasks,
+  listOpenTasks,
   TaskListRow,
 } from '../tasks';
 import { historyFetchCount } from '../quet';
@@ -112,7 +112,7 @@ function defaultInsertTask(input: InsertTaskInput): InsertedTask {
 }
 
 function defaultListTasks(): TaskListRow[] {
-  return listRecentTasks();
+  return listOpenTasks();
 }
 
 function defaultAdminChatId(): string {
@@ -600,7 +600,7 @@ async function handleTasksList(
 ): Promise<void> {
   const list = deps.listTasks ?? defaultListTasks;
   const rows = list();
-  await deps.sendMessage(inbound.chatId, formatTasksListReply(rows, { allGroups: true }));
+  await deps.sendMessage(inbound.chatId, formatTasksListReply(rows));
 }
 
 async function handleDong(

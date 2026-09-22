@@ -6,7 +6,7 @@ import { setTaskproofSetting } from '../../src/taskproof/settings';
 import {
   formatTasksListReply,
   insertNewTask,
-  listTasksForOfficialChat,
+  listOpenTasks,
   resolveTaskDeadline,
 } from '../../src/taskproof/tasks';
 
@@ -82,27 +82,36 @@ describe('insertNewTask / listTasks (T1, T3)', () => {
     db.close();
   });
 
-  it('lists progress, status, unlinked flag and remind_count', () => {
+  it('lists only collecting and overdue tasks with the post link', () => {
     const db = openDb();
-    db.prepare(
+    const insert = db.prepare(
       `INSERT INTO tasks (id, short_code, official_chat_id, zca_group_id, report_group_id,
         link, reference_text, required_count, deadline, status, created_at, remind_count)
-       VALUES ('t1', 'ABC123', 'off', NULL, 'rep', 'https://x', 'c', 2, 1, 'collecting', 2, 1)`
-    ).run();
+       VALUES (?, ?, 'off', NULL, 'rep', ?, 'c', 2, 1, ?, ?, 1)`
+    );
+    insert.run('t1', 'ABC123', 'https://facebook.com/posts/abc', 'collecting', 2);
+    insert.run('t2', 'DEF456', 'https://facebook.com/posts/def', 'overdue', 3);
+    insert.run('t3', 'DONE01', 'https://facebook.com/posts/done', 'completed', 4);
+    insert.run('t4', 'CANC01', 'https://facebook.com/posts/canc', 'cancelled', 5);
     db.prepare(
       `INSERT INTO submissions (id, task_id, uid_from, display_name, image_url, match_score, created_at)
        VALUES ('s1', 't1', 'u1', 'A', 'https://img', 1, 1)`
     ).run();
 
-    const rows = listTasksForOfficialChat('off', db);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].submitted_count).toBe(1);
+    const rows = listOpenTasks(db);
+    expect(rows.map((row) => row.short_code)).toEqual(['DEF456', 'ABC123']);
+    expect(rows[1].submitted_count).toBe(1);
     const text = formatTasksListReply(rows);
-    expect(text).toContain('ABC123');
-    expect(text).toContain('1/2');
-    expect(text).toContain('collecting');
-    expect(text).toContain('chưa liên kết nhóm');
-    expect(text).toContain('nhắc 1');
+    expect(text).toBe(
+      [
+        'Danh sách task:',
+        '• DEF456 — quá hạn — 0/2',
+        '  https://facebook.com/posts/def',
+        '• ABC123 — đang thu — 1/2',
+        '  https://facebook.com/posts/abc',
+      ].join('\n')
+    );
+    expect(formatTasksListReply([])).toBe('Không có task đang thu hoặc quá hạn.');
     db.close();
   });
 });

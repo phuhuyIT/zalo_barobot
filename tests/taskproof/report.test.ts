@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables } from '../../src/store';
 import { initTaskproofTables } from '../../src/taskproof/store';
 import {
-  formatCompletionSummary,
+  formatAdminReportedNotice,
   kickTaskCompletionReport,
   listUnreportedCompletedTasks,
   reportUnreportedCompletedTasks,
@@ -106,6 +106,7 @@ describe('T6 completion report (Step 10)', () => {
       proofFileUrl: (id) => `https://public.example/internal/taskproof/file/${id}?key=k`,
       proofDir: proofRoot,
       now: () => 999,
+      getAdminChatId: () => 'admin_dm',
     });
 
     expect(results).toHaveLength(1);
@@ -113,7 +114,10 @@ describe('T6 completion report (Step 10)', () => {
     expect(results[0].photosSkipped).toBe(1);
     expect(results[0].photosSent).toBe(1);
     expect(results[0].destination).toBe('report_group');
-    expect(sendMessage).toHaveBeenCalledWith('report_group', expect.stringContaining('REP001'));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith('admin_dm', 'Đã báo cáo task REP001.');
+    expect(sendMessage.mock.calls.some((call) => call[0] === 'report_group')).toBe(false);
+    expect(sendPhoto.mock.calls.every((call) => call.length === 2)).toBe(true);
     expect(sendPhoto.mock.calls.some((c) => String(c[1]).includes('dead1'))).toBe(true);
 
     const row = db
@@ -125,15 +129,23 @@ describe('T6 completion report (Step 10)', () => {
     db.close();
   });
 
-  it('falls back to the task group when report_group send fails', async () => {
+  it('falls back to the task group when report_group photo send fails', async () => {
     const db = openDb();
     insertTask(db, { id: 't2', code: 'FB001', official: 'off_group', report: 'report_group' });
-
-    const sendPhoto = vi.fn().mockResolvedValue({ messageId: 'p' });
-    const sendMessage = vi.fn(async (chatId: string) => {
-      if (chatId === 'report_group') throw new Error('bot is not a member');
-      return { messageId: 'm' };
+    insertSub(db, {
+      id: 's-fb',
+      taskId: 't2',
+      uid: 'u1',
+      name: 'A',
+      storedPath: '/tmp/missing.jpg',
+      imageUrl: 'http://cdn.example/not-https.jpg',
     });
+
+    const sendPhoto = vi.fn(async (chatId: string) => {
+      if (chatId === 'report_group') throw new Error('bot is not a member');
+      return { messageId: 'p' };
+    });
+    const sendMessage = vi.fn().mockResolvedValue({ messageId: 'm' });
 
     const results = await reportUnreportedCompletedTasks(db, {
       sendPhoto,
@@ -141,11 +153,17 @@ describe('T6 completion report (Step 10)', () => {
       proofFileUrl: (id) => `https://public.example/file/${id}`,
       proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
       now: () => 50,
+      getAdminChatId: () => 'admin_dm',
     });
 
     expect(results[0].reported).toBe(true);
     expect(results[0].destination).toBe('fallback_group');
-    expect(sendMessage).toHaveBeenCalledWith('off_group', expect.stringContaining('FB001'));
+    expect(sendPhoto).toHaveBeenCalledWith('off_group', 'https://public.example/file/s-fb');
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith('admin_dm', 'Đã báo cáo task FB001.');
+    expect(sendMessage.mock.calls.some((call) => call[0] === 'off_group' || call[0] === 'report_group')).toBe(
+      false
+    );
     db.close();
   });
 
@@ -179,10 +197,12 @@ describe('T6 completion report (Step 10)', () => {
       proofFileUrl: (id) => `https://public.example/file/${id}`,
       proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
       now: () => 7,
+      getAdminChatId: () => 'admin_dm',
     });
     expect(results).toHaveLength(1);
     expect(results[0].shortCode).toBe('KCK001');
     expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith('admin_dm', formatAdminReportedNotice('KCK001'));
     const leftover = listUnreportedCompletedTasks(db);
     expect(leftover.map((r) => r.short_code)).toEqual(['KCK002']);
     db.close();
@@ -206,6 +226,7 @@ describe('T6 completion report (Step 10)', () => {
       proofFileUrl: (id: string) => `https://public.example/file/${id}`,
       proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
       now: () => 8,
+      getAdminChatId: () => 'admin_dm',
     };
     const first = reportUnreportedCompletedTasks(db, { ...deps, taskId: 't-dup' });
     const second = reportUnreportedCompletedTasks(db, { ...deps, taskId: 't-dup' });
@@ -217,33 +238,37 @@ describe('T6 completion report (Step 10)', () => {
     db.close();
   });
 
-  it('formats summary with short_code, caption, link, names and scores', () => {
-    const text = formatCompletionSummary(
-      {
-        id: 't',
-        short_code: 'ABC123',
-        official_chat_id: 'off',
-        report_group_id: 'rep',
-        link: 'https://post.example',
-        reference_text: 'Caption demo',
-        required_count: 1,
-      },
-      [
-        {
-          id: 's1',
-          uid_from: 'u1',
-          display_name: 'An',
-          image_url: 'https://cdn.example/a.jpg',
-          stored_path: '/data/proofs/t/s1.jpg',
-          match_score: 0.88,
-          created_at: Date.UTC(2026, 8, 20, 4, 0, 0),
-        },
-      ]
-    );
-    expect(text).toContain('ABC123');
-    expect(text).toContain('Caption demo');
-    expect(text).toContain('https://post.example');
-    expect(text).toContain('An');
-    expect(text).toContain('0.88');
+  it('notifies the admin with the short code only', () => {
+    expect(formatAdminReportedNotice('ABC123')).toBe('Đã báo cáo task ABC123.');
+  });
+
+  it('does not mark reported or text anyone when every photo send fails', async () => {
+    const db = openDb();
+    insertTask(db, { id: 't-fail', code: 'FL0001' });
+    insertSub(db, {
+      id: 's-fail',
+      taskId: 't-fail',
+      uid: 'u1',
+      name: 'A',
+      storedPath: '/tmp/missing.jpg',
+      imageUrl: 'http://cdn.example/not-https.jpg',
+    });
+    const sendPhoto = vi.fn().mockRejectedValue(new Error('invalid photo URL'));
+    const sendMessage = vi.fn().mockResolvedValue({ messageId: 'm' });
+    const results = await reportUnreportedCompletedTasks(db, {
+      sendPhoto,
+      sendMessage,
+      proofFileUrl: (id) => `https://public.example/file/${id}`,
+      proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
+      now: () => 3,
+      getAdminChatId: () => 'admin_dm',
+    });
+    expect(results[0].reported).toBe(false);
+    expect(sendMessage).not.toHaveBeenCalled();
+    const row = db.prepare(`SELECT reported_at FROM tasks WHERE id = 't-fail'`).get() as {
+      reported_at: number | null;
+    };
+    expect(row.reported_at).toBeNull();
+    db.close();
   });
 });

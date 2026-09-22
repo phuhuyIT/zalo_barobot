@@ -172,6 +172,21 @@ export function listRecentTasks(database?: Database.Database, limit = 30): TaskL
     .all(limit) as TaskListRow[];
 }
 
+/** /tasks trong chat 1-1: chỉ task còn đang thu hoặc quá hạn. */
+export function listOpenTasks(database?: Database.Database, limit = 30): TaskListRow[] {
+  return dbOf(database)
+    .prepare(
+      `${TASK_SELECT}
+       WHERE t.status IN ('collecting', 'overdue')
+       ORDER BY t.created_at DESC LIMIT ?`
+    )
+    .all(limit) as TaskListRow[];
+}
+
+function openStatusLabel(status: string): string {
+  return status === 'overdue' ? 'quá hạn' : 'đang thu';
+}
+
 export function getTaskListRowById(taskId: string, database?: Database.Database): TaskListRow | null {
   const row = dbOf(database)
     .prepare(`${TASK_SELECT} WHERE t.id = ?`)
@@ -179,23 +194,16 @@ export function getTaskListRowById(taskId: string, database?: Database.Database)
   return row || null;
 }
 
-export function formatTasksListReply(
-  rows: TaskListRow[],
-  opts: { allGroups?: boolean } = {}
-): string {
-  if (rows.length === 0) {
-    return opts.allGroups ? 'Chưa có task.' : 'Chưa có task trong nhóm này.';
-  }
+export function formatTasksListReply(rows: TaskListRow[]): string {
+  const open = rows.filter((row) => row.status === 'collecting' || row.status === 'overdue');
+  if (open.length === 0) return 'Không có task đang thu hoặc quá hạn.';
   const lines = ['Danh sách task:'];
-  for (const row of rows) {
-    const unlinked = row.zca_group_id ? '' : ' — chưa liên kết nhóm';
-    const group =
-      opts.allGroups
-        ? ` — ${row.group_display_name || row.official_chat_id}`
-        : '';
+  for (const row of open) {
     lines.push(
-      `• ${row.short_code}${group} — ${row.submitted_count}/${row.required_count} — ${row.status}${unlinked} — nhắc ${row.remind_count}`
+      `• ${row.short_code} — ${openStatusLabel(row.status)} — ${row.submitted_count}/${row.required_count}`
     );
+    const link = (row.link || '').trim();
+    if (link) lines.push(`  ${link}`);
   }
   return lines.join('\n');
 }
