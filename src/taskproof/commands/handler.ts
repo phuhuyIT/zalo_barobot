@@ -14,9 +14,8 @@ import {
   NO_LINKED_GROUPS_HINT,
   PRIVATE_NOT_ADMIN_HINT,
   LinkedGroup,
-  consumeGroupPick,
+  completePickByIndex,
   createGroupPick,
-  fieldsFromPick,
   formatPickerMessage,
   formatVnDeadline,
   getOpenGroupPickForAdmin,
@@ -36,7 +35,14 @@ import {
   TaskListRow,
 } from '../tasks';
 import { historyFetchCount } from '../quet';
-import { postEnsureListening, postLinkGroup, postRemind, postScanHistory, EnsureListeningResponse } from '../workerClient';
+import {
+  postEnsureListening,
+  postLinkGroup,
+  postMaybeStop,
+  postRemind,
+  postScanHistory,
+  EnsureListeningResponse,
+} from '../workerClient';
 import { unfurlFacebookPost, UnfurlFacebookResult } from '../unfurlFacebook';
 import { enqueueUnfurl } from '../unfurlQueue';
 import { parseTaskproofCommand } from './parser';
@@ -84,6 +90,7 @@ export interface TaskproofCommandDeps {
   now?: () => number;
   unfurlFacebook?: (url: string) => Promise<UnfurlFacebookResult>;
   enqueueUnfurl?: (job: () => Promise<void>) => void | Promise<void>;
+  maybeStop?: () => Promise<unknown>;
 }
 
 function defaultSendMessage(chatId: string, text: string): Promise<unknown> {
@@ -569,7 +576,7 @@ async function maybeHandlePickReply(
   deps: TaskproofCommandDeps
 ): Promise<boolean> {
   const text = (inbound.commandText || inbound.text || '').trim();
-  if (!text) return false;
+  if (!text || text.startsWith('/')) return false;
   const now = (deps.now ?? Date.now)();
   const pick = getOpenGroupPickForAdmin(inbound.chatId, now);
   if (!pick) return false;
@@ -581,16 +588,20 @@ async function maybeHandlePickReply(
     );
     return true;
   }
-  const consumed = consumeGroupPick(pick.token, group.official_chat_id, now);
-  if (!consumed) {
-    await deps.sendMessage(inbound.chatId, 'Lựa chọn này đã hết hạn hoặc đã dùng. Gõ /task lại.');
-    return true;
+  const index1 = pick.groups.findIndex((row) => row.official_chat_id === group.official_chat_id) + 1;
+  const result = await completePickByIndex(
+    pick.token,
+    index1,
+    {
+      sendMessage: deps.sendMessage,
+      insertTask: deps.insertTask ?? defaultInsertTask,
+      ensureListening: deps.ensureListening,
+    },
+    now
+  );
+  if (!result.ok) {
+    await deps.sendMessage(inbound.chatId, result.body);
   }
-  await placeTaskInGroup(fieldsFromPick(pick), group, inbound.chatId, {
-    sendMessage: deps.sendMessage,
-    insertTask: deps.insertTask ?? defaultInsertTask,
-    ensureListening: deps.ensureListening,
-  });
   return true;
 }
 
@@ -647,6 +658,11 @@ async function handleDong(
       ? `Đã đóng task ${code}. Đã gửi báo cáo với minh chứng đã nộp.`
       : `Đã đóng task ${code}. Báo cáo chưa gửi được, sẽ thử lại sau.`
   );
+  const maybeStop = deps.maybeStop ?? postMaybeStop;
+  void Promise.resolve(maybeStop()).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[TaskProof] /dong maybe-stop:', msg);
+  });
 }
 
 async function handleHuy(
@@ -680,6 +696,11 @@ async function handleHuy(
     inbound.chatId,
     `Đã hủy task ${code}. Không gửi báo cáo. Worker sẽ dừng nếu không còn task liên kết mở.`
   );
+  const maybeStop = deps.maybeStop ?? postMaybeStop;
+  void Promise.resolve(maybeStop()).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[TaskProof] /huy maybe-stop:', msg);
+  });
 }
 
 async function sendSafe(
@@ -716,9 +737,6 @@ export async function handleTaskproofCommand(
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[TaskProof] pick-reply lỗi:', msg);
       }
-      return maybeHintPreviewCard(inbound, deps);
-    }
-    if (!privateChat) {
       return maybeHintPreviewCard(inbound, deps);
     }
     return false;

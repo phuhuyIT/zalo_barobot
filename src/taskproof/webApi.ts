@@ -22,7 +22,7 @@ import {
 import { listRecentTasks } from './tasks';
 import { getTaskByExactShortCode } from './commands/shortCode';
 import { kickTaskCompletionReport } from './report';
-import { postEnsureListening } from './workerClient';
+import { postEnsureListening, postMaybeStop } from './workerClient';
 
 export const taskproofWebRouter = Router();
 
@@ -40,6 +40,22 @@ function parseExcludeUids(raw: unknown): string[] {
     .filter(Boolean);
 }
 
+const NUMBER_LIMITS: Partial<Record<TaskproofSettingKey, { min: number; max: number }>> = {
+  ocr_match_threshold: { min: 0, max: 1 },
+  default_required_count: { min: 1, max: 100 },
+  default_deadline_offset_ms: { min: 60_000, max: 7 * 24 * 60 * 60 * 1000 },
+  deadline_check_interval_ms: { min: 15_000, max: 60 * 60 * 1000 },
+  reminder_interval_ms: { min: 60_000, max: 24 * 60 * 60 * 1000 },
+  max_auto_reminders: { min: 0, max: 20 },
+  report_poll_interval_ms: { min: 15_000, max: 60 * 60 * 1000 },
+  qr_login_timeout_ms: { min: 15_000, max: 300_000 },
+  member_cache_max_age_ms: { min: 60_000, max: 30 * 24 * 60 * 60 * 1000 },
+  max_mentions_per_message: { min: 1, max: 20 },
+  max_reminder_text_len: { min: 50, max: 4000 },
+  task_stale_after_ms: { min: 60 * 60 * 1000, max: 30 * 24 * 60 * 60 * 1000 },
+  link_pending_ms: { min: 10_000, max: 600_000 },
+};
+
 function coerceUiSetting(key: TaskproofSettingKey, value: unknown): TaskproofSettings[TaskproofSettingKey] {
   const fallback = TASKPROOF_SETTING_DEFAULTS[key];
   if (key === 'remind_exclude_uids') {
@@ -48,7 +64,9 @@ function coerceUiSetting(key: TaskproofSettingKey, value: unknown): TaskproofSet
   if (typeof fallback === 'number') {
     const n = typeof value === 'number' ? value : Number(value);
     if (!Number.isFinite(n)) return fallback;
-    return n;
+    const limits = NUMBER_LIMITS[key];
+    if (!limits) return n;
+    return Math.min(limits.max, Math.max(limits.min, n));
   }
   return String(value ?? '').trim();
 }
@@ -154,6 +172,10 @@ taskproofWebRouter.post('/api/taskproof/tasks/:shortCode/dong', async (req: Requ
       console.warn(`[TaskProof] UI /dong kick báo cáo ${task.short_code} lỗi:`, msg);
     }
     res.json({ success: true, short_code: task.short_code, status: 'completed', reported });
+    void postMaybeStop().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[TaskProof] UI /dong maybe-stop:', msg);
+    });
   } catch (error: unknown) {
     handleRouteError(res, error);
   }
@@ -173,6 +195,10 @@ taskproofWebRouter.post('/api/taskproof/tasks/:shortCode/huy', (req: Request, re
       return;
     }
     res.json({ success: true, short_code: task.short_code, status: 'cancelled' });
+    void postMaybeStop().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[TaskProof] UI /huy maybe-stop:', msg);
+    });
   } catch (error: unknown) {
     handleRouteError(res, error);
   }

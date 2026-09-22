@@ -94,6 +94,12 @@ export function createWorkerApp(deps: WorkerAppDeps = {}): Express {
     });
   });
 
+  app.post('/internal/taskproof/maybe-stop', (req, res) => {
+    if (rejectIfInvalidInternalKey(req, res)) return;
+    const stopped = runtimeOf().maybeStopListening();
+    res.json({ success: true, stopped, ...runtimeOf().status() });
+  });
+
   app.post('/internal/taskproof/link-group', (req, res) => {
     if (rejectIfInvalidInternalKey(req, res)) return;
     const officialChatId =

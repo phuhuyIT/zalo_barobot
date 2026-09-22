@@ -139,14 +139,17 @@ export function extractWebhookInbound(rawBody: unknown): WebhookInbound | null {
   const recovered = findCommandString(message) || findCommandString(body);
   const commandText = (text || caption || recovered).trim();
 
-  const chatId = asString(
+  const chatType = asString((chat && (chat.chat_type || chat.type)) || '').trim().toUpperCase();
+  const explicitChatId = asString(
     (chat && (chat.id || chat.group_id || chat.chat_id)) ||
       message.chat_id ||
       message.group_id ||
       body.chat_id ||
-      (from && from.id) ||
       ''
   ).trim();
+  const fromId = asString(from && from.id).trim();
+  const looksPrivate = chatType === 'PRIVATE' || chatType === 'DM' || (!chatType && explicitChatId && explicitChatId === fromId);
+  const chatId = explicitChatId || (looksPrivate ? fromId : '');
 
   const senderId = asString(
     (from && from.id) || message.user_id || (chat && chat.id) || chatId
@@ -162,7 +165,7 @@ export function extractWebhookInbound(rawBody: unknown): WebhookInbound | null {
     caption,
     commandText,
     chatId,
-    chatType: asString((chat && (chat.chat_type || chat.type)) || '').trim().toUpperCase(),
+    chatType,
     senderId,
     messageId,
     url: asString(message.url).trim(),

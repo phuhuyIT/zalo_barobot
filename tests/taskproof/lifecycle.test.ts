@@ -2,6 +2,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../src/taskproof/workerClient', () => ({
+  postEnsureListening: vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} }),
+  postLinkGroup: vi.fn(),
+  postRemind: vi.fn(),
+  postScanHistory: vi.fn(),
+  postMaybeStop: vi.fn().mockResolvedValue({ status: 200, json: {} }),
+  getWorkerStatus: vi.fn(),
+}));
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables } from '../../src/store';
 import { initTaskproofTables } from '../../src/taskproof/store';

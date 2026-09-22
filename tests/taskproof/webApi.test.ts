@@ -11,6 +11,7 @@ import { kickTaskCompletionReport } from '../../src/taskproof/report';
 
 vi.mock('../../src/taskproof/workerClient', () => ({
   postEnsureListening: vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} }),
+  postMaybeStop: vi.fn().mockResolvedValue({ status: 200, json: {} }),
 }));
 
 vi.mock('../../src/taskproof/report', () => ({
@@ -69,6 +70,23 @@ describe('Task-proof Web UI API (Step 12)', () => {
     expect(data.settings.remind_exclude_uids).toEqual(['uid_a', 'uid_b']);
     expect(data.settings.INTERNAL_API_KEY).toBeUndefined();
     expect(getTaskproofSetting('ocr_match_threshold', db)).toBe(0.7);
+  });
+
+  it('clamps numeric UI settings to safe ranges', async () => {
+    const res = await fetch(`${baseUrl}/api/taskproof/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ocr_match_threshold: 9,
+        default_required_count: 0,
+        max_mentions_per_message: 99,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.settings.ocr_match_threshold).toBe(1);
+    expect(data.settings.default_required_count).toBe(1);
+    expect(data.settings.max_mentions_per_message).toBe(20);
   });
 
   it('adds and deletes a group map, unlinking open tasks on delete', async () => {

@@ -528,7 +528,7 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       db.close();
     });
 
-    it('hints to resend /task as plain text when Zalo sends an empty preview card', async () => {
+    it('does not hint on group preview cards (only admin 1-1)', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const inbound = inboundFrom({
         event_name: 'message.unsupported.received',
@@ -542,15 +542,7 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
         sendMessage,
         now: () => 1_000,
       });
-      expect(handled).toBe(true);
-      expect(sendMessage).toHaveBeenCalledWith('group_task', PREVIEW_CARD_HINT);
-
-      sendMessage.mockClear();
-      const again = await handleTaskproofCommand(inbound, {
-        sendMessage,
-        now: () => 60_000,
-      });
-      expect(again).toBe(true);
+      expect(handled).toBe(false);
       expect(sendMessage).not.toHaveBeenCalled();
     });
 

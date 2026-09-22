@@ -15,6 +15,8 @@ vi.mock('../src/taskproof/workerClient', () => ({
   postEnsureListening: vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} }),
   postLinkGroup: vi.fn(),
   postRemind: vi.fn(),
+  postScanHistory: vi.fn(),
+  postMaybeStop: vi.fn().mockResolvedValue({ status: 200, json: {} }),
   getWorkerStatus: vi.fn(),
 }));
 

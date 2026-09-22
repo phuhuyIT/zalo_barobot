@@ -91,3 +91,8 @@ export async function postLinkGroup(
 export async function getWorkerStatus(): Promise<{ status: number; json: Record<string, unknown> }> {
   return workerFetch('GET', '/internal/taskproof/status');
 }
+
+/** /huy /dong: worker xét logout nếu không còn task liên kết mở. */
+export async function postMaybeStop(): Promise<{ status: number; json: Record<string, unknown> }> {
+  return workerFetch('POST', '/internal/taskproof/maybe-stop');
+}
