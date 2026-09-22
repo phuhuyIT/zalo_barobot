@@ -87,12 +87,19 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   startScheduler();
 });
 
-// Xử lý tắt ứng dụng an toàn (Graceful Shutdown)
+const SHUTDOWN_TIMEOUT_MS = 8_000;
+
 function handleShutdown(signal: string) {
   console.log(`\nNhận tín hiệu ${signal}. Đang đóng ứng dụng an toàn...`);
   stopScheduler();
+  const force = setTimeout(() => {
+    console.error('Hết thời gian shutdown — thoát cứng.');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  if (typeof force.unref === 'function') force.unref();
   server.close(() => {
     closeDatabase();
+    clearTimeout(force);
     console.log('Đã đóng server và kết nối database. Tạm biệt!');
     process.exit(0);
   });

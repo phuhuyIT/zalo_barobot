@@ -80,15 +80,21 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log('[Supervisor] Khởi động task-proof worker...');
-  const worker = spawnAppProcess('taskproof/worker/index');
-  worker.on('error', (err) => {
-    console.error('[Supervisor] Không spawn được worker:', err);
-  });
+  const spawnWorker = (): ChildProcess => {
+    console.log('[Supervisor] Khởi động task-proof worker...');
+    const child = spawnAppProcess('taskproof/worker/index');
+    child.on('error', (err) => {
+      console.error('[Supervisor] Không spawn được worker:', err);
+    });
+    return child;
+  };
+
+  const worker = spawnWorker();
 
   const runtime = attachSupervisor({
     bot,
     worker,
+    spawnWorker,
     notifyWorkerDown: notifyOfficialBotWorkerDown,
     exitContainer: (code) => process.exit(code),
     log: (msg) => console.log(msg),

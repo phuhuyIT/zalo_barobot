@@ -61,6 +61,9 @@ export async function waitForHttpOk(
   throw new Error(`Timeout waiting for ${url}`);
 }
 
+export const WORKER_RESPAWN_BACKOFF_MS = [2_000, 10_000, 60_000] as const;
+const WORKER_STABLE_MS = 60_000;
+
 export function attachSupervisor(opts: {
   bot: SupervisedChild;
   worker: SupervisedChild;
@@ -70,49 +73,97 @@ export function attachSupervisor(opts: {
   }) => void | Promise<void>;
   exitContainer: (code: number) => void;
   log?: (msg: string) => void;
+  spawnWorker?: () => SupervisedChild;
+  scheduleTimeout?: (fn: () => void, ms: number) => () => void;
 }): { beginShutdown: (signal?: NodeJS.Signals) => void } {
   let shuttingDown = false;
   let exited = false;
+  let worker = opts.worker;
+  let respawnAttempt = 0;
+  let cancelRespawn: (() => void) | null = null;
+  let cancelStable: (() => void) | null = null;
+
+  const scheduleTimeout =
+    opts.scheduleTimeout ??
+    ((fn: () => void, ms: number) => {
+      const t = setTimeout(fn, ms);
+      return () => clearTimeout(t);
+    });
 
   const exitOnce = (code: number) => {
     if (exited) return;
     exited = true;
     shuttingDown = true;
+    cancelRespawn?.();
+    cancelStable?.();
     opts.exitContainer(code);
+  };
+
+  const armStableReset = () => {
+    cancelStable?.();
+    cancelStable = scheduleTimeout(() => {
+      respawnAttempt = 0;
+    }, WORKER_STABLE_MS);
+  };
+
+  const wireWorker = (child: SupervisedChild) => {
+    armStableReset();
+    child.on('exit', (code, signal) => {
+      if (shuttingDown) return;
+      cancelStable?.();
+      const decision = decideOnChildExit('worker', code, signal);
+      opts.log?.(
+        `[Supervisor] Worker đã thoát (code=${code}, signal=${signal}). Official bot vẫn chạy — /gui không bị ảnh hưởng.`
+      );
+      if (decision.action === 'keep-bot-and-notify') {
+        void Promise.resolve(opts.notifyWorkerDown({ code, signal })).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          opts.log?.(`[Supervisor] Không gửi được cảnh báo worker-down: ${msg}`);
+        });
+      }
+      if (!opts.spawnWorker) return;
+      const delay =
+        WORKER_RESPAWN_BACKOFF_MS[Math.min(respawnAttempt, WORKER_RESPAWN_BACKOFF_MS.length - 1)];
+      respawnAttempt += 1;
+      opts.log?.(`[Supervisor] Sẽ khởi động lại worker sau ${delay}ms (lần ${respawnAttempt}).`);
+      cancelRespawn?.();
+      cancelRespawn = scheduleTimeout(() => {
+        if (shuttingDown) return;
+        try {
+          worker = opts.spawnWorker!();
+          wireWorker(worker);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          opts.log?.(`[Supervisor] Spawn worker thất bại: ${msg}`);
+        }
+      }, delay);
+    });
   };
 
   opts.bot.on('exit', (code, signal) => {
     const decision = decideOnChildExit('official-bot', code, signal);
     shuttingDown = true;
+    cancelRespawn?.();
+    cancelStable?.();
     opts.log?.(
       `[Supervisor] Official bot đã thoát (code=${code}, signal=${signal}). Container sẽ thoát.`
     );
     try {
-      opts.worker.kill('SIGTERM');
+      worker.kill('SIGTERM');
     } catch {
       // Worker đã chết.
     }
     exitOnce(decision.exitCode);
   });
 
-  opts.worker.on('exit', (code, signal) => {
-    if (shuttingDown) return;
-    const decision = decideOnChildExit('worker', code, signal);
-    opts.log?.(
-      `[Supervisor] Worker đã thoát (code=${code}, signal=${signal}). Official bot vẫn chạy — /gui không bị ảnh hưởng.`
-    );
-    if (decision.action === 'keep-bot-and-notify') {
-      void Promise.resolve(opts.notifyWorkerDown({ code, signal })).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        opts.log?.(`[Supervisor] Không gửi được cảnh báo worker-down: ${msg}`);
-      });
-    }
-  });
+  wireWorker(worker);
 
   return {
     beginShutdown(signal: NodeJS.Signals = 'SIGTERM') {
       if (shuttingDown) return;
       shuttingDown = true;
+      cancelRespawn?.();
+      cancelStable?.();
       opts.log?.(`[Supervisor] Đang tắt (${signal})...`);
       try {
         opts.bot.kill(signal);
@@ -120,7 +171,7 @@ export function attachSupervisor(opts: {
         // already dead
       }
       try {
-        opts.worker.kill(signal);
+        worker.kill(signal);
       } catch {
         // already dead
       }

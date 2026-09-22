@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 import { getWorkerPort, WORKER_BIND_HOST } from '../env';
 import { closeWorkerDatabase, getWorkerDatabase } from '../store';
 import { createWorkerApp, startWorkerHttp } from './http';
+import { terminateOcrWorker } from './ocr';
 
 dotenv.config();
 process.env.TZ = process.env.TZ || 'Asia/Ho_Chi_Minh';
@@ -30,10 +31,23 @@ void startWorkerHttp(createWorkerApp(), port, WORKER_BIND_HOST)
 
     const handleShutdown = (signal: string) => {
       console.log(`[TaskProofWorker] Nhận ${signal}, đang đóng...`);
-      server.close(() => {
-        closeWorkerDatabase();
-        process.exit(0);
-      });
+      const force = setTimeout(() => {
+        console.error('[TaskProofWorker] Hết thời gian shutdown — thoát cứng.');
+        process.exit(1);
+      }, 8_000);
+      if (typeof force.unref === 'function') force.unref();
+      void terminateOcrWorker()
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn('[TaskProofWorker] terminate OCR:', msg);
+        })
+        .finally(() => {
+          server.close(() => {
+            closeWorkerDatabase();
+            clearTimeout(force);
+            process.exit(0);
+          });
+        });
     };
 
     process.on('SIGTERM', () => handleShutdown('SIGTERM'));

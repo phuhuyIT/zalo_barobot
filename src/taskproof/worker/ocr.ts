@@ -64,11 +64,44 @@ export async function getOcrWorker(): Promise<OcrWorker> {
   return initWorkerPromise;
 }
 
+export const OCR_TIMEOUT_MS = 90_000;
+
+async function dropOcrWorker(worker: OcrWorker | null): Promise<void> {
+  if (cachedWorker === worker) cachedWorker = null;
+  initWorkerPromise = null;
+  if (!worker) return;
+  try {
+    await worker.terminate();
+  } catch {
+    // best-effort — worker hỏng thì tạo lại lần sau
+  }
+}
+
 async function recognizeBuffer(image: Buffer): Promise<string> {
   if (!image || image.length === 0) return '';
   const worker = await getOcrWorker();
-  const result = await worker.recognize(image);
-  return (result.data.text || '').trim();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  try {
+    const result = await Promise.race([
+      worker.recognize(image),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error('ocr_timeout'));
+        }, OCR_TIMEOUT_MS);
+      }),
+    ]);
+    return (result.data.text || '').trim();
+  } catch (err) {
+    if (timedOut) {
+      console.error('[OCR] Timeout — hủy worker Tesseract để ảnh sau không dùng instance hỏng');
+      await dropOcrWorker(worker);
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**

@@ -79,6 +79,42 @@ describe('supervisor policy (Step 1)', () => {
     expect(notifyWorkerDown).toHaveBeenCalledWith({ code: 1, signal: null });
   });
 
+  it('respawns the worker with backoff after a crash', () => {
+    vi.useFakeTimers();
+    const bot = new FakeChild();
+    const worker = new FakeChild();
+    const spawned: FakeChild[] = [];
+    const notifyWorkerDown = vi.fn();
+    const exitContainer = vi.fn();
+    const log = vi.fn();
+
+    attachSupervisor({
+      bot,
+      worker,
+      notifyWorkerDown,
+      exitContainer,
+      log,
+      spawnWorker: () => {
+        const child = new FakeChild();
+        spawned.push(child);
+        return child;
+      },
+    });
+
+    worker.emitExit(1, null);
+    expect(notifyWorkerDown).toHaveBeenCalledWith({ code: 1, signal: null });
+    expect(spawned).toHaveLength(0);
+
+    vi.advanceTimersByTime(2_000);
+    expect(spawned).toHaveLength(1);
+    expect(exitContainer).not.toHaveBeenCalled();
+
+    spawned[0].emitExit(1, null);
+    vi.advanceTimersByTime(10_000);
+    expect(spawned).toHaveLength(2);
+    vi.useRealTimers();
+  });
+
   it('does not notify on graceful shutdown', () => {
     const bot = new FakeChild();
     const worker = new FakeChild();
