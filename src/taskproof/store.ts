@@ -33,7 +33,6 @@ let workerDb: Database.Database | null = null;
 
 export function initTaskproofTables(database: Database.Database): void {
   if (initializedDbs.has(database)) return;
-  initializedDbs.add(database);
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS tasks (
@@ -55,6 +54,7 @@ export function initTaskproofTables(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_tasks_short_code ON tasks(short_code);
     CREATE INDEX IF NOT EXISTS idx_tasks_open ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_open_zca ON tasks(zca_group_id, status);
 
     CREATE TABLE IF NOT EXISTS submissions (
       id TEXT PRIMARY KEY,
@@ -113,9 +113,28 @@ export function initTaskproofTables(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_task_group_picks_admin
       ON task_group_picks(admin_chat_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_submissions_task ON submissions(task_id);
+    CREATE INDEX IF NOT EXISTS idx_processed_messages_created ON processed_messages(created_at);
   `);
 
+  initializedDbs.add(database);
   seedTaskproofSettings(database);
+}
+
+const PROCESSED_MESSAGE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+const GROUP_PICK_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+export function pruneTaskproofEphemeral(
+  database: Database.Database,
+  now: number = Date.now()
+): { processed: number; picks: number } {
+  const processed = database
+    .prepare(`DELETE FROM processed_messages WHERE created_at < ?`)
+    .run(now - PROCESSED_MESSAGE_TTL_MS);
+  const picks = database
+    .prepare(`DELETE FROM task_group_picks WHERE expires_at < ?`)
+    .run(now - GROUP_PICK_RETENTION_MS);
+  return { processed: Number(processed.changes || 0), picks: Number(picks.changes || 0) };
 }
 
 export function listMissingTaskproofTables(database: Database.Database): string[] {

@@ -136,7 +136,8 @@ describe('task-proof settings reader (Step 2)', () => {
     expect(getTaskproofSetting('default_required_count', db)).toBe(12);
   });
 
-  it('bumps leftover default_required_count 1 to 12 and keeps other values', () => {
+  it('bumps leftover default_required_count 1 to 12 once, then keeps later values', () => {
+    db.prepare(`DELETE FROM taskproof_settings WHERE key = ?`).run('_migrated_required_count_1_to_12');
     setTaskproofSetting('default_required_count', 1, db);
     seedTaskproofSettings(db);
     expect(getTaskproofSetting('default_required_count', db)).toBe(12);
@@ -144,6 +145,10 @@ describe('task-proof settings reader (Step 2)', () => {
     setTaskproofSetting('default_required_count', 5, db);
     seedTaskproofSettings(db);
     expect(getTaskproofSetting('default_required_count', db)).toBe(5);
+
+    setTaskproofSetting('default_required_count', 1, db);
+    seedTaskproofSettings(db);
+    expect(getTaskproofSetting('default_required_count', db)).toBe(1);
   });
 
   it('falls back to default when stored JSON is the wrong type', () => {

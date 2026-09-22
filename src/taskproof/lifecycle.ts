@@ -186,6 +186,7 @@ export function cancelTask(
     )
     .run(taskId);
   if (!result.changes) return false;
+  db.prepare(`DELETE FROM submissions WHERE task_id = ?`).run(taskId);
   deleteTaskProofDir(taskId, opts.proofDir ?? getProofDir());
   return true;
 }

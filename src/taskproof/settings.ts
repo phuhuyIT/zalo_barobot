@@ -182,9 +182,20 @@ export function seedTaskproofSettings(database: Database.Database): void {
     insert.run(key, JSON.stringify(value), now);
   }
 
-  // Seed cũ là 1; lần chạy này nâng row 1 → 12. Giá trị UI khác 1 giữ nguyên.
-  if (getTaskproofSetting('default_required_count', database) === 1) {
-    setTaskproofSetting('default_required_count', 12, database);
+  // One-shot: seed cũ = 1 → 12. Sau khi đã migrate, admin đặt 1 thì giữ nguyên.
+  const migrated = database
+    .prepare(`SELECT value_json FROM taskproof_settings WHERE key = ?`)
+    .get('_migrated_required_count_1_to_12') as { value_json: string } | undefined;
+  if (!migrated) {
+    if (getTaskproofSetting('default_required_count', database) === 1) {
+      setTaskproofSetting('default_required_count', 12, database);
+    }
+    database
+      .prepare(
+        `INSERT INTO taskproof_settings (key, value_json, updated_at)
+         VALUES ('_migrated_required_count_1_to_12', 'true', ?)`
+      )
+      .run(now);
   }
 
   const currentAdmin = getTaskproofSetting('admin_official_chat_id', database);

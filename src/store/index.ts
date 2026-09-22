@@ -110,6 +110,7 @@ export function openSqliteFile(customPath?: string): Database.Database {
 export function configureSqliteConnection(database: Database.Database): void {
   database.pragma('journal_mode = WAL');
   database.pragma('busy_timeout = 5000');
+  database.pragma('foreign_keys = ON');
 }
 
 /**
