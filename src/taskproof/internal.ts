@@ -9,6 +9,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { toReportJpeg } from './reportJpeg';
 import { Router, Request, Response } from 'express';
 import { ZaloClient } from '../core/zaloClient';
 import { getDatabase } from '../store';
@@ -93,24 +94,38 @@ function sendFileOr404(
     res.status(404).json({ success: false, error: 'not_found' });
     return;
   }
-  const stat = fs.statSync(jailed);
-  const head = Buffer.alloc(Math.min(16, stat.size));
-  const fd = fs.openSync(jailed, 'r');
-  try {
-    fs.readSync(fd, head, 0, head.length, 0);
-  } finally {
-    fs.closeSync(fd);
-  }
+  const raw = fs.readFileSync(jailed);
   // Content-Length avoids chunked transfer. Zalo's photo fetcher stores a blank bubble when the body is chunked.
-  res.setHeader('Content-Type', contentTypeForImage(head, contentType));
-  res.setHeader('Content-Length', stat.size);
+  res.setHeader('Content-Type', contentTypeForImage(raw, contentType));
+  res.setHeader('Content-Length', raw.length);
   res.setHeader('Cache-Control', 'private, max-age=3600');
-  const stream = fs.createReadStream(jailed);
-  stream.on('error', () => {
-    if (!res.headersSent) res.status(404).json({ success: false, error: 'not_found' });
-    else res.end();
-  });
-  stream.pipe(res);
+  res.end(raw);
+}
+
+/** Proof photos are re-encoded. QR login images stay the original PNG. */
+async function sendProofJpegOr404(res: Response, filePath: string, rootDir: string): Promise<void> {
+  const jailed = resolveInsideRoot(rootDir, filePath);
+  if (!jailed || !fs.existsSync(jailed) || !fs.statSync(jailed).isFile()) {
+    res.status(404).json({ success: false, error: 'not_found' });
+    return;
+  }
+  const raw = fs.readFileSync(jailed);
+  let jpeg: Buffer;
+  try {
+    jpeg = await toReportJpeg(raw);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[TaskProof] Không chuyển được ảnh báo cáo sang JPEG:', msg);
+    jpeg = raw;
+  }
+  if (jpeg.length < 3 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) {
+    res.status(404).json({ success: false, error: 'not_found' });
+    return;
+  }
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('Content-Length', jpeg.length);
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.end(jpeg);
 }
 
 export function createTaskproofInternalRouter(deps: TaskproofInternalDeps = {}): Router {
@@ -371,7 +386,7 @@ export function createTaskproofInternalRouter(deps: TaskproofInternalDeps = {}):
     sendFileOr404(res, path.join(qrDir(), `${id}.png`), 'image/png', qrDir());
   });
 
-  router.get('/internal/taskproof/file/:submission_id', (req: Request, res: Response) => {
+  router.get('/internal/taskproof/file/:submission_id', async (req: Request, res: Response) => {
     if (rejectIfInvalidSignedFileUrl(req, res)) return;
     const id = typeof req.params.submission_id === 'string' ? req.params.submission_id : '';
     if (!id || !SAFE_ID_RE.test(id)) {
@@ -379,7 +394,7 @@ export function createTaskproofInternalRouter(deps: TaskproofInternalDeps = {}):
       return;
     }
     const storedPath = lookupStoredPath(id);
-    sendFileOr404(res, storedPath || '', 'image/jpeg', proofDir());
+    await sendProofJpegOr404(res, storedPath || '', proofDir());
   });
 
   return router;

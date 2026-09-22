@@ -195,8 +195,12 @@ describe('official-bot task-proof internal routes (Step 5)', () => {
     const fileQ = signedQueryString('/internal/taskproof/file/sub1', 60_000);
     const file = await fetch(`${baseUrl}/internal/taskproof/file/sub1?${fileQ}`);
     expect(file.status).toBe(200);
-    expect(file.headers.get('content-type')).toMatch(/image\/png/);
-    expect(file.headers.get('content-length')).toBe(String(PNG.length));
+    expect(file.headers.get('content-type')).toMatch(/image\/jpeg/);
+    const body = Buffer.from(await file.arrayBuffer());
+    expect(file.headers.get('content-length')).toBe(String(body.length));
+    expect(body[0]).toBe(0xff);
+    expect(body[1]).toBe(0xd8);
+    expect(body[2]).toBe(0xff);
 
     const missingQ = signedQueryString('/internal/taskproof/qr/nope', 60_000);
     const missing = await fetch(`${baseUrl}/internal/taskproof/qr/nope?${missingQ}`);
