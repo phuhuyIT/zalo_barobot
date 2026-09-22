@@ -12,6 +12,7 @@ vi.mock('../../src/taskproof/notifyAdmin', () => ({
 
 import { createTaskproofInternalRouter, taskproofInternalRouter } from '../../src/taskproof/internal';
 import { notifyAdminWorkerDown } from '../../src/taskproof/notifyAdmin';
+import { signedQueryString } from '../../src/taskproof/internalAuth';
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -98,6 +99,7 @@ describe('official-bot task-proof internal routes (Step 5)', () => {
         sendMessage,
         getAdminChatId: () => adminChatId,
         getQrTmpDir: () => tmp,
+        getProofDir: () => tmp,
         lookupStoredPath: (id) => (id === 'sub1' ? path.join(tmp, 'proof.jpg') : null),
         reportNow,
       })
@@ -174,26 +176,33 @@ describe('official-bot task-proof internal routes (Step 5)', () => {
     expect(sendMessage).toHaveBeenCalledWith('group_off', expect.stringMatching(/Đã liên kết: Tiểu đội/));
   });
 
-  it('serves QR and proof bytes with ?key= and 404s missing/expired files', async () => {
+  it('serves QR and proof bytes with HMAC ?exp=&sig= and 404s missing/expired files', async () => {
     fs.writeFileSync(path.join(tmp, 'qr1.png'), PNG);
     fs.writeFileSync(path.join(tmp, 'proof.jpg'), PNG);
 
     const denied = await fetch(`${baseUrl}/internal/taskproof/qr/qr1`);
     expect(denied.status).toBe(403);
 
-    const qr = await fetch(`${baseUrl}/internal/taskproof/qr/qr1?key=test-internal-key`);
+    const queryKey = await fetch(`${baseUrl}/internal/taskproof/qr/qr1?key=test-internal-key`);
+    expect(queryKey.status).toBe(403);
+
+    const qrQ = signedQueryString('/internal/taskproof/qr/qr1', 60_000);
+    const qr = await fetch(`${baseUrl}/internal/taskproof/qr/qr1?${qrQ}`);
     expect(qr.status).toBe(200);
     expect(qr.headers.get('content-type')).toMatch(/image\/png/);
     expect(Buffer.from(await qr.arrayBuffer()).equals(PNG)).toBe(true);
 
-    const file = await fetch(`${baseUrl}/internal/taskproof/file/sub1?key=test-internal-key`);
+    const fileQ = signedQueryString('/internal/taskproof/file/sub1', 60_000);
+    const file = await fetch(`${baseUrl}/internal/taskproof/file/sub1?${fileQ}`);
     expect(file.status).toBe(200);
     expect(file.headers.get('content-type')).toMatch(/image\/jpeg/);
 
-    const missing = await fetch(`${baseUrl}/internal/taskproof/qr/nope?key=test-internal-key`);
+    const missingQ = signedQueryString('/internal/taskproof/qr/nope', 60_000);
+    const missing = await fetch(`${baseUrl}/internal/taskproof/qr/nope?${missingQ}`);
     expect(missing.status).toBe(404);
 
-    const traversal = await fetch(`${baseUrl}/internal/taskproof/qr/../secret?key=test-internal-key`);
+    const traversalQ = signedQueryString('/internal/taskproof/qr/../secret', 60_000);
+    const traversal = await fetch(`${baseUrl}/internal/taskproof/qr/../secret?${traversalQ}`);
     expect(traversal.status).toBe(404);
   });
 

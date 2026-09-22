@@ -7,6 +7,7 @@
  * PUBLIC_BASE_URL không có trailing slash — Zalo fetch sendPhoto từ đây.
  */
 
+import crypto from 'crypto';
 import path from 'path';
 
 /** Worker chỉ bind localhost — user không bao giờ mở cổng 3001. */
@@ -55,9 +56,16 @@ export function getWorkerOrigin(): string {
   return `http://${WORKER_BIND_HOST}:${getWorkerPort()}`;
 }
 
-export function buildTokenGatedUrl(pathname: string): string {
+/** QR public URL sống 10 phút; proof URL sống 2 giờ. */
+export const QR_URL_TTL_MS = 10 * 60 * 1000;
+export const PROOF_URL_TTL_MS = 2 * 60 * 60 * 1000;
+
+export function buildTokenGatedUrl(pathname: string, ttlMs: number = PROOF_URL_TTL_MS): string {
   const base = getPublicBaseUrl();
-  const key = encodeURIComponent(getInternalApiKey());
+  const secret = getInternalApiKey();
   const cleaned = pathname.startsWith('/') ? pathname : `/${pathname}`;
-  return `${base}${cleaned}?key=${key}`;
+  if (!base || !secret) return '';
+  const exp = Date.now() + ttlMs;
+  const sig = crypto.createHmac('sha256', secret).update(`${cleaned}\n${exp}`).digest('hex');
+  return `${base}${cleaned}?exp=${exp}&sig=${encodeURIComponent(sig)}`;
 }

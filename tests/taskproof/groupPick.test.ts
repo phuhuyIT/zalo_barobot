@@ -96,7 +96,7 @@ describe('task-proof 1-1 group picker', () => {
     expect(sendMessage.mock.calls[1][0]).toBe('admin_dm');
   });
 
-  it('GET pick URL consumes the token and does not require INTERNAL_API_KEY', async () => {
+  it('GET pick URL previews without consuming; POST creates the task', async () => {
     db.prepare(
       `INSERT INTO group_id_map (official_chat_id, zca_group_id, display_name, linked_at)
        VALUES ('g_a', 'z_a', 'Nhóm A', 1)`
@@ -112,6 +112,7 @@ describe('task-proof 1-1 group picker', () => {
     );
     const sendMessage = vi.fn().mockResolvedValue({});
     const app = express();
+    app.use(express.urlencoded({ extended: false }));
     app.use(
       createTaskproofInternalRouter({
         sendMessage,
@@ -122,9 +123,19 @@ describe('task-proof 1-1 group picker', () => {
       const s = app.listen(0, '127.0.0.1', () => resolve(s));
     });
     const { port } = server.address() as AddressInfo;
-    const res = await fetch(
+    const preview = await fetch(
       `http://127.0.0.1:${port}/taskproof/pick/${pick.token}/1`
     );
+    const previewHtml = await preview.text();
+    expect(preview.status).toBe(200);
+    expect(previewHtml).toMatch(/Xác nhận gửi nhiệm vụ/);
+    expect(previewHtml).toMatch(/Gửi nhiệm vụ/);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(getOpenGroupPickForAdmin('admin_dm', Date.now(), db)?.token).toBe(pick.token);
+
+    const res = await fetch(`http://127.0.0.1:${port}/taskproof/pick/${pick.token}/1`, {
+      method: 'POST',
+    });
     const html = await res.text();
     expect(res.status).toBe(200);
     expect(html).toMatch(/Đã gửi/i);
@@ -133,7 +144,9 @@ describe('task-proof 1-1 group picker', () => {
     expect(sendMessage.mock.calls[0][1]).toContain('https://example.com/share');
     expect(getOpenGroupPickForAdmin('admin_dm', Date.now(), db)).toBeNull();
 
-    const again = await fetch(`http://127.0.0.1:${port}/taskproof/pick/${pick.token}/1`);
+    const again = await fetch(`http://127.0.0.1:${port}/taskproof/pick/${pick.token}/1`, {
+      method: 'POST',
+    });
     expect(again.status).toBe(409);
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });

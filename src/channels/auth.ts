@@ -5,19 +5,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import crypto from 'crypto';
-
-/**
- * So sánh an toàn hai chuỗi để chống tấn công timing-attack.
- */
-function timingSafeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, 'utf8');
-  const bufB = Buffer.from(b, 'utf8');
-  if (bufA.length !== bufB.length) {
-    return false;
-  }
-  return crypto.timingSafeEqual(bufA, bufB);
-}
+import { timingSafeCompare } from '../taskproof/internalAuth';
 
 export function basicAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   // Cho phép webhook của Zalo và internal cron endpoint có cơ chế xác thực riêng

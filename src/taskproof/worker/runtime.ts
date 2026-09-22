@@ -14,7 +14,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
-import { getInternalApiKey, getProofDir, getPublicBaseUrl, getQrTmpDir, getSessionFilePath } from '../env';
+import { getProofDir, getPublicBaseUrl, getQrTmpDir, getSessionFilePath, QR_URL_TTL_MS } from '../env';
+import { signedQueryString } from '../internalAuth';
 import {
   countLinkedOpenTasks,
   listDueAutoReminders,
@@ -180,6 +181,11 @@ export class WorkerRuntime {
   private cancelDeadlineTimer: (() => void) | null = null;
   private messageLoopStarted = false;
   private readonly scanInFlight = new Set<string>();
+  private listenLock: Promise<void> = Promise.resolve();
+  private deadlineTickInFlight = false;
+  private ingestActive = 0;
+  private readonly ingestPending: Array<() => Promise<void>> = [];
+  private static readonly MAX_INGEST = 2;
 
   constructor(deps: WorkerRuntimeDeps = {}) {
     this.deps = {
@@ -259,8 +265,18 @@ export class WorkerRuntime {
 
   /**
    * Login nếu cần. Không await QR — trả qr_required ngay.
+   * Serialize: hai /task cùng lúc không mở hai phiên QR.
    */
   async ensureListening(_taskId?: string): Promise<ListenResult> {
+    const run = this.listenLock.then(() => this.ensureListeningBody(_taskId));
+    this.listenLock = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  private async ensureListeningBody(_taskId?: string): Promise<ListenResult> {
     if (this.loggedIn) {
       this.startMessageLoop();
       this.startDeadlineTimer();
@@ -315,7 +331,9 @@ export class WorkerRuntime {
     const qrPath = path.join(this.deps.getQrTmpDir(), `${qrId}.png`);
     const timeoutMs = this.deps.getQrTimeoutMs();
     const expiresAt = this.deps.now() + timeoutMs;
-    const imageUrl = `${this.deps.getPublicBaseUrl()}/internal/taskproof/qr/${qrId}?key=${encodeURIComponent(getInternalApiKey())}`;
+    const pathname = `/internal/taskproof/qr/${qrId}`;
+    const base = this.deps.getPublicBaseUrl().replace(/\/$/, '');
+    const imageUrl = `${base}${pathname}?${signedQueryString(pathname, QR_URL_TTL_MS)}`;
 
     void this.deps.loginPort
       .loginQR({
@@ -336,7 +354,7 @@ export class WorkerRuntime {
           }
         },
       })
-      .then((creds: ZcaCredentials) => {
+      .then(async (creds: ZcaCredentials) => {
         saveSession(creds, this.deps.getSessionFilePath());
         this.loggedIn = true;
         this.qrInFlight = false;
@@ -345,7 +363,12 @@ export class WorkerRuntime {
         this.startMessageLoop();
         this.startDeadlineTimer();
         this.refreshStaleLinkedCaches();
-        return this.deps.postLoginResult(true);
+        try {
+          await this.deps.postLoginResult(true);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn('[TaskProofWorker] postLoginResult sau QR thành công lỗi:', msg);
+        }
       })
       .catch((err: unknown) => {
         this.qrInFlight = false;
@@ -354,7 +377,12 @@ export class WorkerRuntime {
         const msg = err instanceof Error ? err.message : String(err);
         const state = code === 'qr_timeout' || msg === 'qr_timeout' ? 'qr_timeout' : 'login_failed';
         this.maybeStopListening();
-        return this.deps.postLoginResult(false, state === 'qr_timeout' ? 'qr_timeout' : msg);
+        void Promise.resolve(
+          this.deps.postLoginResult(false, state === 'qr_timeout' ? 'qr_timeout' : msg)
+        ).catch((notifyErr: unknown) => {
+          const text = notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
+          console.warn('[TaskProofWorker] postLoginResult thất bại:', text);
+        });
       });
   }
 
@@ -389,10 +417,15 @@ export class WorkerRuntime {
       if (!this.pendingLink || this.pendingLink.officialChatId !== officialChatId) return;
       this.pendingLink = null;
       this.clearPendingTimer();
-      void this.deps.postLinkResult({
-        official_chat_id: officialChatId,
-        ok: false,
-        error: 'hết hạn 2 phút, không thấy tin nhóm. Gõ /lienket rồi gửi ok.',
+      void Promise.resolve(
+        this.deps.postLinkResult({
+          official_chat_id: officialChatId,
+          ok: false,
+          error: 'hết hạn 2 phút, không thấy tin nhóm. Gõ /lienket rồi gửi ok.',
+        })
+      ).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn('[TaskProofWorker] postLinkResult timeout lỗi:', msg);
       });
       this.maybeStopListening();
     }, ms);
@@ -444,6 +477,8 @@ export class WorkerRuntime {
    * Lỗi một task không chặn các task còn lại.
    */
   async runDeadlineTick(): Promise<void> {
+    if (this.deadlineTickInFlight) return;
+    this.deadlineTickInFlight = true;
     try {
       if (!this.loggedIn) {
         this.maybeStopListening();
@@ -477,6 +512,7 @@ export class WorkerRuntime {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[TaskProofWorker] Deadline tick lỗi:', msg);
     } finally {
+      this.deadlineTickInFlight = false;
       this.maybeStopListening();
     }
   }
@@ -508,6 +544,9 @@ export class WorkerRuntime {
     }
 
     if (msg.isLinkCard) {
+      console.log(
+        `[TaskProofWorker] Bỏ thẻ xem trước (không OCR) msg=${msg.msgId || ''} group=${msg.threadId}`
+      );
       return { linked, ocr: false };
     }
 
@@ -523,8 +562,38 @@ export class WorkerRuntime {
       return { linked, ocr: false };
     }
 
-    const job = this.ingestProof(msg);
+    console.log(
+      `[TaskProofWorker] Hàng đợi OCR msg=${msg.msgId || ''} group=${msg.threadId} type=${msg.msgType || ''}`
+    );
+    const job = this.enqueueIngest(() => this.ingestProof(msg));
     return { linked, ocr: true, job };
+  }
+
+  private enqueueIngest(job: () => Promise<ProofIngestResult>): Promise<ProofIngestResult> {
+    return new Promise((resolve) => {
+      const wrapped = async () => {
+        try {
+          resolve(await job());
+        } catch (err: unknown) {
+          const text = err instanceof Error ? err.message : String(err);
+          resolve({ outcome: 'discarded', reason: text });
+        }
+      };
+      this.ingestPending.push(wrapped);
+      this.pumpIngest();
+    });
+  }
+
+  private pumpIngest(): void {
+    while (this.ingestActive < WorkerRuntime.MAX_INGEST && this.ingestPending.length > 0) {
+      const next = this.ingestPending.shift();
+      if (!next) return;
+      this.ingestActive += 1;
+      void next().finally(() => {
+        this.ingestActive -= 1;
+        this.pumpIngest();
+      });
+    }
   }
 
   private async ingestProof(msg: ZcaInboundMessage): Promise<ProofIngestResult> {
@@ -550,6 +619,12 @@ export class WorkerRuntime {
           kickReport: this.deps.kickReport,
         }
       );
+      if (result.outcome !== 'recorded') {
+        const reason = 'reason' in result ? result.reason : '';
+        console.log(
+          `[TaskProofWorker] Ingest ${result.outcome}${reason ? ` ${reason}` : ''} msg=${msg.msgId || ''}`
+        );
+      }
       if (result.outcome === 'recorded' && result.closed) {
         this.maybeStopListening();
       }
@@ -986,6 +1061,19 @@ export class WorkerRuntime {
     }
   }
 
+  private notifyLinkResult(body: {
+    official_chat_id: string;
+    ok: boolean;
+    zca_group_id?: string;
+    display_name?: string;
+    error?: string;
+  }): void {
+    void Promise.resolve(this.deps.postLinkResult(body)).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[TaskProofWorker] postLinkResult lỗi:', msg);
+    });
+  }
+
   private completePendingLink(zcaGroupId: string, displayName: string): void {
     const pending = this.pendingLink;
     if (!pending) return;
@@ -998,7 +1086,7 @@ export class WorkerRuntime {
     if (conflict) {
       this.pendingLink = null;
       this.clearPendingTimer();
-      void this.deps.postLinkResult({
+      this.notifyLinkResult({
         official_chat_id: pending.officialChatId,
         ok: false,
         zca_group_id: zcaGroupId,
@@ -1010,7 +1098,7 @@ export class WorkerRuntime {
     upsertGroupMap(db, pending.officialChatId, zcaGroupId, name, this.deps.now());
     this.pendingLink = null;
     this.clearPendingTimer();
-    void this.deps.postLinkResult({
+    this.notifyLinkResult({
       official_chat_id: pending.officialChatId,
       ok: true,
       zca_group_id: zcaGroupId,

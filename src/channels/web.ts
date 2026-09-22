@@ -695,6 +695,10 @@ webRouter.post('/api/patrol/reset', (req: Request, res: Response) => {
  * POST /api/system/reset-all - Đặt lại toàn bộ trạng thái nộp lịch & lịch sử hôm nay
  */
 webRouter.post('/api/system/reset-all', (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === 'production') {
+    res.status(403).json({ success: false, error: 'reset-all is disabled in production' });
+    return;
+  }
   try {
     const targetDate = (req.body?.date as string) || getVietnamTimeParts().dateDMY;
     const isAll = Boolean(req.body?.isAll);

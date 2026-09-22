@@ -131,7 +131,7 @@ describe('task-proof ensure-listening / session / QR (Step 5)', () => {
     expect(result.state).toBe('qr_required');
     await vi.waitFor(() => expect(loginResults.some((r) => r.ok)).toBe(true));
     expect(delivered[0]).toMatch(
-      /^https:\/\/codespace\.example\/internal\/taskproof\/qr\/[a-f0-9]+\?key=test-internal-key$/
+      /^https:\/\/codespace\.example\/internal\/taskproof\/qr\/[a-f0-9]+\?exp=\d+&sig=[a-f0-9]+$/
     );
     expect(fs.existsSync(sessionPath)).toBe(true);
     expect(JSON.parse(fs.readFileSync(sessionPath, 'utf8')).imei).toBe('imei-1');

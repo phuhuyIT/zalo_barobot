@@ -10,7 +10,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { getConfig, getRecipientChatId } from '../config';
 import { sendSchedule, getEffectiveScheduleConfig } from '../core';
@@ -22,18 +21,11 @@ import {
   isUnsupportedEvent,
   redactSecrets,
 } from '../taskproof/commands';
+import { timingSafeCompare } from '../taskproof/internalAuth';
 
 export const webhookRouter = Router();
 
-/**
- * So sánh an toàn hai chuỗi để chống timing-attack.
- */
-function timingSafeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, 'utf8');
-  const bufB = Buffer.from(b, 'utf8');
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
-}
+const WEBHOOK_LOG_MAX_BYTES = 5 * 1024 * 1024;
 
 function appendWebhookLog(line: string) {
   try {
@@ -41,6 +33,14 @@ function appendWebhookLog(line: string) {
     const logDir = path.dirname(logPath);
     if (!fs.existsSync(logDir)) {
       fs.mkdirSync(logDir, { recursive: true });
+    }
+    try {
+      const size = fs.statSync(logPath).size;
+      if (size >= WEBHOOK_LOG_MAX_BYTES) {
+        fs.renameSync(logPath, `${logPath}.1`);
+      }
+    } catch {
+      // file chưa có
     }
     fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${line}\n`);
   } catch (err: unknown) {
@@ -50,7 +50,14 @@ function appendWebhookLog(line: string) {
 
 webhookRouter.post('/webhook/zalo', async (req: Request, res: Response) => {
   // 1. Xác thực webhook secret token qua header hoặc URL query (Mục 6.2 & Quy tắc #7)
-  const webhookSecret = process.env.ZALO_WEBHOOK_SECRET;
+  const webhookSecret = (process.env.ZALO_WEBHOOK_SECRET || '').trim();
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (isProduction && !webhookSecret) {
+    console.warn('[Webhook] Production bắt buộc ZALO_WEBHOOK_SECRET.');
+    appendWebhookLog(`REJECTED: ${req.ip} | Reason: missing ZALO_WEBHOOK_SECRET in production`);
+    res.status(403).json({ success: false, error: 'Unauthorized: webhook secret is not configured' });
+    return;
+  }
   if (webhookSecret) {
     const rawSecret =
       req.headers['x-bot-secret-token'] ||
@@ -77,9 +84,9 @@ webhookRouter.post('/webhook/zalo', async (req: Request, res: Response) => {
         return;
       }
     } else {
-      const enforceSecret = process.env.ZALO_WEBHOOK_ENFORCE_SECRET === 'true';
+      const enforceSecret = process.env.ZALO_WEBHOOK_ENFORCE_SECRET === 'true' || isProduction;
       if (enforceSecret) {
-        console.warn('[Webhook] Từ chối request do thiếu secret token (ZALO_WEBHOOK_ENFORCE_SECRET=true)');
+        console.warn('[Webhook] Từ chối request do thiếu secret token');
         appendWebhookLog(`REJECTED: ${req.ip} | Reason: missing secret token`);
         res.status(403).json({ success: false, error: 'Unauthorized: missing secret token' });
         return;

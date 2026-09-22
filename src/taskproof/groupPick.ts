@@ -357,28 +357,14 @@ function listenHint(listen: EnsureListeningResponse | null): string {
   return '';
 }
 
-/**
- * INSERT task vào nhóm đã chọn, đăng tin (kèm Link) trong nhóm, xác nhận 1-1.
- */
-export async function placeTaskInGroup(
+async function announcePlacedTask(
+  created: InsertedTask,
   fields: ParsedTaskFields,
   group: LinkedGroup,
   adminChatId: string,
   deps: PlaceTaskDeps
-): Promise<InsertedTask> {
-  const insert = deps.insertTask ?? ((input: InsertTaskInput) => insertNewTask(input));
+): Promise<void> {
   const ensureListening = deps.ensureListening ?? ((taskId?: string) => postEnsureListening(taskId));
-
-  const deadlineUtcMs = resolveTaskDeadline(fields.deadlineUtcMs);
-  const created = insert({
-    officialChatId: group.official_chat_id,
-    link: fields.link,
-    referenceText: fields.caption,
-    requiredCount: fields.requiredCount,
-    deadlineUtcMs,
-    reportGroupId: fields.reportGroupId,
-  });
-
   const groupText = formatGroupTaskPost(created, fields);
   let groupPosted = true;
   try {
@@ -412,12 +398,34 @@ export async function placeTaskInGroup(
     console.error('[TaskProof] /task ensure-listening lỗi:', msg);
     lines.push('Worker không chạy. /gui vẫn dùng được. Task vẫn lưu — thử /nhac sau.');
     await deps.sendMessage(adminChatId, lines.join('\n'));
-    return created;
+    return;
   }
 
   const hint = listenHint(listen);
   if (hint) lines.push(hint);
   await deps.sendMessage(adminChatId, lines.join('\n'));
+}
+
+/**
+ * INSERT task vào nhóm đã chọn, đăng tin (kèm Link) trong nhóm, xác nhận 1-1.
+ */
+export async function placeTaskInGroup(
+  fields: ParsedTaskFields,
+  group: LinkedGroup,
+  adminChatId: string,
+  deps: PlaceTaskDeps
+): Promise<InsertedTask> {
+  const insert = deps.insertTask ?? ((input: InsertTaskInput) => insertNewTask(input));
+  const deadlineUtcMs = resolveTaskDeadline(fields.deadlineUtcMs);
+  const created = insert({
+    officialChatId: group.official_chat_id,
+    link: fields.link,
+    referenceText: fields.caption,
+    requiredCount: fields.requiredCount,
+    deadlineUtcMs,
+    reportGroupId: fields.reportGroupId,
+  });
+  await announcePlacedTask(created, fields, group, adminChatId, deps);
   return created;
 }
 
@@ -450,8 +458,24 @@ export async function completePickByIndex(
   if (!group) {
     return { ok: false, status: 400, title: 'Sai nhóm', body: 'Số thứ tự không khớp. Gõ /task lại.' };
   }
-  const consumed = consumeGroupPick(token, group.official_chat_id, now, database);
-  if (!consumed) {
+  const db = dbOf(database);
+  const insert = deps.insertTask ?? ((input: InsertTaskInput) => insertNewTask(input, db));
+  const fields = fieldsFromPick(pick);
+  let created: InsertedTask | undefined;
+  const placed = db.transaction(() => {
+    const consumed = consumeGroupPick(token, group.official_chat_id, now, db);
+    if (!consumed) return false;
+    created = insert({
+      officialChatId: group.official_chat_id,
+      link: fields.link,
+      referenceText: fields.caption,
+      requiredCount: fields.requiredCount,
+      deadlineUtcMs: resolveTaskDeadline(fields.deadlineUtcMs, now, db),
+      reportGroupId: fields.reportGroupId,
+    });
+    return true;
+  })();
+  if (!placed || !created) {
     return {
       ok: false,
       status: 409,
@@ -459,20 +483,28 @@ export async function completePickByIndex(
       body: 'Link này đã dùng. Xem tin nhắn từ bot trong chat riêng.',
     };
   }
-  const created = await placeTaskInGroup(fieldsFromPick(pick), group, pick.admin_chat_id, deps);
+  await announcePlacedTask(created, fields, group, pick.admin_chat_id, deps);
   return { ok: true, created, group };
 }
 
-export function pickResultHtml(title: string, body: string): string {
+export function pickResultHtml(
+  title: string,
+  body: string,
+  opts: { confirm?: boolean } = {}
+): string {
   const safeTitle = escapeHtml(title);
   const safeBody = escapeHtml(body).replace(/\n/g, '<br>');
+  const form = opts.confirm
+    ? `<form method="post" action=""><button type="submit">Gửi nhiệm vụ</button></form>`
+    : '';
   return `<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${safeTitle}</title>
 <style>
 body{font-family:sans-serif;max-width:32rem;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#111}
+button{font-size:1rem;padding:.5rem 1rem;cursor:pointer}
 </style></head>
-<body><h1>${safeTitle}</h1><p>${safeBody}</p></body></html>`;
+<body><h1>${safeTitle}</h1><p>${safeBody}</p>${form}</body></html>`;
 }
 
 function escapeHtml(value: string): string {
