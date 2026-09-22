@@ -72,6 +72,16 @@ function resolveInsideRoot(rootDir: string, filePath: string): string | null {
   return resolved;
 }
 
+/** Zalo sendPhoto decodes from Content-Type. A PNG saved as .jpg must not be labeled jpeg. */
+export function contentTypeForImage(buf: Buffer, fallback: string): string {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return 'image/webp';
+  }
+  return fallback;
+}
+
 function sendFileOr404(
   res: Response,
   filePath: string,
@@ -83,8 +93,19 @@ function sendFileOr404(
     res.status(404).json({ success: false, error: 'not_found' });
     return;
   }
+  const stat = fs.statSync(jailed);
+  const head = Buffer.alloc(Math.min(16, stat.size));
+  const fd = fs.openSync(jailed, 'r');
+  try {
+    fs.readSync(fd, head, 0, head.length, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  // Content-Length avoids chunked transfer. Zalo's photo fetcher stores a blank bubble when the body is chunked.
+  res.setHeader('Content-Type', contentTypeForImage(head, contentType));
+  res.setHeader('Content-Length', stat.size);
+  res.setHeader('Cache-Control', 'private, max-age=3600');
   const stream = fs.createReadStream(jailed);
-  res.setHeader('Content-Type', contentType);
   stream.on('error', () => {
     if (!res.headersSent) res.status(404).json({ success: false, error: 'not_found' });
     else res.end();
