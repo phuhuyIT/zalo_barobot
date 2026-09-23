@@ -22,7 +22,11 @@ import {
   markOverdueTasks,
   shouldKeepWorkerOnline,
 } from '../lifecycle';
-import { getTaskproofSetting, setTaskproofSetting } from '../settings';
+import {
+  getTaskproofExcludeUids,
+  getTaskproofSetting,
+  setTaskproofSetting,
+} from '../settings';
 import { peekWorkerDatabase } from '../store';
 import { looksLikeTaskproofCommand } from '../commands/parser';
 import { historyFetchCount, QUET_DEFAULT_COUNT, ScanHistorySummary } from '../quet';
@@ -529,7 +533,12 @@ export class WorkerRuntime {
     job?: Promise<ProofIngestResult>;
   } {
     const db = this.db();
-    if (db && msg.isGroup && msg.uidFrom && isMappedZcaGroup(db, msg.threadId)) {
+    const excludeUids = db ? getTaskproofExcludeUids(db) : undefined;
+    const isExcluded = Boolean(
+      msg.uidFrom === '0' || (excludeUids && msg.uidFrom && excludeUids.has(msg.uidFrom))
+    );
+
+    if (db && msg.isGroup && msg.uidFrom && !isExcluded && isMappedZcaGroup(db, msg.threadId)) {
       observeMember(db, msg.threadId, msg.uidFrom, msg.displayName, this.deps.now());
     }
 
@@ -551,6 +560,13 @@ export class WorkerRuntime {
     }
 
     if (!msg.hasImage || !msg.isGroup) {
+      return { linked, ocr: false };
+    }
+
+    if (isExcluded) {
+      console.log(
+        `[TaskProofWorker] Bỏ ảnh từ bot hoặc self uid=${msg.uidFrom || ''} group=${msg.threadId}`
+      );
       return { linked, ocr: false };
     }
 
@@ -617,6 +633,7 @@ export class WorkerRuntime {
           loadSession: () => loadSession(this.deps.getSessionFilePath()),
           proofDir: this.deps.getProofDir(),
           kickReport: this.deps.kickReport,
+          excludeUids: getTaskproofExcludeUids(db),
         }
       );
       if (result.outcome !== 'recorded') {
@@ -813,6 +830,7 @@ export class WorkerRuntime {
         loadSession: () => loadSession(this.deps.getSessionFilePath()),
         proofDir: this.deps.getProofDir(),
         kickReport: this.deps.kickReport,
+        excludeUids: getTaskproofExcludeUids(prepared.db),
       }
     );
     const result: ScanHistoryResult = { ...summary, httpStatus: 200, task_id: taskId };

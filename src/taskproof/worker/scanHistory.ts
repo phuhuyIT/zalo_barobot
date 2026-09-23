@@ -7,6 +7,7 @@
 
 import Database from 'better-sqlite3';
 import { looksLikeTaskproofCommand } from '../commands/parser';
+import { getTaskproofExcludeUids } from '../settings';
 import {
   HISTORY_API_MAX_COUNT,
   historyFetchCount,
@@ -24,11 +25,16 @@ export interface ScanHistoryInput {
   more?: number;
 }
 
-export function selectLookbackImages(messages: ZcaInboundMessage[]): ZcaInboundMessage[] {
+export function selectLookbackImages(
+  messages: ZcaInboundMessage[],
+  excludeUids?: Set<string>
+): ZcaInboundMessage[] {
   return messages
     .filter((msg) => {
       if (!msg.hasImage || msg.isLinkCard) return false;
-      if (!msg.msgId || !msg.uidFrom) return false;
+      const uid = (msg.uidFrom || '').trim();
+      if (!msg.msgId || !uid || uid === '0') return false;
+      if (excludeUids?.has(uid)) return false;
       if (looksLikeTaskproofCommand(msg.text || '')) return false;
       return true;
     })
@@ -51,7 +57,8 @@ export async function scanGroupHistoryForTask(
   deps: ProofIngestDeps = {}
 ): Promise<ScanHistorySummary> {
   const fetchCount = historyFetchCount(input.count);
-  const images = selectLookbackImages(input.messages);
+  const excludeUids = deps.excludeUids ?? getTaskproofExcludeUids(db);
+  const images = selectLookbackImages(input.messages, excludeUids);
   const truncated = historyWasTruncated(input.messages, fetchCount, input.more || 0);
 
   const summary: ScanHistorySummary = {
@@ -89,11 +96,20 @@ export async function scanGroupHistoryForTask(
     }
     if (result.outcome === 'recorded') {
       summary.recorded += 1;
+      console.log(
+        `[TaskProofWorker] /quet ghi nhận thành công từ uid=${image.uidFrom} (tên: "${image.displayName || image.uidFrom}") cho task ${input.shortCode}`
+      );
       if (result.closed) summary.closed = true;
     } else if (result.outcome === 'skipped') {
       summary.skipped += 1;
+      console.log(
+        `[TaskProofWorker] /quet bỏ qua ảnh msg=${image.msgId} từ uid=${image.uidFrom}: lý do ${result.reason}`
+      );
     } else {
       summary.discarded += 1;
+      console.log(
+        `[TaskProofWorker] /quet loại bỏ ảnh msg=${image.msgId} từ uid=${image.uidFrom}: lý do ${result.reason}`
+      );
     }
   }
 

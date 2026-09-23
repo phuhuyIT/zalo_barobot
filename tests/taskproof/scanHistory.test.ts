@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables } from '../../src/store';
 import { initTaskproofTables } from '../../src/taskproof/store';
+import { setTaskproofSetting } from '../../src/taskproof/settings';
 import { handleTaskproofCommand } from '../../src/taskproof/commands';
 import { extractWebhookInbound } from '../../src/taskproof/commands/payload';
 import { ingestProofImage } from '../../src/taskproof/worker/proofIngest';
@@ -269,6 +270,171 @@ describe('task-proof /quet history scan', () => {
     );
     expect(summary.skipped).toBe(1);
     expect(ocrImage).not.toHaveBeenCalled();
+    db.close();
+  });
+
+  it('handles duplicate images from the same user by recording only the first one', async () => {
+    const db = openDb();
+    const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
+    dirs.push(proofDir);
+    seedOpenTask(db, { id: 't1', caption: 'TEST TASK PROOF OCR', required: 5 });
+
+    const summary = await scanGroupHistoryForTask(
+      db,
+      {
+        taskId: 't1',
+        shortCode: 'ABC123',
+        zcaGroupId: 'zgr-1',
+        count: 5,
+        messages: [
+          inboundImage({ msgId: 'img-1', uidFrom: 'u1', displayName: 'An', ts: 8 * 60 * 1000 }),
+          inboundImage({ msgId: 'img-2', uidFrom: 'u1', displayName: 'An', ts: 9 * 60 * 1000 }),
+        ],
+      },
+      {
+        now: () => 10 * 60 * 1000,
+        proofDir,
+        ocrImage: async () => 'TEST TASK PROOF OCR',
+        downloadImage: async () => PNG,
+      }
+    );
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.recorded).toBe(1);
+    expect(summary.skipped).toBe(1);
+
+    const rows = db.prepare(`SELECT task_id, uid_from FROM submissions WHERE task_id = 't1'`).all() as Array<{
+      task_id: string;
+      uid_from: string;
+    }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].uid_from).toBe('u1');
+    db.close();
+  });
+
+  it('filters out bot uids and uid=0 from lookback images and OCR', async () => {
+    const db = openDb();
+    const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
+    dirs.push(proofDir);
+    seedOpenTask(db, { id: 't1', caption: 'TEST TASK PROOF OCR', required: 5 });
+    setTaskproofSetting('zca_own_uid', 'bot_own', db);
+    setTaskproofSetting('official_bot_uid', 'bot_official', db);
+    setTaskproofSetting('remind_exclude_uids', ['excluded_user'], db);
+
+    const ocrImage = vi.fn(async () => 'TEST TASK PROOF OCR');
+    const summary = await scanGroupHistoryForTask(
+      db,
+      {
+        taskId: 't1',
+        shortCode: 'ABC123',
+        zcaGroupId: 'zgr-1',
+        count: 10,
+        messages: [
+          inboundImage({ msgId: 'm-self', uidFrom: '0' }),
+          inboundImage({ msgId: 'm-own', uidFrom: 'bot_own' }),
+          inboundImage({ msgId: 'm-off', uidFrom: 'bot_official' }),
+          inboundImage({ msgId: 'm-exc', uidFrom: 'excluded_user' }),
+          inboundImage({ msgId: 'm-valid', uidFrom: 'valid_user', displayName: 'Valid' }),
+        ],
+      },
+      {
+        now: () => 10 * 60 * 1000,
+        proofDir,
+        ocrImage,
+        downloadImage: async () => PNG,
+      }
+    );
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.recorded).toBe(1);
+    expect(ocrImage).toHaveBeenCalledTimes(1);
+
+    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1'`).all() as Array<{
+      uid_from: string;
+    }>;
+    expect(rows).toEqual([{ uid_from: 'valid_user' }]);
+    db.close();
+  });
+
+  it('filters out non-group-members when group_members_cache is populated', async () => {
+    const db = openDb();
+    const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
+    dirs.push(proofDir);
+    seedOpenTask(db, { id: 't1', caption: 'TEST TASK PROOF OCR', required: 5 });
+
+    db.prepare(
+      `INSERT INTO group_members_cache (zca_group_id, user_id, display_name, updated_at)
+       VALUES ('zgr-1', 'member_1', 'Member 1', 100)`
+    ).run();
+
+    const ocrImage = vi.fn(async () => 'TEST TASK PROOF OCR');
+    const summary = await scanGroupHistoryForTask(
+      db,
+      {
+        taskId: 't1',
+        shortCode: 'ABC123',
+        zcaGroupId: 'zgr-1',
+        count: 5,
+        messages: [
+          inboundImage({ msgId: 'm-outsider', uidFrom: 'outsider_99' }),
+          inboundImage({ msgId: 'm-member', uidFrom: 'member_1', displayName: 'Member 1' }),
+        ],
+      },
+      {
+        now: () => 10 * 60 * 1000,
+        proofDir,
+        ocrImage,
+        downloadImage: async () => PNG,
+      }
+    );
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.skipped).toBe(1);
+    expect(summary.recorded).toBe(1);
+    expect(ocrImage).toHaveBeenCalledTimes(1);
+
+    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1'`).all() as Array<{
+      uid_from: string;
+    }>;
+    expect(rows).toEqual([{ uid_from: 'member_1' }]);
+    db.close();
+  });
+
+  it('runtime handleZcaMessage ignores messages from bot or uid=0', () => {
+    const db = openDb();
+    seedOpenTask(db, { id: 't1', zca: 'zgr-1' });
+    setTaskproofSetting('zca_own_uid', 'bot_zca', db);
+
+    const runtime = new WorkerRuntime({
+      db,
+      loginPort: { login: async () => undefined, loginQR: async () => ({ cookie: [], imei: 'i', userAgent: 'ua' }) },
+      now: () => 5_000,
+      getSessionFilePath: () => '/dev/null',
+      getAdminChatId: () => 'admin',
+      getPublicBaseUrl: () => 'https://example.test',
+      getProofDir: () => '/dev/null',
+      ocrImage: async () => '',
+      downloadImage: async () => PNG,
+      postScanResult: async () => ({}),
+      kickReport: async () => undefined,
+      scheduleInterval: () => () => undefined,
+    });
+
+    const selfRes = runtime.handleZcaMessage(inboundImage({ uidFrom: '0' }));
+    expect(selfRes.ocr).toBe(false);
+
+    const botRes = runtime.handleZcaMessage(inboundImage({ uidFrom: 'bot_zca' }));
+    expect(botRes.ocr).toBe(false);
+
+    const cached = db.prepare(`SELECT user_id FROM group_members_cache WHERE zca_group_id = 'zgr-1'`).all();
+    expect(cached).toEqual([]);
+
+    const validRes = runtime.handleZcaMessage(inboundImage({ uidFrom: 'valid_user', displayName: 'Valid' }));
+    expect(validRes.ocr).toBe(true);
+
+    const cachedAfter = db.prepare(`SELECT user_id FROM group_members_cache WHERE zca_group_id = 'zgr-1'`).all();
+    expect(cachedAfter).toEqual([{ user_id: 'valid_user' }]);
+
     db.close();
   });
 

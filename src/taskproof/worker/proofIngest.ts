@@ -17,10 +17,11 @@ import path from 'path';
 import Database from 'better-sqlite3';
 import { getProofDir } from '../env';
 import { closeTaskIfQuotaReached } from '../lifecycle';
-import { getTaskproofSetting } from '../settings';
+import { getTaskproofExcludeUids, getTaskproofSetting } from '../settings';
 import { shouldOcrZcaGroup } from './groupMap';
 import { downloadProofBytes } from './imageFetch';
 import { MatchCandidate, pickBestMatch } from './match';
+import { listCachedMembers, stripMemberId } from './memberCache';
 import { ocrImage as defaultOcrImage } from './ocr';
 import { loadSession, ZcaCredentials } from './session';
 
@@ -42,6 +43,7 @@ export interface ProofIngestDeps {
   newId?: () => string;
   /** Official bot gửi T6; worker không sendPhoto. */
   kickReport?: (taskId: string) => Promise<unknown>;
+  excludeUids?: Set<string>;
 }
 
 /** /quet: chỉ chấm một task, cho phép ảnh đã processed dưới ngưỡng. */
@@ -186,8 +188,22 @@ export async function ingestProofImage(
   const zcaGroupId = (image.threadId || '').trim();
   const msgId = (image.msgId || '').trim();
   const uidFrom = (image.uidFrom || '').trim();
-  if (!zcaGroupId || !msgId || !uidFrom) {
+  if (!zcaGroupId || !msgId || !uidFrom || uidFrom === '0') {
     return { outcome: 'skipped', reason: 'missing_ids' };
+  }
+  const cleanUid = stripMemberId(uidFrom);
+  const excludeUids = deps.excludeUids ?? getTaskproofExcludeUids(db);
+  if (excludeUids.has(uidFrom) || excludeUids.has(cleanUid)) {
+    console.log(`[TaskProofWorker] Bỏ qua ảnh từ tài khoản bot/loại trừ msg=${msgId} uid=${uidFrom}`);
+    return { outcome: 'skipped', reason: 'excluded_sender' };
+  }
+  const cachedMembers = listCachedMembers(db, zcaGroupId);
+  if (cachedMembers.length > 0) {
+    const isMember = cachedMembers.some((m) => stripMemberId(m.user_id) === cleanUid);
+    if (!isMember) {
+      console.log(`[TaskProofWorker] Bỏ qua ảnh từ người không thuộc nhóm msg=${msgId} uid=${uidFrom}`);
+      return { outcome: 'skipped', reason: 'not_a_member' };
+    }
   }
   if (!shouldOcrZcaGroup(db, zcaGroupId)) {
     return { outcome: 'skipped', reason: 'unmapped_or_closed' };

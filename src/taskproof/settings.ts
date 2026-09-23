@@ -54,6 +54,29 @@ export const TASKPROOF_SETTING_DEFAULTS: TaskproofSettings = {
   remind_exclude_uids: [],
 };
 
+export function getTaskproofExcludeUids(database?: Database.Database): Set<string> {
+  const zcaOwn = database
+    ? getTaskproofSetting('zca_own_uid', database)
+    : getTaskproofSetting('zca_own_uid');
+  const officialBot = database
+    ? getTaskproofSetting('official_bot_uid', database)
+    : getTaskproofSetting('official_bot_uid');
+  const remindExclude = database
+    ? getTaskproofSetting('remind_exclude_uids', database)
+    : getTaskproofSetting('remind_exclude_uids');
+
+  const out = new Set<string>();
+  if (zcaOwn?.trim()) out.add(zcaOwn.trim());
+  if (officialBot?.trim()) out.add(officialBot.trim());
+  if (Array.isArray(remindExclude)) {
+    for (const id of remindExclude) {
+      const s = (id || '').trim();
+      if (s) out.add(s);
+    }
+  }
+  return out;
+}
+
 const FORBIDDEN_SETTING_KEYS = new Set([
   'INTERNAL_API_KEY',
   'INTERNAL_CRON_TOKEN',

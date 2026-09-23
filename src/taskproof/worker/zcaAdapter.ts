@@ -185,9 +185,13 @@ export function unwrapHistoryPayload(raw: unknown): { groupMsgs: unknown[]; more
 
 function mapHistoryMessages(groupId: string, ownUid: string, raw: unknown): ZcaHistoryPage {
   const { groupMsgs, more } = unwrapHistoryPayload(raw);
+  const cleanOwnUid = String(ownUid || '').trim();
   const messages = groupMsgs.map((item) => {
-    const inbound = normalizeZcaInbound(new GroupMessage(ownUid, item as ConstructorParameters<typeof GroupMessage>[1]));
+    const inbound = normalizeZcaInbound(new GroupMessage(cleanOwnUid, item as ConstructorParameters<typeof GroupMessage>[1]));
     if (!inbound.threadId) inbound.threadId = groupId;
+    if (inbound.uidFrom === '0' && cleanOwnUid) {
+      inbound.uidFrom = cleanOwnUid;
+    }
     return inbound;
   });
   return { more, messages };
@@ -402,6 +406,13 @@ export function normalizeZcaInbound(message: {
     (isLinkType ||
       (!isPhotoType && !hrefLooksLikeImage && !/^https?:\/\/(?:photo-|fsh-)/i.test(href || thumb)));
   const hasImage = Boolean((href || thumb) && !isGif && !isLinkCard);
+  const rawUid =
+    message.data.uidFrom ??
+    (message.data as Record<string, unknown>).userId ??
+    (message.data as Record<string, unknown>).fromUid ??
+    (message.data as Record<string, unknown>).src ??
+    '';
+  const uidFrom = String(rawUid || '').trim();
   return {
     threadId: message.threadId,
     isGroup: message.type === ThreadType.Group,
@@ -411,7 +422,7 @@ export function normalizeZcaInbound(message: {
     isLinkCard,
     shareHref: isLinkCard ? href : undefined,
     msgId: message.data.msgId || message.data.realMsgId || '',
-    uidFrom: message.data.uidFrom || '',
+    uidFrom,
     href: href || undefined,
     thumb: thumb || undefined,
     contentType: contentType || undefined,
