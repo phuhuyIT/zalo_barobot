@@ -150,8 +150,7 @@ describe('task-proof reminders (Step 7)', () => {
         link: 'https://facebook.com/post/123',
       });
       expect(plan.kind).toBe('mentions');
-      expect(plan.msg).toContain('👉 https://facebook.com/post/123');
-      expect(plan.msg).toContain('ABC123');
+      expect(plan.msg).toContain('chưa nộp minh chứng cho bài viết https://facebook.com/post/123');
     });
 
     it('uses one @all (uid -1) when there are too many missing people', () => {
@@ -186,7 +185,7 @@ describe('task-proof reminders (Step 7)', () => {
         link: 'https://facebook.com/post/456',
       });
       expect(plan.kind).toBe('all');
-      expect(plan.msg).toContain('👉 https://facebook.com/post/456');
+      expect(plan.msg).toContain('chưa nộp minh chứng cho bài viết https://facebook.com/post/456');
     });
 
     it('uses @all when rendered text is over MAX_REMINDER_TEXT_LEN', () => {
@@ -228,7 +227,7 @@ describe('task-proof reminders (Step 7)', () => {
         link: 'https://facebook.com/post/789',
       });
       expect(plan.kind).toBe('generic');
-      expect(plan.msg).toContain('👉 https://facebook.com/post/789');
+      expect(plan.msg).toContain('cho bài viết https://facebook.com/post/789');
     });
   });
 
@@ -534,7 +533,7 @@ describe('task-proof reminders (Step 7)', () => {
       const result = await runtime.remind('t1');
       expect(result).toMatchObject({ httpStatus: 200, reminded: true, kind: 'generic' });
       expect(sent[0].mentions).toBeUndefined();
-      expect(sent[0].msg).toMatch(/ABC123/);
+      expect(sent[0].msg).toMatch(/bài viết https:\/\/x/);
       db.close();
     });
 

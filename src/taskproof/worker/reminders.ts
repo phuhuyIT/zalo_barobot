@@ -74,8 +74,10 @@ function buildMentionsMessage(missing: CachedMember[], shortCode: string, link?:
     tokens.push(token);
     pos += token.length;
   }
-  const linkSuffix = link ? `\n👉 ${link}` : '';
-  const msg = `${tokens.join(' ')} chưa nộp minh chứng ${shortCode}.${linkSuffix}`;
+  const suffix = link
+    ? `chưa nộp minh chứng cho bài viết ${link}`
+    : `chưa nộp minh chứng ${shortCode}.`;
+  const msg = `${tokens.join(' ')} ${suffix}`;
   return { msg, mentions };
 }
 
@@ -84,9 +86,11 @@ function buildAllMessage(missingCount: number, shortCode: string, link?: string)
   mentions: ZcaMention[];
 } {
   const token = '@all';
-  const linkSuffix = link ? `\n👉 ${link}` : '';
+  const suffix = link
+    ? `Còn ${missingCount} người chưa nộp minh chứng cho bài viết ${link}`
+    : `Còn ${missingCount} người chưa nộp minh chứng ${shortCode}.`;
   return {
-    msg: `${token} Còn ${missingCount} người chưa nộp minh chứng ${shortCode}.${linkSuffix}`,
+    msg: `${token} ${suffix}`,
     mentions: [{ pos: 0, len: token.length, uid: ALL_MENTION_UID }],
   };
 }
@@ -101,12 +105,11 @@ export function planReminder(opts: {
 }): ReminderPlan {
   const { missing, shortCode, maxMentions, maxTextLen, cacheAvailable, link } = opts;
 
-  const linkSuffix = link ? `\n👉 ${link}` : '';
-
   if (!cacheAvailable) {
+    const taskRef = link ? `bài viết ${link}` : `task ${shortCode}`;
     return {
       kind: 'generic',
-      msg: `Nhắc nộp minh chứng cho task ${shortCode}. Không lấy được danh sách thành viên — đưa tài khoản phụ làm phó nhóm (hoặc tắt khóa xem thành viên) rồi /nhac lại.${linkSuffix}`,
+      msg: `Nhắc nộp minh chứng cho ${taskRef}. Không lấy được danh sách thành viên — đưa tài khoản phụ làm phó nhóm (hoặc tắt khóa xem thành viên) rồi /nhac lại.`,
       mentions: [],
       missingCount: 0,
     };

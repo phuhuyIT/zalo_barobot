@@ -835,6 +835,15 @@ export class WorkerRuntime {
     );
     const result: ScanHistoryResult = { ...summary, httpStatus: 200, task_id: taskId };
     await this.maybePostScanResult(replyChatId || prepared.task.official_chat_id, result);
+    // After a successful scan, send a reminder to the group showing who hasn't submitted + post link
+    if (!result.closed && result.recorded > 0) {
+      try {
+        await this.deliverReminder(taskId, { forceRefresh: false });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn('[TaskProofWorker] /quet auto-remind lỗi:', msg);
+      }
+    }
     if (result.closed) this.maybeStopListening();
     return result;
   }

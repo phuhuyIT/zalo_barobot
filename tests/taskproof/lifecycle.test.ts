@@ -54,16 +54,18 @@ function insertTask(
     remindCount?: number;
     remindedAt?: number | null;
     requiredCount?: number;
+    link?: string;
   } = {}
 ): void {
   db.prepare(
     `INSERT INTO tasks (id, short_code, official_chat_id, zca_group_id, report_group_id,
       link, reference_text, required_count, deadline, status, created_at, remind_count, reminded_at)
-     VALUES (?, ?, 'off_group', ?, 'rep', 'https://x', 'cap', ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, 'off_group', ?, 'rep', ?, 'cap', ?, ?, ?, ?, ?, ?)`
   ).run(
     opts.id || 't1',
     opts.code || 'ABC123',
     opts.zca === undefined ? 'zgr-1' : opts.zca,
+    opts.link || 'https://x',
     opts.requiredCount ?? 1,
     opts.deadline ?? 100,
     opts.status || 'collecting',
@@ -358,8 +360,8 @@ describe('task-proof listen/stop + auto-remind + stale-cancel (Step 8)', () => {
 
     it('continues the batch when one task send fails', async () => {
       const db = openDb();
-      insertTask(db, { id: 't1', code: 'AAA111', deadline: 10 });
-      insertTask(db, { id: 't2', code: 'BBB222', deadline: 10 });
+      insertTask(db, { id: 't1', code: 'AAA111', deadline: 10, link: 'https://fb.com/aaa' });
+      insertTask(db, { id: 't2', code: 'BBB222', deadline: 10, link: 'https://fb.com/bbb' });
       replaceMemberCache(db, 'zgr-1', [{ user_id: 'u1', display_name: 'An' }], 1);
       const sent: string[] = [];
       const runtime = loggedInRuntime(
@@ -367,7 +369,7 @@ describe('task-proof listen/stop + auto-remind + stale-cancel (Step 8)', () => {
         mockPort({
           startMessageLoop: () => undefined,
           sendGroupMessage: async (_threadId, content) => {
-            if (content.msg.includes('AAA111')) throw new Error('send failed');
+            if (content.msg.includes('fb.com/aaa')) throw new Error('send failed');
             sent.push(content.msg);
           },
         }),
@@ -375,7 +377,7 @@ describe('task-proof listen/stop + auto-remind + stale-cancel (Step 8)', () => {
       );
       await runtime.ensureListening();
       await runtime.runDeadlineTick();
-      expect(sent.some((msg) => msg.includes('BBB222'))).toBe(true);
+      expect(sent.some((msg) => msg.includes('fb.com/bbb'))).toBe(true);
       const counts = db
         .prepare(`SELECT id, remind_count FROM tasks ORDER BY id`)
         .all() as Array<{ id: string; remind_count: number }>;
