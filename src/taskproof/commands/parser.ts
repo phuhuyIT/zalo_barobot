@@ -34,13 +34,30 @@ const COMMAND_NAMES: TaskproofCommandName[] = [
   'quet',
 ];
 
-const FIELD_LABELS = ['Link', 'Caption', 'SoLuong', 'HanChot', 'BaoCao'] as const;
-type FieldLabel = (typeof FIELD_LABELS)[number];
+type FieldLabel = 'Link' | 'Caption' | 'SoLuong' | 'HanChot' | 'BaoCao';
+
+const FIELD_PATTERN =
+  '(?:Link|Caption|So\\s*Luong|Số\\s*Lượng|SoLuong|Han\\s*Chot|Hạn\\s*Chót|HanChot|Bao\\s*Cao|Báo\\s*Cáo|BaoCao)';
 
 const FIELD_RE = new RegExp(
-  `(?:^|[\\s\\n\\r])(?:[-*•+]\\s*)?(?:\\d+[.)]\\s*)?(${FIELD_LABELS.join('|')})\\s*:`,
+  `(?:^|[\\s\\n\\r])(?:[-*•+]\\s*)?(?:\\d+[.)]\\s*)?(${FIELD_PATTERN})\\s*[:=]`,
   'gi'
 );
+
+function canonicalFieldLabel(raw: string): FieldLabel | null {
+  const norm = (raw || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/đ/g, 'd');
+  if (norm === 'link') return 'Link';
+  if (norm === 'caption') return 'Caption';
+  if (norm === 'soluong') return 'SoLuong';
+  if (norm === 'hanchot') return 'HanChot';
+  if (norm === 'baocao') return 'BaoCao';
+  return null;
+}
 
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 
@@ -128,7 +145,7 @@ function extractLabeledFields(body: string): Partial<Record<FieldLabel, string>>
   let match: RegExpExecArray | null;
   while ((match = FIELD_RE.exec(body)) !== null) {
     const found = match;
-    const canonical = FIELD_LABELS.find((item) => item.toLowerCase() === found[1].toLowerCase());
+    const canonical = canonicalFieldLabel(found[1]);
     if (!canonical) continue;
     matches.push({
       label: canonical,

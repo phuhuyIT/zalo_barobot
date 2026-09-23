@@ -806,6 +806,28 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       expect(sendMessage.mock.calls.some((call) => call[1] === UNFURL_FAIL_REPLY)).toBe(true);
     });
 
+    it('parses soluong = 12 syntax with equal sign and spaces', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const insertTask = vi.fn().mockReturnValue(createdTask({ required_count: 12 }));
+      const fb = 'https://www.facebook.com/share/v/1FS7f9MknZ/';
+      await handleTaskproofCommand(adminMessage(`/task ${fb} soluong = 12`), {
+        sendMessage,
+        insertTask,
+        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+        getAdminChatId: () => ADMIN,
+        listLinkedGroups: () => ONE_GROUP,
+        enqueueUnfurl: (job) => job(),
+        unfurlFacebook: async () => ({
+          ok: true,
+          caption: 'Test post',
+          canonicalUrl: 'https://www.facebook.com/page/posts/99',
+          source: 'og:description',
+        }),
+      });
+      expect(insertTask).toHaveBeenCalledOnce();
+      expect(insertTask.mock.calls[0][0].requiredCount).toBe(12);
+    });
+
     it('redacts secrets when logging a missing Link payload', () => {
       const redacted = redactSecrets({
         INTERNAL_API_KEY: 'real-secret',

@@ -21,7 +21,7 @@ import { getTaskproofExcludeUids, getTaskproofSetting } from '../settings';
 import { shouldOcrZcaGroup } from './groupMap';
 import { downloadProofBytes } from './imageFetch';
 import { MatchCandidate, pickBestMatch } from './match';
-import { listCachedMembers, stripMemberId } from './memberCache';
+import { observeMember, stripMemberId } from './memberCache';
 import { ocrImage as defaultOcrImage } from './ocr';
 import { loadSession, ZcaCredentials } from './session';
 
@@ -197,14 +197,7 @@ export async function ingestProofImage(
     console.log(`[TaskProofWorker] Bỏ qua ảnh từ tài khoản bot/loại trừ msg=${msgId} uid=${uidFrom}`);
     return { outcome: 'skipped', reason: 'excluded_sender' };
   }
-  const cachedMembers = listCachedMembers(db, zcaGroupId);
-  if (cachedMembers.length > 0) {
-    const isMember = cachedMembers.some((m) => stripMemberId(m.user_id) === cleanUid);
-    if (!isMember) {
-      console.log(`[TaskProofWorker] Bỏ qua ảnh từ người không thuộc nhóm msg=${msgId} uid=${uidFrom}`);
-      return { outcome: 'skipped', reason: 'not_a_member' };
-    }
-  }
+  observeMember(db, zcaGroupId, uidFrom, image.displayName || uidFrom, now());
   if (!shouldOcrZcaGroup(db, zcaGroupId)) {
     return { outcome: 'skipped', reason: 'unmapped_or_closed' };
   }

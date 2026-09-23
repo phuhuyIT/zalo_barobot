@@ -342,25 +342,75 @@ function mediaFromRecord(rec: Record<string, unknown>): {
   thumb: string;
   contentType: string;
 } {
-  let href = firstNonEmptyString(rec.href);
-  let thumb = firstNonEmptyString(rec.thumb, rec.oriUrl, rec.originUrl);
+  let href = firstNonEmptyString(
+    rec.href,
+    rec.url,
+    rec.normalUrl,
+    rec.hdUrl,
+    rec.rawUrl,
+    rec.imageUrl,
+    rec.oriUrl,
+    rec.originUrl
+  );
+  let thumb = firstNonEmptyString(
+    rec.thumb,
+    rec.thumbUrl,
+    rec.previewUrl,
+    rec.oriUrl,
+    rec.originUrl
+  );
   const contentType = typeof rec.type === 'string' ? rec.type : '';
   const paramsRaw = rec.params;
-  if (typeof paramsRaw === 'string' && paramsRaw.trim().startsWith('{')) {
+  let params: Record<string, unknown> | null = null;
+  if (paramsRaw && typeof paramsRaw === 'object' && !Array.isArray(paramsRaw)) {
+    params = paramsRaw as Record<string, unknown>;
+  } else if (typeof paramsRaw === 'string' && paramsRaw.trim().startsWith('{')) {
     try {
-      const params = JSON.parse(paramsRaw) as Record<string, unknown>;
-      href = href || firstNonEmptyString(params.href, params.imageUrl, params.originUrl, params.oriUrl);
-      thumb = thumb || firstNonEmptyString(params.thumb, params.thumbUrl, params.previewUrl);
+      params = JSON.parse(paramsRaw) as Record<string, unknown>;
     } catch {
       // params không phải JSON ảnh
     }
+  }
+  if (params) {
+    href =
+      href ||
+      firstNonEmptyString(
+        params.href,
+        params.url,
+        params.normalUrl,
+        params.hdUrl,
+        params.rawUrl,
+        params.imageUrl,
+        params.originUrl,
+        params.oriUrl
+      );
+    thumb =
+      thumb ||
+      firstNonEmptyString(
+        params.thumb,
+        params.thumbUrl,
+        params.previewUrl,
+        params.originUrl,
+        params.oriUrl
+      );
   }
   return { href, thumb, contentType };
 }
 
 function extractMedia(content: unknown): { href: string; thumb: string; contentType: string } {
-  if (Array.isArray(content)) {
-    for (const item of content) {
+  let data: unknown = content;
+  if (typeof data === 'string') {
+    const trimmed = data.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        data = JSON.parse(trimmed);
+      } catch {
+        // text không phải JSON
+      }
+    }
+  }
+  if (Array.isArray(data)) {
+    for (const item of data) {
       if (item && typeof item === 'object') {
         const media = mediaFromRecord(item as Record<string, unknown>);
         if (media.href || media.thumb) return media;
@@ -368,8 +418,8 @@ function extractMedia(content: unknown): { href: string; thumb: string; contentT
     }
     return { href: '', thumb: '', contentType: '' };
   }
-  if (content && typeof content === 'object') {
-    return mediaFromRecord(content as Record<string, unknown>);
+  if (data && typeof data === 'object') {
+    return mediaFromRecord(data as Record<string, unknown>);
   }
   return { href: '', thumb: '', contentType: '' };
 }
@@ -388,14 +438,23 @@ export function normalizeZcaInbound(message: {
   };
 }): ZcaInboundMessage {
   const content = message.data.content;
-  const text = typeof content === 'string' ? content : '';
+  const isJsonContent = typeof content === 'string' && /^\s*[[{]/.test(content);
+  const text = typeof content === 'string' && !isJsonContent ? content : '';
   const media = extractMedia(content);
+  if (!media.href && !media.thumb) {
+    const fallback = mediaFromRecord(message.data as Record<string, unknown>);
+    if (fallback.href || fallback.thumb) {
+      media.href = fallback.href;
+      media.thumb = fallback.thumb;
+      if (!media.contentType) media.contentType = fallback.contentType;
+    }
+  }
   const href = media.href;
   const thumb = media.thumb;
   const contentType = media.contentType;
   const msgType = message.data.msgType || '';
   const isGif = /gif/i.test(contentType) || /gif/i.test(msgType) || /\.gif(\?|#|$)/i.test(href);
-  const isPhotoType = /^chat\.photo/i.test(msgType) || /photo/i.test(contentType);
+  const isPhotoType = /^(?:chat\.)?(?:photo|image)/i.test(msgType) || /(?:photo|image)/i.test(contentType);
   const isLinkType =
     /^(chat\.link|chat\.recommended)$/i.test(msgType) ||
     /^(recommend|link|share)$/i.test(contentType);

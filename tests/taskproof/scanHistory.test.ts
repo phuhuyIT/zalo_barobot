@@ -356,16 +356,11 @@ describe('task-proof /quet history scan', () => {
     db.close();
   });
 
-  it('filters out non-group-members when group_members_cache is populated', async () => {
+  it('observes and records senders from group history scan into member cache', async () => {
     const db = openDb();
     const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
     dirs.push(proofDir);
     seedOpenTask(db, { id: 't1', caption: 'TEST TASK PROOF OCR', required: 5 });
-
-    db.prepare(
-      `INSERT INTO group_members_cache (zca_group_id, user_id, display_name, updated_at)
-       VALUES ('zgr-1', 'member_1', 'Member 1', 100)`
-    ).run();
 
     const ocrImage = vi.fn(async () => 'TEST TASK PROOF OCR');
     const summary = await scanGroupHistoryForTask(
@@ -376,8 +371,8 @@ describe('task-proof /quet history scan', () => {
         zcaGroupId: 'zgr-1',
         count: 5,
         messages: [
-          inboundImage({ msgId: 'm-outsider', uidFrom: 'outsider_99' }),
-          inboundImage({ msgId: 'm-member', uidFrom: 'member_1', displayName: 'Member 1' }),
+          inboundImage({ msgId: 'm-member-1', uidFrom: '10001', displayName: 'Member 1' }),
+          inboundImage({ msgId: 'm-member-2', uidFrom: '10002', displayName: 'Member 2' }),
         ],
       },
       {
@@ -389,14 +384,19 @@ describe('task-proof /quet history scan', () => {
     );
 
     expect(summary.scanned).toBe(2);
-    expect(summary.skipped).toBe(1);
-    expect(summary.recorded).toBe(1);
-    expect(ocrImage).toHaveBeenCalledTimes(1);
+    expect(summary.recorded).toBe(2);
+    expect(ocrImage).toHaveBeenCalledTimes(2);
 
-    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1'`).all() as Array<{
+    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1' ORDER BY uid_from`).all() as Array<{
       uid_from: string;
     }>;
-    expect(rows).toEqual([{ uid_from: 'member_1' }]);
+    expect(rows).toEqual([{ uid_from: '10001' }, { uid_from: '10002' }]);
+
+    const cached = db.prepare(`SELECT user_id, display_name FROM group_members_cache WHERE zca_group_id = 'zgr-1' ORDER BY user_id`).all();
+    expect(cached).toEqual([
+      { user_id: '10001', display_name: 'Member 1' },
+      { user_id: '10002', display_name: 'Member 2' },
+    ]);
     db.close();
   });
 
