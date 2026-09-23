@@ -949,10 +949,10 @@ export class WorkerRuntime {
 
     const task = db
       .prepare(
-        `SELECT id, short_code, zca_group_id, status FROM tasks WHERE id = ?`
+        `SELECT id, short_code, zca_group_id, status, link FROM tasks WHERE id = ?`
       )
       .get(taskId) as
-      | { id: string; short_code: string; zca_group_id: string | null; status: string }
+      | { id: string; short_code: string; zca_group_id: string | null; status: string; link: string }
       | undefined;
 
     if (!task) {
@@ -1005,6 +1005,7 @@ export class WorkerRuntime {
       maxMentions: getTaskproofSetting('max_mentions_per_message', db),
       maxTextLen: getTaskproofSetting('max_reminder_text_len', db),
       cacheAvailable,
+      link: task.link,
     });
 
     if (plan.kind === 'none') {

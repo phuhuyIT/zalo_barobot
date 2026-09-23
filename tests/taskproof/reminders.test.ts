@@ -135,6 +135,23 @@ describe('task-proof reminders (Step 7)', () => {
       expect(plan.mentions[1].pos).toBe('@An '.length);
       expect(plan.msg.startsWith('@An @Bình')).toBe(true);
       expect(plan.msg).toMatch(/ABC123/);
+      expect(plan.msg).not.toMatch(/👉/); // no link when not provided
+    });
+
+    it('appends the post link to mention messages when provided', () => {
+      const plan = planReminder({
+        missing: [
+          { user_id: 'u1', display_name: 'An' },
+        ],
+        shortCode: 'ABC123',
+        maxMentions: 8,
+        maxTextLen: 1500,
+        cacheAvailable: true,
+        link: 'https://facebook.com/post/123',
+      });
+      expect(plan.kind).toBe('mentions');
+      expect(plan.msg).toContain('👉 https://facebook.com/post/123');
+      expect(plan.msg).toContain('ABC123');
     });
 
     it('uses one @all (uid -1) when there are too many missing people', () => {
@@ -153,6 +170,23 @@ describe('task-proof reminders (Step 7)', () => {
       expect(plan.mentions).toEqual([{ pos: 0, len: 4, uid: ALL_MENTION_UID }]);
       expect(plan.msg).toMatch(/^@all /);
       expect(plan.msg).toMatch(/Còn 9 người/);
+    });
+
+    it('appends the post link to @all messages when provided', () => {
+      const missing = Array.from({ length: 9 }, (_, i) => ({
+        user_id: `u${i}`,
+        display_name: `N${i}`,
+      }));
+      const plan = planReminder({
+        missing,
+        shortCode: 'ABC123',
+        maxMentions: 8,
+        maxTextLen: 1500,
+        cacheAvailable: true,
+        link: 'https://facebook.com/post/456',
+      });
+      expect(plan.kind).toBe('all');
+      expect(plan.msg).toContain('👉 https://facebook.com/post/456');
     });
 
     it('uses @all when rendered text is over MAX_REMINDER_TEXT_LEN', () => {
@@ -182,6 +216,19 @@ describe('task-proof reminders (Step 7)', () => {
       expect(plan.kind).toBe('generic');
       expect(plan.mentions).toEqual([]);
       expect(plan.msg).toMatch(/ABC123/);
+    });
+
+    it('appends the post link to generic messages when provided', () => {
+      const plan = planReminder({
+        missing: [],
+        shortCode: 'ABC123',
+        maxMentions: 8,
+        maxTextLen: 1500,
+        cacheAvailable: false,
+        link: 'https://facebook.com/post/789',
+      });
+      expect(plan.kind).toBe('generic');
+      expect(plan.msg).toContain('👉 https://facebook.com/post/789');
     });
   });
 

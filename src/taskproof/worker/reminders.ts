@@ -60,7 +60,7 @@ function mentionLabel(name: string): string {
   return `@${cleaned}`;
 }
 
-function buildMentionsMessage(missing: CachedMember[], shortCode: string): {
+function buildMentionsMessage(missing: CachedMember[], shortCode: string, link?: string): {
   msg: string;
   mentions: ZcaMention[];
 } {
@@ -74,17 +74,19 @@ function buildMentionsMessage(missing: CachedMember[], shortCode: string): {
     tokens.push(token);
     pos += token.length;
   }
-  const msg = `${tokens.join(' ')} chưa nộp minh chứng ${shortCode}.`;
+  const linkSuffix = link ? `\n👉 ${link}` : '';
+  const msg = `${tokens.join(' ')} chưa nộp minh chứng ${shortCode}.${linkSuffix}`;
   return { msg, mentions };
 }
 
-function buildAllMessage(missingCount: number, shortCode: string): {
+function buildAllMessage(missingCount: number, shortCode: string, link?: string): {
   msg: string;
   mentions: ZcaMention[];
 } {
   const token = '@all';
+  const linkSuffix = link ? `\n👉 ${link}` : '';
   return {
-    msg: `${token} Còn ${missingCount} người chưa nộp minh chứng ${shortCode}.`,
+    msg: `${token} Còn ${missingCount} người chưa nộp minh chứng ${shortCode}.${linkSuffix}`,
     mentions: [{ pos: 0, len: token.length, uid: ALL_MENTION_UID }],
   };
 }
@@ -95,13 +97,16 @@ export function planReminder(opts: {
   maxMentions: number;
   maxTextLen: number;
   cacheAvailable: boolean;
+  link?: string;
 }): ReminderPlan {
-  const { missing, shortCode, maxMentions, maxTextLen, cacheAvailable } = opts;
+  const { missing, shortCode, maxMentions, maxTextLen, cacheAvailable, link } = opts;
+
+  const linkSuffix = link ? `\n👉 ${link}` : '';
 
   if (!cacheAvailable) {
     return {
       kind: 'generic',
-      msg: `Nhắc nộp minh chứng cho task ${shortCode}. Không lấy được danh sách thành viên — đưa tài khoản phụ làm phó nhóm (hoặc tắt khóa xem thành viên) rồi /nhac lại.`,
+      msg: `Nhắc nộp minh chứng cho task ${shortCode}. Không lấy được danh sách thành viên — đưa tài khoản phụ làm phó nhóm (hoặc tắt khóa xem thành viên) rồi /nhac lại.${linkSuffix}`,
       mentions: [],
       missingCount: 0,
     };
@@ -111,7 +116,7 @@ export function planReminder(opts: {
     return { kind: 'none', msg: '', mentions: [], missingCount: 0 };
   }
 
-  const perPerson = buildMentionsMessage(missing, shortCode);
+  const perPerson = buildMentionsMessage(missing, shortCode, link);
   const fits =
     missing.length <= maxMentions && perPerson.msg.length <= maxTextLen;
 
@@ -124,7 +129,7 @@ export function planReminder(opts: {
     };
   }
 
-  const all = buildAllMessage(missing.length, shortCode);
+  const all = buildAllMessage(missing.length, shortCode, link);
   return {
     kind: 'all',
     msg: all.msg,
