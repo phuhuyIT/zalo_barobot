@@ -14,6 +14,7 @@ import {
   historyWasTruncated,
   scanGroupHistoryForTask,
   selectLookbackImages,
+  takeRecentMessages,
 } from '../../src/taskproof/worker/scanHistory';
 import { saveSession } from '../../src/taskproof/worker/session';
 import { historyFetchCount, HISTORY_API_MAX_COUNT } from '../../src/taskproof/quet';
@@ -147,6 +148,47 @@ describe('task-proof /quet history scan', () => {
       unwrapHistoryPayload({ error_code: 0, data: JSON.stringify({ groupMsgs: [{ msgId: '2' }], more: 0 }) })
     ).toEqual({ groupMsgs: [{ msgId: '2' }], more: 0 });
     expect(unwrapHistoryPayload({ msgs: [{ msgId: '3' }] }).groupMsgs).toEqual([{ msgId: '3' }]);
+  });
+
+  it('keeps only the newest requested messages when Zalo returns a larger page', async () => {
+    const db = openDb();
+    const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
+    dirs.push(proofDir);
+    seedOpenTask(db, { id: 't1', caption: 'TEST TASK PROOF OCR', required: 20 });
+    const messages = Array.from({ length: 20 }, (_, i) =>
+      inboundImage({
+        msgId: `m${i}`,
+        uidFrom: `u${i}`,
+        displayName: `N${i}`,
+        ts: 1_000 + i,
+      })
+    );
+    expect(takeRecentMessages(messages, 5).map((m) => m.msgId)).toEqual(['m15', 'm16', 'm17', 'm18', 'm19']);
+
+    const ocrImage = vi.fn(async () => 'TEST TASK PROOF OCR');
+    const summary = await scanGroupHistoryForTask(
+      db,
+      {
+        taskId: 't1',
+        shortCode: 'ABC123',
+        zcaGroupId: 'zgr-1',
+        count: 5,
+        messages,
+      },
+      {
+        now: () => 10 * 60 * 1000,
+        proofDir,
+        ocrImage,
+        downloadImage: async () => PNG,
+      }
+    );
+    expect(summary.scanned).toBe(5);
+    expect(ocrImage).toHaveBeenCalledTimes(5);
+    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1' ORDER BY uid_from`).all() as Array<{
+      uid_from: string;
+    }>;
+    expect(rows.map((row) => row.uid_from)).toEqual(['u15', 'u16', 'u17', 'u18', 'u19']);
+    db.close();
   });
 
   it('keeps images from the fetched page and skips link cards', () => {

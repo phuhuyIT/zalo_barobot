@@ -25,6 +25,28 @@ export interface ScanHistoryInput {
   more?: number;
 }
 
+/**
+ * getrecentv2 và websocket history thường trả một trang lớn hơn count
+ * (hay gặp ~20) và không cắt theo số tin /quet yêu cầu. Giữ đúng N tin mới nhất.
+ * Tin không có ts xếp sau các tin có ts; cùng ts thì giữ thứ tự API (mới trước).
+ */
+export function takeRecentMessages(
+  messages: ZcaInboundMessage[],
+  count: number
+): ZcaInboundMessage[] {
+  const limit = historyFetchCount(count);
+  if (messages.length <= limit) return messages;
+  const ranked = messages.map((message, index) => ({
+    message,
+    index,
+    ts: message.ts || 0,
+  }));
+  ranked.sort((a, b) => b.ts - a.ts || a.index - b.index);
+  const newest = ranked.slice(0, limit);
+  newest.sort((a, b) => a.ts - b.ts || a.index - b.index);
+  return newest.map((row) => row.message);
+}
+
 export function selectLookbackImages(
   messages: ZcaInboundMessage[],
   excludeUids?: Set<string>
@@ -58,7 +80,7 @@ export async function scanGroupHistoryForTask(
 ): Promise<ScanHistorySummary> {
   const fetchCount = historyFetchCount(input.count);
   const excludeUids = deps.excludeUids ?? getTaskproofExcludeUids(db);
-  const images = selectLookbackImages(input.messages, excludeUids);
+  const images = selectLookbackImages(takeRecentMessages(input.messages, fetchCount), excludeUids);
   const truncated = historyWasTruncated(input.messages, fetchCount, input.more || 0);
 
   const summary: ScanHistorySummary = {
