@@ -37,6 +37,7 @@ import {
   listLinkedOpenZcaGroups,
   observeMember,
   refreshMemberCache,
+  stripMemberId,
 } from './memberCache';
 import {
   collectExcludeUids,
@@ -185,6 +186,7 @@ export class WorkerRuntime {
   private cancelDeadlineTimer: (() => void) | null = null;
   private messageLoopStarted = false;
   private readonly scanInFlight = new Set<string>();
+  private readonly knownBotUids = new Map<string, string[]>();
   private listenLock: Promise<void> = Promise.resolve();
   private deadlineTickInFlight = false;
   private ingestActive = 0;
@@ -984,21 +986,42 @@ export class WorkerRuntime {
       };
     }
 
+    const configuredBot = stripMemberId(getTaskproofSetting('official_bot_uid', db) || '');
+    const cachedBefore = listCachedMembers(db, task.zca_group_id);
+    const configuredBotInGroup =
+      Boolean(configuredBot) &&
+      cachedBefore.some((member) => stripMemberId(member.user_id) === configuredBot);
+    const learnBot = Boolean(configuredBot) && !configuredBotInGroup;
     const refresh = await refreshMemberCache({
       db,
       port: this.deps.loginPort,
       zcaGroupId: task.zca_group_id,
       now: this.deps.now(),
-      forceRefresh: opts.forceRefresh,
-      onlyWhenEmpty: opts.onlyWhenEmpty,
+      forceRefresh: opts.forceRefresh || learnBot,
+      onlyWhenEmpty: learnBot ? false : opts.onlyWhenEmpty,
     });
+
+    const seenBots = refresh.botUids.length > 0 ? refresh.botUids : this.knownBotUids.get(task.zca_group_id) || [];
+    if (refresh.botUids.length > 0) this.knownBotUids.set(task.zca_group_id, refresh.botUids);
+    const configuredIsBot = seenBots.some((id) => stripMemberId(id) === configuredBot);
+    if (seenBots.length > 0 && !configuredIsBot && (!configuredBot || learnBot)) {
+      try {
+        setTaskproofSetting('official_bot_uid', seenBots[0], db);
+        console.log(
+          `[TaskProofWorker] Ghi official_bot_uid=${seenBots[0]} (uid cũ không phải thành viên nhóm)`
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn('[TaskProofWorker] Không ghi được official_bot_uid:', msg);
+      }
+    }
 
     const members = listCachedMembers(db, task.zca_group_id);
     const exclude = collectExcludeUids({
       officialBotUid: getTaskproofSetting('official_bot_uid', db),
       zcaOwnUid: getTaskproofSetting('zca_own_uid', db),
       liveOwnId: this.deps.loginPort.getOwnId?.(),
-      extra: getTaskproofSetting('remind_exclude_uids', db),
+      extra: [...getTaskproofSetting('remind_exclude_uids', db), ...seenBots],
     });
     const cacheAvailable = members.some((member) => member.user_id && !exclude.has(member.user_id));
     const submitted = (

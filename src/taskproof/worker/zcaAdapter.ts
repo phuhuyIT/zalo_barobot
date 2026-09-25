@@ -58,7 +58,7 @@ export interface ZcaGroupInfoSnapshot {
   groupId: string;
   name: string;
   memberIds: string[];
-  currentMems: Array<{ id: string; dName: string }>;
+  currentMems: Array<{ id: string; dName: string; accountType?: number }>;
   totalMember: number;
   hasMoreMember: boolean;
   memVerList: string[];
@@ -70,6 +70,8 @@ export interface ZcaGroupInfoSnapshot {
 export interface ZcaMemberProfile {
   id: string;
   displayName: string;
+  /** Zalo profile type. 0 = người, 1 = OA/bot. */
+  accountType?: number;
 }
 
 export interface ZcaLoginPort {
@@ -670,6 +672,7 @@ export function createZcaLoginPort(): ZcaLoginPort {
         currentMems: (info.currentMems || []).map((m) => ({
           id: String(m.id),
           dName: m.dName || '',
+          accountType: typeof m.type === 'number' ? m.type : undefined,
         })),
         totalMember: Number(info.totalMember || 0),
         hasMoreMember: Boolean(info.hasMoreMember),
@@ -687,6 +690,7 @@ export function createZcaLoginPort(): ZcaLoginPort {
       return Object.values(profiles).map((p) => ({
         id: String(p.id),
         displayName: p.displayName || p.zaloName || String(p.id),
+        accountType: typeof p.type === 'number' ? p.type : undefined,
       }));
     },
 

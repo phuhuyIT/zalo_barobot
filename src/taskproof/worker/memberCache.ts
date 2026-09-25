@@ -18,6 +18,25 @@ export interface CachedMember {
 
 export const MEMBER_INFO_BATCH = 40;
 
+/** Zalo `type` trên currentMems / profile: 0 người, 1 OA hoặc bot. Không phải quyền admin. */
+export const ZALO_OA_ACCOUNT_TYPE = 1;
+
+export function isBotAccountType(type: number | undefined): boolean {
+  return type === ZALO_OA_ACCOUNT_TYPE;
+}
+
+export function botIdsFromMembers(
+  members: Array<{ id: string; accountType?: number }>
+): string[] {
+  const ids = new Set<string>();
+  for (const member of members) {
+    if (!isBotAccountType(member.accountType)) continue;
+    const id = stripMemberId(member.id);
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
 export function listCachedMembers(db: Database.Database, zcaGroupId: string): CachedMember[] {
   return db
     .prepare(
@@ -134,9 +153,10 @@ function displayNameOf(
 async function fetchProfiles(
   port: ZcaLoginPort,
   ids: string[]
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  if (!port.getGroupMembersInfo) return out;
+): Promise<{ names: Map<string, string>; bots: Array<{ id: string; accountType?: number }> }> {
+  const names = new Map<string, string>();
+  const bots: Array<{ id: string; accountType?: number }> = [];
+  if (!port.getGroupMembersInfo) return { names, bots };
   for (let i = 0; i < ids.length; i += MEMBER_INFO_BATCH) {
     const batch = ids.slice(i, i + MEMBER_INFO_BATCH);
     try {
@@ -144,20 +164,22 @@ async function fetchProfiles(
       for (const profile of profiles) {
         const id = stripMemberId(profile.id);
         if (!id) continue;
-        out.set(id, profile.displayName || id);
+        names.set(id, profile.displayName || id);
+        if (isBotAccountType(profile.accountType)) bots.push({ id, accountType: profile.accountType });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn('[TaskProofWorker] getGroupMembersInfo batch lỗi:', msg);
     }
   }
-  return out;
+  return { names, bots };
 }
 
 export interface RefreshMemberCacheResult {
   ok: boolean;
   usedStale: boolean;
   memberCount: number;
+  botUids: string[];
   warning?: string;
 }
 
@@ -180,19 +202,19 @@ export async function refreshMemberCache(opts: {
   const existing = listCachedMembers(db, zcaGroupId);
 
   if (!forceRefresh && opts.onlyWhenEmpty && existing.length > 0) {
-    return { ok: true, usedStale: false, memberCount: existing.length };
+    return { ok: true, usedStale: false, memberCount: existing.length, botUids: [] };
   }
 
   if (!forceRefresh && !isMemberCacheStale(db, zcaGroupId, now, maxAgeMs)) {
-    return { ok: true, usedStale: false, memberCount: existing.length };
+    return { ok: true, usedStale: false, memberCount: existing.length, botUids: [] };
   }
 
   if (!port.getGroupInfo) {
     if (existing.length > 0) {
       console.warn('[TaskProofWorker] Không gọi được getGroupInfo — giữ cache cũ', zcaGroupId);
-      return { ok: true, usedStale: true, memberCount: existing.length };
+      return { ok: true, usedStale: true, memberCount: existing.length, botUids: [] };
     }
-    return { ok: false, usedStale: false, memberCount: 0 };
+    return { ok: false, usedStale: false, memberCount: 0, botUids: [] };
   }
 
   let info: ZcaGroupInfoSnapshot | null = null;
@@ -206,9 +228,9 @@ export async function refreshMemberCache(opts: {
   if (!info) {
     if (existing.length > 0) {
       console.warn('[TaskProofWorker] getGroupInfo thất bại — giữ cache cũ', zcaGroupId);
-      return { ok: true, usedStale: true, memberCount: existing.length };
+      return { ok: true, usedStale: true, memberCount: existing.length, botUids: [] };
     }
-    return { ok: false, usedStale: false, memberCount: 0 };
+    return { ok: false, usedStale: false, memberCount: 0, botUids: [] };
   }
 
   const ids = idsFromGroupInfo(info);
@@ -231,18 +253,24 @@ export async function refreshMemberCache(opts: {
   if (usableIds.length === 0) {
     if (existing.length > 0) {
       console.warn('[TaskProofWorker] getGroupInfo không có thành viên dùng được — giữ cache cũ', zcaGroupId);
-      return { ok: true, usedStale: true, memberCount: existing.length, warning };
+      return { ok: true, usedStale: true, memberCount: existing.length, botUids: [], warning };
     }
-    return { ok: false, usedStale: false, memberCount: 0, warning };
+    return { ok: false, usedStale: false, memberCount: 0, botUids: [], warning };
   }
 
   const currentNames = new Map(
     info.currentMems.map((m) => [stripMemberId(m.id), m.dName || m.id])
   );
   const profiles = await fetchProfiles(port, ids);
+  const botUids = [
+    ...new Set([
+      ...botIdsFromMembers(info.currentMems),
+      ...botIdsFromMembers(profiles.bots),
+    ]),
+  ];
   const members: CachedMember[] = ids.map((id) => ({
     user_id: id,
-    display_name: displayNameOf(id, profiles, currentNames),
+    display_name: displayNameOf(id, profiles.names, currentNames),
   }));
 
   const incomplete =
@@ -263,5 +291,5 @@ export async function refreshMemberCache(opts: {
     ).run(info.name, zcaGroupId);
   }
 
-  return { ok: true, usedStale: false, memberCount: members.length, warning };
+  return { ok: true, usedStale: false, memberCount: members.length, botUids, warning };
 }

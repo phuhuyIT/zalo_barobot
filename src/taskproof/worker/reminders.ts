@@ -11,7 +11,7 @@
  */
 
 import { shouldAutoRemind } from '../lifecycle';
-import { CachedMember } from './memberCache';
+import { CachedMember, stripMemberId } from './memberCache';
 import { ZcaMention } from './zcaAdapter';
 
 export { shouldAutoRemind };
@@ -36,7 +36,10 @@ export function collectExcludeUids(opts: {
   const out = new Set<string>();
   for (const value of [opts.officialBotUid, opts.zcaOwnUid, opts.liveOwnId, ...(opts.extra || [])]) {
     const id = (value || '').trim();
-    if (id) out.add(id);
+    if (!id) continue;
+    out.add(id);
+    const stripped = stripMemberId(id);
+    if (stripped) out.add(stripped);
   }
   return out;
 }
@@ -49,7 +52,7 @@ export function computeMissing(
   const submitted = new Set([...submittedUids].map((id) => id.trim()).filter(Boolean));
   return members.filter((member) => {
     if (!member.user_id) return false;
-    if (exclude.has(member.user_id)) return false;
+    if (exclude.has(member.user_id) || exclude.has(stripMemberId(member.user_id))) return false;
     if (submitted.has(member.user_id)) return false;
     return true;
   });
