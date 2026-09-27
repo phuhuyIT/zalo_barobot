@@ -212,6 +212,36 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     db.close();
   });
 
+  it('keeps a sample proof when the same uid sends another group photo', async () => {
+    const db = openDb();
+    const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-'));
+    dirs.push(proofDir);
+    seedOpenTask(db, { caption: 'SAME CAPTION', required: 5 });
+    const samplePath = path.join(proofDir, 't1', 'sample.jpg');
+    fs.mkdirSync(path.dirname(samplePath), { recursive: true });
+    fs.writeFileSync(samplePath, Buffer.from('sample-bytes'));
+    db.prepare(
+      `INSERT INTO submissions
+         (id, task_id, uid_from, display_name, image_url, stored_path, match_score, created_at, proof_origin)
+       VALUES ('sample-id', 't1', 'u1', 'Admin', 'sample://admin', ?, 1, 10, 'sample')`
+    ).run(samplePath);
+
+    const second = await ingestProofImage(db, proofImage({ msgId: 'm2' }), {
+      now: () => 60,
+      proofDir,
+      ocrImage: async () => 'SAME CAPTION',
+      downloadImage: async () => PNG,
+    });
+    expect(second).toEqual({ outcome: 'skipped', reason: 'already_submitted' });
+    expect(fs.readFileSync(samplePath).toString()).toBe('sample-bytes');
+    const row = db.prepare(`SELECT id, proof_origin FROM submissions`).get() as {
+      id: string;
+      proof_origin: string;
+    };
+    expect(row).toEqual({ id: 'sample-id', proof_origin: 'sample' });
+    db.close();
+  });
+
   it('does not OCR an unmapped group and does not claim processed_messages', async () => {
     const db = openDb();
     seedOpenTask(db, { zca: 'zgr-known' });

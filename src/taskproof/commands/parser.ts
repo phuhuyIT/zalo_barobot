@@ -284,7 +284,7 @@ function parseTaskFields(rest: string, inbound: WebhookInbound): ParseCommandRes
       requiredCount: soLuong.value,
       deadlineUtcMs: deadline.value,
       reportGroupId,
-      needsUnfurl: false,
+      needsSampleImage: false,
     };
     return { ok: true, found: true, command: 'task', fields };
   }
@@ -296,7 +296,7 @@ function parseTaskFields(rest: string, inbound: WebhookInbound): ParseCommandRes
       requiredCount: soLuong.value,
       deadlineUtcMs: deadline.value,
       reportGroupId,
-      needsUnfurl: true,
+      needsSampleImage: true,
     };
     return { ok: true, found: true, command: 'task', fields };
   }

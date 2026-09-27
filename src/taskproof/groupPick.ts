@@ -14,6 +14,7 @@ import { getPublicBaseUrl } from './env';
 import { listGroupMaps } from './maps';
 import { insertNewTask, InsertedTask, InsertTaskInput, resolveTaskDeadline } from './tasks';
 import { ParsedTaskFields } from './commands/types';
+import { recordAdminSampleProof } from './sampleCaption';
 import { postEnsureListening, EnsureListeningResponse } from './workerClient';
 
 export const GROUP_PICK_TTL_MS = 10 * 60 * 1000;
@@ -133,7 +134,7 @@ export function fieldsFromPick(pick: GroupPickRow): ParsedTaskFields {
     requiredCount: pick.required_count,
     deadlineUtcMs: pick.deadline > 0 ? pick.deadline : null,
     reportGroupId: pick.report_group_id,
-    needsUnfurl: false,
+    needsSampleImage: false,
   };
 }
 
@@ -281,10 +282,19 @@ export function pickUrl(token: string, index1: number, publicBaseUrl?: string): 
 
 export function formatPickerMessage(
   pick: GroupPickRow,
-  publicBaseUrl?: string
+  publicBaseUrl?: string,
+  opts: { sample?: boolean } = {}
 ): string {
   const base = (publicBaseUrl ?? getPublicBaseUrl()).replace(/\/$/, '');
-  const lines = ['Đã nhận /task. Chọn nhóm để gửi nhiệm vụ:'];
+  const lines: string[] = [];
+  if (opts.sample) {
+    lines.push('Caption đọc từ ảnh:');
+    lines.push(pick.reference_text);
+    lines.push('');
+    lines.push('Trả lời số thứ tự để tạo task. Gửi chữ khác để sửa caption, hoặc gửi ảnh khác để đọc lại.');
+    lines.push('');
+  }
+  lines.push('Đã nhận /task. Chọn nhóm để gửi nhiệm vụ:');
   pick.groups.forEach((group, i) => {
     const n = i + 1;
     lines.push('');
@@ -292,12 +302,42 @@ export function formatPickerMessage(
     if (base) lines.push(pickUrl(pick.token, n, base));
   });
   lines.push('');
-  if (base) {
-    lines.push('Bấm link, hoặc trả lời số thứ tự. Link hết hạn sau 10 phút.');
-  } else {
-    lines.push('Trả lời số thứ tự (1, 2, …).');
+  if (!opts.sample) {
+    if (base) {
+      lines.push('Bấm link, hoặc trả lời số thứ tự. Link hết hạn sau 10 phút.');
+    } else {
+      lines.push('Trả lời số thứ tự (1, 2, …).');
+    }
+  } else if (base) {
+    lines.push('Bấm link cũng được. Link hết hạn sau 10 phút.');
   }
   return lines.join('\n');
+}
+
+export function cancelOpenGroupPicks(adminChatId: string, database?: Database.Database): void {
+  dbOf(database)
+    .prepare(`DELETE FROM task_group_picks WHERE admin_chat_id = ? AND consumed_at IS NULL`)
+    .run(adminChatId);
+}
+
+export function updateOpenPickCaption(
+  adminChatId: string,
+  caption: string,
+  now: number = Date.now(),
+  database?: Database.Database
+): GroupPickRow | null {
+  const db = dbOf(database);
+  const pick = getOpenGroupPickForAdmin(adminChatId, now, db);
+  if (!pick) return null;
+  const text = caption.trim();
+  if (!text) return null;
+  const expiresAt = now + GROUP_PICK_TTL_MS;
+  db.prepare(
+    `UPDATE task_group_picks
+     SET reference_text = ?, expires_at = ?
+     WHERE token = ? AND consumed_at IS NULL`
+  ).run(text, expiresAt, pick.token);
+  return { ...pick, reference_text: text, expires_at: expiresAt };
 }
 
 export function formatVnDeadline(utcMs: number): string {
@@ -362,7 +402,8 @@ async function announcePlacedTask(
   fields: ParsedTaskFields,
   group: LinkedGroup,
   adminChatId: string,
-  deps: PlaceTaskDeps
+  deps: PlaceTaskDeps,
+  extraLines: string[] = []
 ): Promise<void> {
   const ensureListening = deps.ensureListening ?? ((taskId?: string) => postEnsureListening(taskId));
   const groupText = formatGroupTaskPost(created, fields);
@@ -388,6 +429,9 @@ async function announcePlacedTask(
   }
   if (!created.zca_group_id) {
     lines.push('Nhóm chưa liên kết zca-js. Gõ /lienket trong nhóm đó.');
+  }
+  for (const line of extraLines) {
+    if (line.trim()) lines.push(line);
   }
 
   let listen: EnsureListeningResponse | null = null;
@@ -483,7 +527,30 @@ export async function completePickByIndex(
       body: 'Link này đã dùng. Xem tin nhắn từ bot trong chat riêng.',
     };
   }
-  await announcePlacedTask(created, fields, group, pick.admin_chat_id, deps);
+  let proofNote = '';
+  try {
+    proofNote = await recordAdminSampleProof(
+      {
+        adminChatId: pick.admin_chat_id,
+        taskId: created.id,
+        zcaGroupId: group.zca_group_id,
+        now,
+      },
+      db
+    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[TaskProof] Không lưu ảnh mẫu:', msg);
+    proofNote = 'Không lưu được ảnh mẫu làm minh chứng.';
+  }
+  await announcePlacedTask(
+    created,
+    fields,
+    group,
+    pick.admin_chat_id,
+    deps,
+    proofNote ? [proofNote] : []
+  );
   return { ok: true, created, group };
 }
 

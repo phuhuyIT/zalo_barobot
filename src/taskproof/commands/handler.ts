@@ -14,6 +14,7 @@ import {
   NO_LINKED_GROUPS_HINT,
   PRIVATE_NOT_ADMIN_HINT,
   LinkedGroup,
+  cancelOpenGroupPicks,
   completePickByIndex,
   createGroupPick,
   formatPickerMessage,
@@ -22,6 +23,7 @@ import {
   listLinkedGroups,
   placeTaskInGroup,
   resolveGroupChoice,
+  updateOpenPickCaption,
 } from '../groupPick';
 import { cancelTask, completeTask } from '../lifecycle';
 import { kickTaskCompletionReport, TaskReportResult } from '../report';
@@ -39,24 +41,30 @@ import {
   postEnsureListening,
   postLinkGroup,
   postMaybeStop,
+  postOcrDebug,
   postRemind,
   postScanHistory,
   EnsureListeningResponse,
 } from '../workerClient';
-import { unfurlFacebookPost, UnfurlFacebookResult } from '../unfurlFacebook';
-import { enqueueUnfurl } from '../unfurlQueue';
+import {
+  clearSamplePending,
+  downloadSampleImage,
+  getOpenSample,
+  SAMPLE_ASK_REPLY,
+  SAMPLE_DOWNLOAD_FAIL_REPLY,
+  SAMPLE_EMPTY_OCR_REPLY,
+  SAMPLE_NEED_PHOTO_REPLY,
+  SAMPLE_OCR_FAIL_REPLY,
+  saveAwaitingSample,
+  updateSampleCaption,
+  writeAcceptedSample,
+} from '../sampleCaption';
 import { parseTaskproofCommand } from './parser';
 import { isUnsupportedEvent, redactSecrets } from './payload';
 import { getTaskByExactShortCode, TaskShortCodeRow } from './shortCode';
 import { ParseCommandResult, ParsedTaskFields, WebhookInbound } from './types';
 
-export const UNFURL_PENDING_REPLY = 'Đang lấy nội dung bài…';
-
-export const UNFURL_FAIL_REPLY = [
-  'Không lấy được nội dung bài viết từ link này.',
-  'Hãy kiểm tra link là bài public rồi gửi lại: /task <link>',
-  'Hoặc dùng flow cũ kèm Caption: ...',
-].join('\n');
+export { SAMPLE_ASK_REPLY, SAMPLE_EMPTY_OCR_REPLY, SAMPLE_OCR_FAIL_REPLY, SAMPLE_NEED_PHOTO_REPLY };
 
 export {
   GROUP_COMMAND_HINT,
@@ -88,8 +96,8 @@ export interface TaskproofCommandDeps {
   getAdminChatId?: () => string;
   publicBaseUrl?: () => string;
   now?: () => number;
-  unfurlFacebook?: (url: string) => Promise<UnfurlFacebookResult>;
-  enqueueUnfurl?: (job: () => Promise<void>) => void | Promise<void>;
+  downloadSampleImage?: (url: string) => Promise<Buffer | null>;
+  ocrSampleImage?: (image: Buffer) => Promise<string>;
   maybeStop?: () => Promise<unknown>;
 }
 
@@ -146,7 +154,7 @@ export function formatParseReply(inbound: WebhookInbound): string | null {
       return [
         'Lệnh /task hợp lệ.',
         `• Link: ${parsed.fields.link}`,
-        `• Caption: ${parsed.fields.caption || '(unfurl)'}`,
+        `• Caption: ${parsed.fields.caption || '(ảnh mẫu)'}`,
         `• Số lượng: ${soLuong}`,
         `• Hạn chót: ${han}`,
         `• Báo cáo: ${baoCao}`,
@@ -494,10 +502,23 @@ async function handleQuet(
   await deps.sendMessage(inbound.chatId, quetReply(code, parsed.count, result.status, result.json));
 }
 
+function placeDeps(deps: TaskproofCommandDeps): {
+  sendMessage: TaskproofCommandDeps['sendMessage'];
+  insertTask: TaskproofCommandDeps['insertTask'];
+  ensureListening: TaskproofCommandDeps['ensureListening'];
+} {
+  return {
+    sendMessage: deps.sendMessage,
+    insertTask: deps.insertTask ?? defaultInsertTask,
+    ensureListening: deps.ensureListening,
+  };
+}
+
 async function placeOrPickGroups(
   fields: ParsedTaskFields,
   inbound: WebhookInbound,
-  deps: TaskproofCommandDeps
+  deps: TaskproofCommandDeps,
+  opts: { alwaysAsk?: boolean } = {}
 ): Promise<void> {
   const groups = (deps.listLinkedGroups ?? defaultListLinkedGroups)();
   if (groups.length === 0) {
@@ -505,12 +526,8 @@ async function placeOrPickGroups(
     return;
   }
 
-  if (groups.length === 1) {
-    await placeTaskInGroup(fields, groups[0], inbound.chatId, {
-      sendMessage: deps.sendMessage,
-      insertTask: deps.insertTask ?? defaultInsertTask,
-      ensureListening: deps.ensureListening,
-    });
+  if (groups.length === 1 && !opts.alwaysAsk) {
+    await placeTaskInGroup(fields, groups[0], inbound.chatId, placeDeps(deps));
     return;
   }
 
@@ -522,7 +539,120 @@ async function placeOrPickGroups(
     now,
   });
   const base = deps.publicBaseUrl?.() ?? '';
-  await deps.sendMessage(inbound.chatId, formatPickerMessage(pick, base || undefined));
+  await deps.sendMessage(
+    inbound.chatId,
+    formatPickerMessage(pick, base || undefined, { sample: Boolean(opts.alwaysAsk) })
+  );
+}
+
+function inboundPhotoUrl(inbound: WebhookInbound): string {
+  if ((inbound.photo || '').trim()) return inbound.photo.trim();
+  const attachments = inbound.message.attachments;
+  if (!Array.isArray(attachments)) return '';
+  for (const item of attachments) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const payload =
+      rec.payload && typeof rec.payload === 'object' ? (rec.payload as Record<string, unknown>) : null;
+    const url = String(rec.url || rec.photo || (payload && (payload.url || payload.href)) || '').trim();
+    if (/^https?:\/\//i.test(url)) return url;
+  }
+  return '';
+}
+
+function isSampleImageMessage(inbound: WebhookInbound): boolean {
+  if (inbound.eventName.trim().toLowerCase() === 'message.image.received') return true;
+  return Boolean(inboundPhotoUrl(inbound));
+}
+
+async function ocrSampleBuffer(image: Buffer, deps: TaskproofCommandDeps): Promise<string> {
+  if (deps.ocrSampleImage) return deps.ocrSampleImage(image);
+  const result = await postOcrDebug(image);
+  if (result.status !== 200 || result.json.success === false) {
+    const error = typeof result.json.error === 'string' ? result.json.error : `ocr_http_${result.status}`;
+    throw new Error(error);
+  }
+  return typeof result.json.text === 'string' ? result.json.text : '';
+}
+
+async function sendSamplePicker(
+  inbound: WebhookInbound,
+  caption: string,
+  deps: TaskproofCommandDeps
+): Promise<void> {
+  const now = (deps.now ?? Date.now)();
+  const pending = getOpenSample(inbound.chatId, now);
+  if (!pending) return;
+  const existing = getOpenGroupPickForAdmin(inbound.chatId, now);
+  if (existing) {
+    const updated = updateOpenPickCaption(inbound.chatId, caption, now);
+    if (!updated) return;
+    const base = deps.publicBaseUrl?.() ?? '';
+    await deps.sendMessage(inbound.chatId, formatPickerMessage(updated, base || undefined, { sample: true }));
+    return;
+  }
+  await placeOrPickGroups(
+    {
+      link: pending.link,
+      caption,
+      requiredCount: pending.requiredCount,
+      deadlineUtcMs: pending.deadline > 0 ? pending.deadline : null,
+      reportGroupId: pending.reportGroupId,
+      needsSampleImage: false,
+    },
+    inbound,
+    deps,
+    { alwaysAsk: true }
+  );
+}
+
+async function acceptSamplePhoto(
+  inbound: WebhookInbound,
+  deps: TaskproofCommandDeps
+): Promise<void> {
+  const now = (deps.now ?? Date.now)();
+  const pending = getOpenSample(inbound.chatId, now);
+  if (!pending) {
+    await deps.sendMessage(inbound.chatId, 'Hết hạn chờ ảnh mẫu. Gõ /task <link> lại.');
+    return;
+  }
+  const photoUrl = inboundPhotoUrl(inbound);
+  if (!photoUrl) {
+    await deps.sendMessage(inbound.chatId, SAMPLE_DOWNLOAD_FAIL_REPLY);
+    return;
+  }
+  let downloaded: Awaited<ReturnType<typeof downloadSampleImage>>;
+  try {
+    downloaded = await downloadSampleImage(photoUrl, deps.downloadSampleImage);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[TaskProof] Tải ảnh mẫu lỗi:', msg);
+    await deps.sendMessage(inbound.chatId, SAMPLE_DOWNLOAD_FAIL_REPLY);
+    return;
+  }
+  if (!downloaded.ok) {
+    await deps.sendMessage(inbound.chatId, downloaded.reply);
+    return;
+  }
+  let caption = '';
+  try {
+    caption = (await ocrSampleBuffer(downloaded.image, deps)).trim();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[TaskProof] OCR ảnh mẫu lỗi:', msg);
+    await deps.sendMessage(inbound.chatId, SAMPLE_OCR_FAIL_REPLY);
+    return;
+  }
+  if (!caption) {
+    await deps.sendMessage(inbound.chatId, SAMPLE_EMPTY_OCR_REPLY);
+    return;
+  }
+  const saved = writeAcceptedSample(inbound.chatId, downloaded.image, caption, photoUrl, now);
+  if (!saved) {
+    await deps.sendMessage(inbound.chatId, 'Hết hạn chờ ảnh mẫu. Gõ /task <link> lại.');
+    return;
+  }
+  await sendSamplePicker(inbound, caption, deps);
 }
 
 async function handleTaskCreate(
@@ -531,44 +661,58 @@ async function handleTaskCreate(
   deps: TaskproofCommandDeps
 ): Promise<void> {
   const fields = parsed.fields;
-  if (fields.needsUnfurl && !fields.caption) {
+  const now = (deps.now ?? Date.now)();
+  cancelOpenGroupPicks(inbound.chatId);
+  clearSamplePending(inbound.chatId);
+
+  if (fields.needsSampleImage && !fields.caption) {
     const groups = (deps.listLinkedGroups ?? defaultListLinkedGroups)();
     if (groups.length === 0) {
       await deps.sendMessage(inbound.chatId, NO_LINKED_GROUPS_HINT);
       return;
     }
-
-    await deps.sendMessage(inbound.chatId, UNFURL_PENDING_REPLY);
-    const enqueue = deps.enqueueUnfurl ?? enqueueUnfurl;
-    const unfurl = deps.unfurlFacebook ?? ((url: string) => unfurlFacebookPost(url));
-    await enqueue(async () => {
-      try {
-        const result = await unfurl(fields.link);
-        if (!result.ok || !result.caption.trim()) {
-          await deps.sendMessage(inbound.chatId, UNFURL_FAIL_REPLY);
-          return;
-        }
-        console.log(`[TaskProof] caption_source=${result.source}`);
-        await placeOrPickGroups(
-          {
-            ...fields,
-            caption: result.caption,
-            link: result.canonicalUrl || fields.link,
-            needsUnfurl: false,
-          },
-          inbound,
-          deps
-        );
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[TaskProof] unfurl Facebook lỗi:', msg);
-        await deps.sendMessage(inbound.chatId, UNFURL_FAIL_REPLY);
-      }
+    saveAwaitingSample({
+      adminChatId: inbound.chatId,
+      link: fields.link,
+      requiredCount: fields.requiredCount,
+      deadline: fields.deadlineUtcMs && fields.deadlineUtcMs > 0 ? fields.deadlineUtcMs : 0,
+      reportGroupId: fields.reportGroupId,
+      now,
     });
+    if (isSampleImageMessage(inbound) && inboundPhotoUrl(inbound)) {
+      await acceptSamplePhoto(inbound, deps);
+      return;
+    }
+    await deps.sendMessage(inbound.chatId, SAMPLE_ASK_REPLY);
     return;
   }
 
   await placeOrPickGroups(fields, inbound, deps);
+}
+
+async function maybeReviseSample(
+  inbound: WebhookInbound,
+  deps: TaskproofCommandDeps
+): Promise<boolean> {
+  const now = (deps.now ?? Date.now)();
+  const pending = getOpenSample(inbound.chatId, now);
+  if (!pending) return false;
+  if (isSampleImageMessage(inbound)) {
+    await acceptSamplePhoto(inbound, deps);
+    return true;
+  }
+  const text = (inbound.commandText || inbound.text || '').trim();
+  if (!text || text.startsWith('/')) return false;
+  if (!pending.caption || !pending.imagePath) {
+    await deps.sendMessage(inbound.chatId, SAMPLE_NEED_PHOTO_REPLY);
+    return true;
+  }
+  const pick = getOpenGroupPickForAdmin(inbound.chatId, now);
+  if (pick && resolveGroupChoice(text, pick.groups)) return false;
+  const updated = updateSampleCaption(inbound.chatId, text, now);
+  if (!updated) return false;
+  await sendSamplePicker(inbound, text, deps);
+  return true;
 }
 
 async function maybeHandlePickReply(
@@ -732,6 +876,7 @@ export async function handleTaskproofCommand(
   if (!parsed.found) {
     if (adminDm) {
       try {
+        if (await maybeReviseSample(inbound, deps)) return true;
         if (await maybeHandlePickReply(inbound, deps)) return true;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

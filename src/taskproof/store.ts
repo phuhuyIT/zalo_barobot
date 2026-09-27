@@ -9,7 +9,8 @@
  * - official_chat_id: webhook Official Bot Platform (nhóm sau khi admin chọn
  *   lúc /task 1-1; /lienket và /gui vẫn gõ trong nhóm)
  * - zca_group_id: threadId zca-js (OCR, mention) — NULL đến khi /lienket
- * task_group_picks chỉ official bot dùng (chọn nhóm 1-1); worker không cần.
+ * task_group_picks và task_sample_pending chỉ official bot dùng (chọn nhóm 1-1
+ * và ảnh mẫu cho caption). Worker không cần hai bảng đó.
  */
 
 import Database from 'better-sqlite3';
@@ -113,12 +114,36 @@ export function initTaskproofTables(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_task_group_picks_admin
       ON task_group_picks(admin_chat_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS task_sample_pending (
+      admin_chat_id TEXT PRIMARY KEY,
+      link TEXT NOT NULL,
+      required_count INTEGER,
+      deadline INTEGER NOT NULL,
+      report_group_id TEXT NOT NULL DEFAULT '',
+      caption TEXT NOT NULL DEFAULT '',
+      image_path TEXT NOT NULL DEFAULT '',
+      photo_url TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_submissions_task ON submissions(task_id);
     CREATE INDEX IF NOT EXISTS idx_processed_messages_created ON processed_messages(created_at);
   `);
 
+  ensureSubmissionProofOrigin(database);
   initializedDbs.add(database);
   seedTaskproofSettings(database);
+}
+
+/** Ảnh mẫu giữ nguyên khi cùng người gửi ảnh sau trong nhóm. Worker chỉ đọc cột này. */
+export function ensureSubmissionProofOrigin(database: Database.Database): void {
+  const cols = database.prepare(`PRAGMA table_info(submissions)`).all() as Array<{ name: string }>;
+  if (cols.some((col) => col.name === 'proof_origin')) return;
+  database.exec(
+    `ALTER TABLE submissions ADD COLUMN proof_origin TEXT NOT NULL DEFAULT 'group'`
+  );
 }
 
 const PROCESSED_MESSAGE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -134,6 +159,7 @@ export function pruneTaskproofEphemeral(
   const picks = database
     .prepare(`DELETE FROM task_group_picks WHERE expires_at < ?`)
     .run(now - GROUP_PICK_RETENTION_MS);
+  database.prepare(`DELETE FROM task_sample_pending WHERE expires_at < ?`).run(now);
   return { processed: Number(processed.changes || 0), picks: Number(picks.changes || 0) };
 }
 

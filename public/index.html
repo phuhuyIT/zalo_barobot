@@ -1899,6 +1899,116 @@
         </div>
       </div>
 
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4 select-text">
+        <div>
+          <h3 class="text-sm font-bold text-slate-800">Thử caption từ ảnh mẫu</h3>
+          <p class="text-xs text-slate-500 mt-1">Giống <span class="font-mono">/task</span> với link Facebook: OCR ảnh mẫu thành caption, cùng <span class="font-mono">ocrImage</span> của worker. Ảnh mẫu là minh chứng của Admin zca UID (điểm 1, không chạy <span class="font-mono">matchText</span>). Ảnh thành viên được OCR rồi so với caption đó và ngưỡng đang lưu. Không tạo task, không ghi minh chứng.</p>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <label class="text-xs font-semibold text-slate-600 space-y-1 block">
+            <span>Ảnh mẫu — caption của task (JPEG, PNG, WebP, tối đa 12MB)</span>
+            <input type="file" accept="image/jpeg,image/png,image/webp" @change="onSampleDebugFile($event)" class="block w-full text-sm" />
+            <span class="block font-normal text-slate-400" x-show="sampleDebug.fileName" x-text="sampleDebug.fileName"></span>
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1 block">
+            <span>Ảnh thành viên — minh chứng để khớp (cùng định dạng)</span>
+            <input type="file" accept="image/jpeg,image/png,image/webp" @change="onProofDebugFile($event)" class="block w-full text-sm" />
+            <span class="block font-normal text-slate-400" x-show="ocrDebug.fileName" x-text="ocrDebug.fileName"></span>
+          </label>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3" x-show="samplePreviewUrl || proofPreviewUrl">
+          <div x-show="samplePreviewUrl" class="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+            <p class="px-3 pt-2 text-[11px] font-semibold text-slate-500">Ảnh mẫu</p>
+            <img :src="samplePreviewUrl" alt="Ảnh mẫu" class="max-h-48 w-full object-contain" />
+          </div>
+          <div x-show="proofPreviewUrl" class="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+            <p class="px-3 pt-2 text-[11px] font-semibold text-slate-500">Ảnh thành viên</p>
+            <img :src="proofPreviewUrl" alt="Ảnh thành viên" class="max-h-48 w-full object-contain" />
+          </div>
+        </div>
+        <label class="text-xs font-semibold text-slate-600 space-y-1 block">
+          <span>Caption sẽ lưu. OCR ảnh mẫu điền vào đây. Gõ tay nếu muốn thử đường Caption: (không có ảnh mẫu). Sửa rồi bấm So khớp lại để chấm câu khác.</span>
+          <textarea x-model="matchDebug.caption" rows="4" spellcheck="false" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono"></textarea>
+        </label>
+        <p class="text-[11px] text-slate-500" x-show="sampleDebug.ran">
+          <span x-text="(sampleDebug.text || '').length"></span> ký tự từ ảnh mẫu
+          <span x-show="sampleDebug.elapsedMs != null">· <span x-text="sampleDebug.elapsedMs"></span> ms</span>
+        </p>
+        <p class="text-xs text-rose-600" x-show="sampleDebug.error" x-text="sampleDebug.error"></p>
+        <p class="text-xs text-amber-700" x-show="sampleDebug.ran && !sampleDebug.error && !(sampleDebug.text || '').trim()">Tesseract trả chuỗi rỗng. Caption đang có được giữ. /task sẽ yêu cầu gửi lại ảnh nếu chưa có caption.</p>
+        <details x-show="sampleDebug.raw">
+          <summary class="text-[11px] text-slate-500 cursor-pointer">JSON ảnh mẫu</summary>
+          <pre class="mt-2 text-[11px] font-mono whitespace-pre-wrap break-all bg-slate-50 rounded-lg p-2" x-text="sampleDebug.raw"></pre>
+        </details>
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            @click="runTaskproofDebug()"
+            :disabled="debugRunning"
+            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-xl text-sm font-semibold"
+          >
+            <span x-text="debugRunning ? (debugStatus || 'Đang chạy…') : 'Chạy thử'"></span>
+          </button>
+          <button
+            type="button"
+            @click="rerunTaskproofMatch()"
+            :disabled="debugRunning"
+            class="px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-60 text-slate-700 rounded-xl text-sm font-semibold"
+          >
+            So khớp lại
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div class="rounded-xl border border-slate-200 p-3 space-y-2">
+            <h4 class="text-xs font-bold text-slate-700">OCR ảnh thành viên</h4>
+            <p class="text-[11px] text-slate-400">Đúng chuỗi Tesseract trả về, kể cả xuống dòng. Có thể sửa để so lại. Ảnh mẫu không nằm ở đây.</p>
+            <p class="text-[11px] text-slate-500" x-show="ocrDebug.ran">
+              <span x-text="(ocrDebug.text || '').length"></span> ký tự
+              <span x-show="ocrDebug.elapsedMs != null">· <span x-text="ocrDebug.elapsedMs"></span> ms</span>
+            </p>
+            <p class="text-xs text-rose-600" x-show="ocrDebug.error" x-text="ocrDebug.error"></p>
+            <p class="text-xs text-amber-700" x-show="ocrDebug.ran && !ocrDebug.error && !(ocrDebug.text || '').trim()">Tesseract trả chuỗi rỗng.</p>
+            <textarea x-model="ocrDebug.text" rows="12" spellcheck="false" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-mono"></textarea>
+            <details x-show="ocrDebug.raw">
+              <summary class="text-[11px] text-slate-500 cursor-pointer">JSON</summary>
+              <pre class="mt-2 text-[11px] font-mono whitespace-pre-wrap break-all bg-slate-50 rounded-lg p-2" x-text="ocrDebug.raw"></pre>
+            </details>
+          </div>
+
+          <div class="rounded-xl border border-slate-200 p-3 space-y-2">
+            <h4 class="text-xs font-bold text-slate-700">Khớp</h4>
+            <p class="text-[11px] text-slate-400">matchText(OCR ảnh thành viên, caption, ngưỡng trong cài đặt). Ảnh mẫu được tính điểm 1, không đi vào bước này.</p>
+            <p class="text-xs text-rose-600" x-show="matchDebug.error" x-text="matchDebug.error"></p>
+            <template x-if="matchDebug.payload && matchDebug.payload.match">
+              <div class="space-y-2 text-xs">
+                <p>
+                  <span class="font-semibold" x-text="Number(matchDebug.payload.match.score).toFixed(4)"></span>
+                  <span class="text-slate-500"> / ngưỡng </span>
+                  <span x-text="matchDebug.payload.threshold"></span>
+                  <span
+                    class="ml-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                    :class="matchDebug.payload.match.isMatch ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'"
+                    x-text="matchDebug.payload.match.isMatch ? 'khớp' : 'dưới ngưỡng'"
+                  ></span>
+                </p>
+                <p><span class="text-slate-500">Tầng</span> <span class="font-mono" x-text="matchDebug.payload.match.matchType"></span></p>
+                <p class="text-slate-500">Đoạn khớp</p>
+                <pre class="font-mono whitespace-pre-wrap break-all bg-slate-50 rounded-lg p-2" x-text="matchDebug.payload.match.matchedSnippet || '—'"></pre>
+                <p class="text-slate-500">OCR đã chuẩn hóa</p>
+                <pre class="font-mono whitespace-pre-wrap break-all bg-slate-50 rounded-lg p-2" x-text="matchDebug.payload.normalized_ocr || '—'"></pre>
+                <p class="text-slate-500">Caption đã chuẩn hóa</p>
+                <pre class="font-mono whitespace-pre-wrap break-all bg-slate-50 rounded-lg p-2" x-text="matchDebug.payload.normalized_reference || '—'"></pre>
+              </div>
+            </template>
+            <details x-show="matchDebug.raw">
+              <summary class="text-[11px] text-slate-500 cursor-pointer">JSON</summary>
+              <pre class="mt-2 text-[11px] font-mono whitespace-pre-wrap break-all bg-slate-50 rounded-lg p-2" x-text="matchDebug.raw"></pre>
+            </details>
+          </div>
+        </div>
+      </div>
+
       <!-- Section A: Parameters -->
       <form @submit.prevent="saveTaskproofSettings()" class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
         <h3 class="text-sm font-bold text-slate-800">Tham số vận hành</h3>
@@ -1918,6 +2028,10 @@
           <label class="text-xs font-semibold text-slate-600 space-y-1">
             <span>Admin nhận QR / cảnh báo</span>
             <input x-model="taskproofSettings.admin_official_chat_id" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </label>
+          <label class="text-xs font-semibold text-slate-600 space-y-1 md:col-span-2">
+            <span>Admin zca UID (ảnh mẫu lúc /task tính là minh chứng của uid này)</span>
+            <input x-model="taskproofSettings.admin_zca_uid" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
           </label>
           <label class="text-xs font-semibold text-slate-600 space-y-1">
             <span>Ngưỡng OCR (0–1)</span>
@@ -2505,6 +2619,8 @@
   <!-- APP STATE SCRIPT -->
   <script>
     function app() {
+      let sampleDebugFile = null;
+      let proofDebugFile = null;
       return {
         activeTab: 'dashboard',
         mobileMenuOpen: false,
@@ -2551,9 +2667,17 @@
         loadingTaskproof: false,
         savingTaskproof: false,
         wakingWorker: false,
+        debugRunning: false,
+        debugStatus: '',
+        samplePreviewUrl: '',
+        proofPreviewUrl: '',
+        sampleDebug: { fileName: '', text: '', elapsedMs: null, error: '', raw: '', ran: false },
+        ocrDebug: { fileName: '', text: '', elapsedMs: null, error: '', raw: '', ran: false },
+        matchDebug: { caption: '', error: '', raw: '', payload: null },
         taskproofSettings: {
           official_bot_uid: '',
           zca_own_uid: '',
+          admin_zca_uid: '',
           default_report_group_id: '',
           admin_official_chat_id: '',
           ocr_match_threshold: 0.5,
@@ -3409,6 +3533,189 @@
             this.showToast(e.message, 'error');
           } finally {
             this.wakingWorker = false;
+          }
+        },
+
+        async readApiJson(res) {
+          const raw = await res.text();
+          if (!raw) return { success: false, error: 'HTTP ' + res.status };
+          try {
+            return JSON.parse(raw);
+          } catch {
+            return { success: false, error: raw.slice(0, 180) };
+          }
+        },
+
+        takeDebugFile(event, revokeUrl) {
+          if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+          const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+          return {
+            file,
+            previewUrl: file ? URL.createObjectURL(file) : '',
+            fileName: file ? file.name : '',
+          };
+        },
+
+        onSampleDebugFile(event) {
+          const next = this.takeDebugFile(event, this.samplePreviewUrl);
+          sampleDebugFile = next.file;
+          this.samplePreviewUrl = next.previewUrl;
+          this.sampleDebug.fileName = next.fileName;
+          this.sampleDebug.error = '';
+        },
+
+        onProofDebugFile(event) {
+          const next = this.takeDebugFile(event, this.proofPreviewUrl);
+          proofDebugFile = next.file;
+          this.proofPreviewUrl = next.previewUrl;
+          this.ocrDebug.fileName = next.fileName;
+          this.ocrDebug.error = '';
+        },
+
+        async postDebugOcr(file) {
+          if (file.size > 12 * 1024 * 1024) {
+            return { ok: false, ran: true, error: 'Ảnh lớn hơn 12MB', text: '', raw: '', elapsedMs: null };
+          }
+          const res = await fetch('/api/taskproof/debug-ocr', {
+            method: 'POST',
+            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+            body: file,
+          });
+          const data = await this.readApiJson(res);
+          const raw = JSON.stringify(data, null, 2);
+          if (!res.ok || !data.success) {
+            return {
+              ok: false,
+              ran: true,
+              error: data.error || 'OCR thất bại',
+              text: '',
+              raw,
+              elapsedMs: data.elapsed_ms != null ? data.elapsed_ms : null,
+            };
+          }
+          return {
+            ok: true,
+            ran: true,
+            error: '',
+            text: typeof data.text === 'string' ? data.text : '',
+            raw,
+            elapsedMs: data.elapsed_ms != null ? data.elapsed_ms : null,
+          };
+        },
+
+        applyOcrSlot(slot, result) {
+          slot.ran = result.ran;
+          slot.error = result.error;
+          slot.raw = result.raw;
+          slot.text = result.text;
+          slot.elapsedMs = result.elapsedMs;
+        },
+
+        async runSampleOcr() {
+          const file = sampleDebugFile;
+          this.sampleDebug.error = '';
+          this.sampleDebug.raw = '';
+          this.sampleDebug.ran = false;
+          this.sampleDebug.elapsedMs = null;
+          if (!file) return;
+          try {
+            const result = await this.postDebugOcr(file);
+            this.applyOcrSlot(this.sampleDebug, result);
+            if (result.ok && result.text.trim()) this.matchDebug.caption = result.text;
+          } catch (e) {
+            this.sampleDebug.ran = true;
+            this.sampleDebug.error = e.message || String(e);
+          }
+        },
+
+        async runProofOcr() {
+          const file = proofDebugFile;
+          this.ocrDebug.error = '';
+          this.ocrDebug.raw = '';
+          this.ocrDebug.ran = false;
+          this.ocrDebug.elapsedMs = null;
+          if (!file) return;
+          this.ocrDebug.text = '';
+          try {
+            const result = await this.postDebugOcr(file);
+            this.applyOcrSlot(this.ocrDebug, result);
+          } catch (e) {
+            this.ocrDebug.ran = true;
+            this.ocrDebug.error = e.message || String(e);
+          }
+        },
+
+        async runMatchDebug() {
+          const ocrText = this.ocrDebug.text || '';
+          const reference = this.matchDebug.caption || '';
+          this.matchDebug.error = '';
+          this.matchDebug.payload = null;
+          this.matchDebug.raw = '';
+          if (!ocrText.trim() || !reference.trim()) {
+            if (ocrText.trim() && !reference.trim()) {
+              this.matchDebug.error = 'Cần caption từ ảnh mẫu (hoặc gõ tay) để so với OCR ảnh thành viên.';
+            } else if (!ocrText.trim() && reference.trim() && this.ocrDebug.ran) {
+              this.matchDebug.error = 'OCR ảnh thành viên trống, không so khớp được.';
+            }
+            return;
+          }
+          this.debugStatus = 'Đang so khớp…';
+          try {
+            const res = await fetch('/api/taskproof/debug-match', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ocr_text: ocrText, reference_text: reference }),
+            });
+            const data = await this.readApiJson(res);
+            this.matchDebug.raw = JSON.stringify(data, null, 2);
+            if (!res.ok || !data.success) {
+              this.matchDebug.error = data.error || 'Không so khớp được';
+              return;
+            }
+            this.matchDebug.payload = data;
+          } catch (e) {
+            this.matchDebug.error = e.message || String(e);
+          }
+        },
+
+        async runTaskproofDebug() {
+          if (this.debugRunning) return;
+          const hasSample = !!sampleDebugFile;
+          const hasProof = !!proofDebugFile;
+          const hasPair = !!((this.ocrDebug.text || '').trim() && (this.matchDebug.caption || '').trim());
+          if (!hasSample && !hasProof && !hasPair) {
+            this.showToast('Chọn ảnh mẫu, ảnh thành viên, hoặc điền caption và chữ OCR', 'error');
+            return;
+          }
+          this.debugRunning = true;
+          this.debugStatus = 'Đang OCR…';
+          this.matchDebug.payload = null;
+          this.matchDebug.raw = '';
+          this.matchDebug.error = '';
+          try {
+            const jobs = [];
+            if (hasSample) jobs.push(this.runSampleOcr());
+            if (hasProof) jobs.push(this.runProofOcr());
+            await Promise.all(jobs);
+            await this.runMatchDebug();
+          } catch (e) {
+            this.showToast(e.message || String(e), 'error');
+          } finally {
+            this.debugRunning = false;
+            this.debugStatus = '';
+          }
+        },
+
+        async rerunTaskproofMatch() {
+          if (this.debugRunning) return;
+          this.debugRunning = true;
+          this.debugStatus = 'Đang so khớp…';
+          try {
+            await this.runMatchDebug();
+            if (this.matchDebug.error) this.showToast(this.matchDebug.error, 'error');
+          } finally {
+            this.debugRunning = false;
+            this.debugStatus = '';
           }
         }
       };

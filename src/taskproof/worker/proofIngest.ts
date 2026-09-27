@@ -7,7 +7,7 @@
  *
  * OCR xong mới claim processed_messages — lỗi OCR / OCR trống có thể thử lại.
  * Ảnh dưới ngưỡng: claim, không row, không đổi task.
- * UNIQUE(task_id, uid_from) ghi đè lần nộp trước, không lưu lịch sử.
+ * UNIQUE(task_id, uid_from) ghi đè lần nộp trước, trừ ảnh mẫu (proof_origin=sample).
  * Worker không sendPhoto (T6 = official bot); đủ quota thì HTTP kick report-now.
  */
 
@@ -121,14 +121,26 @@ function listOpenCandidates(
     .all(zcaGroupId) as OpenTaskRow[];
 }
 
+function submissionsHaveOrigin(db: Database.Database): boolean {
+  const cols = db.prepare(`PRAGMA table_info(submissions)`).all() as Array<{ name: string }>;
+  return cols.some((col) => col.name === 'proof_origin');
+}
+
 function findExistingSubmission(
   db: Database.Database,
   taskId: string,
   uidFrom: string
-): { id: string; stored_path: string | null } | undefined {
+): { id: string; stored_path: string | null; proof_origin?: string } | undefined {
+  const clean = stripMemberId(uidFrom);
+  const origin = submissionsHaveOrigin(db) ? ', proof_origin' : '';
   return db
-    .prepare(`SELECT id, stored_path FROM submissions WHERE task_id = ? AND uid_from = ?`)
-    .get(taskId, uidFrom) as { id: string; stored_path: string | null } | undefined;
+    .prepare(
+      `SELECT id, stored_path${origin} FROM submissions
+       WHERE task_id = ? AND (uid_from = ? OR uid_from = ?)`
+    )
+    .get(taskId, uidFrom, clean) as
+    | { id: string; stored_path: string | null; proof_origin?: string }
+    | undefined;
 }
 
 function writeProofFile(proofDir: string, taskId: string, submissionId: string, buf: Buffer): string {
@@ -258,6 +270,13 @@ export async function ingestProofImage(
   }
 
   const existing = findExistingSubmission(db, winner.candidate.id, uidFrom);
+  if (existing?.proof_origin === 'sample') {
+    claimProcessedMessage(db, zcaGroupId, msgId, now());
+    console.log(
+      `[TaskProofWorker] Giữ ảnh mẫu, bỏ qua ảnh sau msg=${msgId} uid=${uidFrom}`
+    );
+    return { outcome: 'skipped', reason: 'already_submitted' };
+  }
   const submissionId = existing?.id || newId();
   const storedPath = writeProofFile(proofDir, winner.candidate.id, submissionId, downloaded.buffer);
   upsertSubmission(db, {

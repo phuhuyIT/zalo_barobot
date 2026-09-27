@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables, setDatabase } from '../../src/store';
@@ -19,12 +22,18 @@ import {
   parseDeadlineToUtcMs,
   parseTaskproofCommand,
   redactSecrets,
+  SAMPLE_ASK_REPLY,
+  SAMPLE_EMPTY_OCR_REPLY,
   TASK_NOT_FACEBOOK,
   TASK_USAGE,
-  UNFURL_FAIL_REPLY,
-  UNFURL_PENDING_REPLY,
 } from '../../src/taskproof/commands';
 import { WebhookInbound } from '../../src/taskproof/commands/types';
+import { setTaskproofSetting } from '../../src/taskproof/settings';
+
+const SAMPLE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
 
 function inboundFrom(body: unknown): WebhookInbound {
   const inbound = extractWebhookInbound(body);
@@ -328,7 +337,7 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       }
     });
 
-    it('rejects a non-Facebook URL without Caption and does not unfurl', () => {
+    it('rejects a non-Facebook URL without Caption', () => {
       const parsed = parseTaskproofCommand(textMessage('/task https://example.com/x'));
       expect(parsed.ok).toBe(false);
       if (!parsed.ok && parsed.found) {
@@ -336,7 +345,7 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       }
     });
 
-    it('accepts /task <facebook_url> for unfurl without Caption or HanChot', () => {
+    it('accepts /task <facebook_url> for a sample image without Caption or HanChot', () => {
       const parsed = parseTaskproofCommand(
         textMessage('/task xem giúp https://www.facebook.com/share/v/1FS7f9MknZ/ gấp')
       );
@@ -344,13 +353,13 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       if (parsed.ok && parsed.command === 'task') {
         expect(parsed.fields.link).toBe('https://www.facebook.com/share/v/1FS7f9MknZ/');
         expect(parsed.fields.caption).toBe('');
-        expect(parsed.fields.needsUnfurl).toBe(true);
+        expect(parsed.fields.needsSampleImage).toBe(true);
         expect(parsed.fields.deadlineUtcMs).toBeNull();
         expect(parsed.fields.requiredCount).toBeNull();
       }
     });
 
-    it('does not use Zalo card caption as reference_text when unfurling', () => {
+    it('does not use the Zalo card caption as the task caption', () => {
       const inbound = inboundFrom({
         message: {
           text: '/task https://www.facebook.com/page/posts/123456789',
@@ -362,7 +371,7 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       const parsed = parseTaskproofCommand(inbound);
       expect(parsed.ok).toBe(true);
       if (parsed.ok && parsed.command === 'task') {
-        expect(parsed.fields.needsUnfurl).toBe(true);
+        expect(parsed.fields.needsSampleImage).toBe(true);
         expect(parsed.fields.caption).toBe('');
       }
     });
@@ -374,7 +383,7 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       expect(parsed.ok).toBe(true);
       if (parsed.ok && parsed.command === 'task') {
         expect(parsed.fields.caption).toBe('hi typed by hand');
-        expect(parsed.fields.needsUnfurl).toBe(false);
+        expect(parsed.fields.needsSampleImage).toBe(false);
         expect(parsed.fields.deadlineUtcMs).toBeNull();
       }
     });
@@ -768,42 +777,160 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       expect(sendMessage.mock.calls[0][1]).toContain('https://example.com/post');
     });
 
-    it('unfurls /task <facebook_url> then inserts; fail does not insert', async () => {
+    it('asks for a sample image and does not insert until the group is chosen', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});
       const insertTask = vi.fn().mockReturnValue(createdTask({ required_count: 12 }));
       const fb = 'https://www.facebook.com/share/v/1FS7f9MknZ/';
-      await handleTaskproofCommand(adminMessage(`/task ${fb}`), {
+      const deps = {
         sendMessage,
         insertTask,
-        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+        ensureListening: async () => ({ status: 200, state: 'listening' as const, raw: {} }),
         getAdminChatId: () => ADMIN,
         listLinkedGroups: () => ONE_GROUP,
-        enqueueUnfurl: (job) => job(),
-        unfurlFacebook: async () => ({
-          ok: true,
-          caption: 'Lydia Hallie ky su Anthropic chia se ve AI Agent',
-          canonicalUrl: 'https://www.facebook.com/page/posts/99',
-          source: 'og:description',
-        }),
-      });
-      expect(sendMessage.mock.calls[0][1]).toBe(UNFURL_PENDING_REPLY);
-      expect(insertTask).toHaveBeenCalledOnce();
-      expect(insertTask.mock.calls[0][0].referenceText).toMatch(/Lydia Hallie/);
-      expect(insertTask.mock.calls[0][0].link).toBe('https://www.facebook.com/page/posts/99');
-      expect(insertTask.mock.calls[0][0].officialChatId).toBe('group_task');
+        publicBaseUrl: () => 'https://public.example',
+        now: () => 1_000,
+        downloadSampleImage: async () => SAMPLE_PNG,
+        ocrSampleImage: async () => 'Lydia Hallie ky su Anthropic',
+      };
+      await handleTaskproofCommand(adminMessage(`/task ${fb}`), deps);
+      expect(sendMessage.mock.calls[0][1]).toBe(SAMPLE_ASK_REPLY);
+      expect(insertTask).not.toHaveBeenCalled();
 
       sendMessage.mockClear();
-      insertTask.mockClear();
-      await handleTaskproofCommand(adminMessage(`/task ${fb}`), {
+      const photo = inboundFrom({
+        event_name: 'message.image.received',
+        message: {
+          text: '',
+          photo: 'https://cdn.example/sample.png',
+          chat: { id: ADMIN, chat_type: 'PRIVATE' },
+          from: { id: ADMIN },
+          message_id: 'img1',
+        },
+      });
+      await handleTaskproofCommand(photo, deps);
+      expect(insertTask).not.toHaveBeenCalled();
+      const picker = sendMessage.mock.calls[0][1] as string;
+      expect(picker).toContain('Lydia Hallie ky su Anthropic');
+      expect(picker).toContain('1. Phú Huy');
+
+      sendMessage.mockClear();
+      await handleTaskproofCommand(adminMessage('Caption sua tay'), deps);
+      expect(insertTask).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls[0][1]).toContain('Caption sua tay');
+
+      sendMessage.mockClear();
+      await handleTaskproofCommand(adminMessage('1'), deps);
+      expect(insertTask).toHaveBeenCalledOnce();
+      expect(insertTask.mock.calls[0][0].referenceText).toBe('Caption sua tay');
+      expect(insertTask.mock.calls[0][0].link).toBe(fb);
+      expect(insertTask.mock.calls[0][0].officialChatId).toBe('group_task');
+    });
+
+    it('keeps the previous caption when the new sample photo has no OCR text', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const insertTask = vi.fn();
+      const fb = 'https://www.facebook.com/share/p/abc/';
+      let ocrText = 'CAPTION GOC';
+      const deps = {
         sendMessage,
         insertTask,
         getAdminChatId: () => ADMIN,
         listLinkedGroups: () => ONE_GROUP,
-        enqueueUnfurl: (job) => job(),
-        unfurlFacebook: async () => ({ ok: false }),
-      });
+        now: () => 2_000,
+        downloadSampleImage: async () => SAMPLE_PNG,
+        ocrSampleImage: async () => ocrText,
+      };
+      await handleTaskproofCommand(adminMessage(`/task ${fb}`), deps);
+      await handleTaskproofCommand(
+        inboundFrom({
+          event_name: 'message.image.received',
+          message: {
+            photo: 'https://cdn.example/a.png',
+            chat: { id: ADMIN, chat_type: 'PRIVATE' },
+            from: { id: ADMIN },
+          },
+        }),
+        deps
+      );
+      ocrText = '   ';
+      sendMessage.mockClear();
+      await handleTaskproofCommand(
+        inboundFrom({
+          event_name: 'message.image.received',
+          message: {
+            photo: 'https://cdn.example/b.png',
+            chat: { id: ADMIN, chat_type: 'PRIVATE' },
+            from: { id: ADMIN },
+          },
+        }),
+        deps
+      );
+      expect(sendMessage.mock.calls[0][1]).toBe(SAMPLE_EMPTY_OCR_REPLY);
       expect(insertTask).not.toHaveBeenCalled();
-      expect(sendMessage.mock.calls.some((call) => call[1] === UNFURL_FAIL_REPLY)).toBe(true);
+    });
+
+    it('stores the sample image as the admin member proof', async () => {
+      const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-sample-'));
+      const prevProof = process.env.PROOF_DIR;
+      process.env.PROOF_DIR = proofDir;
+      try {
+        setTaskproofSetting('admin_zca_uid', '555_0', db);
+        db.prepare(
+          `INSERT INTO group_members_cache (zca_group_id, user_id, display_name, updated_at)
+           VALUES ('zca-1', '555', 'Admin', 1)`
+        ).run();
+        const sendMessage = vi.fn().mockResolvedValue({});
+        const fb = 'https://www.facebook.com/share/p/proof/';
+        const deps = {
+          sendMessage,
+          ensureListening: async () => ({ status: 200, state: 'listening' as const, raw: {} }),
+          getAdminChatId: () => ADMIN,
+          listLinkedGroups: () => ONE_GROUP,
+          now: () => 4_000,
+          downloadSampleImage: async () => SAMPLE_PNG,
+          ocrSampleImage: async () => 'CAPTION TU ANH',
+        };
+        await handleTaskproofCommand(adminMessage(`/task ${fb}`), deps);
+        await handleTaskproofCommand(
+          inboundFrom({
+            event_name: 'message.image.received',
+            message: {
+              photo: 'https://cdn.example/admin.png',
+              chat: { id: ADMIN, chat_type: 'PRIVATE' },
+              from: { id: ADMIN },
+            },
+          }),
+          deps
+        );
+        await handleTaskproofCommand(adminMessage('1'), deps);
+        const task = db.prepare(`SELECT id, reference_text FROM tasks`).get() as {
+          id: string;
+          reference_text: string;
+        };
+        expect(task.reference_text).toBe('CAPTION TU ANH');
+        const submission = db
+          .prepare(
+            `SELECT uid_from, display_name, match_score, proof_origin FROM submissions WHERE task_id = ?`
+          )
+          .get(task.id) as {
+          uid_from: string;
+          display_name: string;
+          match_score: number;
+          proof_origin: string;
+        };
+        expect(submission).toEqual({
+          uid_from: '555',
+          display_name: 'Admin',
+          match_score: 1,
+          proof_origin: 'sample',
+        });
+        const note = sendMessage.mock.calls.map((call) => String(call[1])).join('\n');
+        expect(note).toContain('Đã tính ảnh mẫu là minh chứng của Admin');
+      } finally {
+        if (prevProof === undefined) delete process.env.PROOF_DIR;
+        else process.env.PROOF_DIR = prevProof;
+        fs.rmSync(proofDir, { recursive: true, force: true });
+      }
     });
 
     it('parses soluong = 12 syntax with equal sign and spaces', async () => {
@@ -816,13 +943,36 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
         ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
         getAdminChatId: () => ADMIN,
         listLinkedGroups: () => ONE_GROUP,
-        enqueueUnfurl: (job) => job(),
-        unfurlFacebook: async () => ({
-          ok: true,
-          caption: 'Test post',
-          canonicalUrl: 'https://www.facebook.com/page/posts/99',
-          source: 'og:description',
+        now: () => 3_000,
+        downloadSampleImage: async () => SAMPLE_PNG,
+        ocrSampleImage: async () => 'Test post',
+      });
+      expect(insertTask).not.toHaveBeenCalled();
+      await handleTaskproofCommand(
+        inboundFrom({
+          event_name: 'message.image.received',
+          message: {
+            photo: 'https://cdn.example/c.png',
+            chat: { id: ADMIN, chat_type: 'PRIVATE' },
+            from: { id: ADMIN },
+          },
         }),
+        {
+          sendMessage,
+          insertTask,
+          getAdminChatId: () => ADMIN,
+          listLinkedGroups: () => ONE_GROUP,
+          now: () => 3_000,
+          downloadSampleImage: async () => SAMPLE_PNG,
+          ocrSampleImage: async () => 'Test post',
+        }
+      );
+      await handleTaskproofCommand(adminMessage('1'), {
+        sendMessage,
+        insertTask,
+        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+        getAdminChatId: () => ADMIN,
+        now: () => 3_100,
       });
       expect(insertTask).toHaveBeenCalledOnce();
       expect(insertTask.mock.calls[0][0].requiredCount).toBe(12);

@@ -49,11 +49,26 @@ export function computeMissing(
   submittedUids: Iterable<string>,
   exclude: Set<string>
 ): CachedMember[] {
-  const submitted = new Set([...submittedUids].map((id) => id.trim()).filter(Boolean));
+  const submittedExact = new Set<string>();
+  const submittedStripped = new Set<string>();
+  for (const id of submittedUids) {
+    const trimmed = (id || '').trim();
+    if (!trimmed) continue;
+    submittedExact.add(trimmed);
+    const stripped = stripMemberId(trimmed);
+    if (stripped) submittedStripped.add(stripped);
+  }
   return members.filter((member) => {
     if (!member.user_id) return false;
     if (exclude.has(member.user_id) || exclude.has(stripMemberId(member.user_id))) return false;
-    if (submitted.has(member.user_id)) return false;
+    const stripped = stripMemberId(member.user_id);
+    if (
+      submittedExact.has(member.user_id) ||
+      submittedExact.has(stripped) ||
+      submittedStripped.has(stripped)
+    ) {
+      return false;
+    }
     return true;
   });
 }

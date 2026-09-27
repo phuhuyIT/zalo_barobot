@@ -28,6 +28,8 @@ export interface TaskproofSettings {
   admin_official_chat_id: string;
   official_bot_uid: string;
   zca_own_uid: string;
+  /** UID zca của admin trong nhóm. Ảnh mẫu lúc /task được tính là minh chứng của uid này. */
+  admin_zca_uid: string;
   remind_exclude_uids: string[];
 }
 
@@ -51,6 +53,7 @@ export const TASKPROOF_SETTING_DEFAULTS: TaskproofSettings = {
   admin_official_chat_id: '',
   official_bot_uid: '',
   zca_own_uid: '',
+  admin_zca_uid: '',
   remind_exclude_uids: [],
 };
 
@@ -95,6 +98,7 @@ const FORBIDDEN_SETTING_KEYS = new Set([
 export const TASKPROOF_UI_SETTING_KEYS: TaskproofSettingKey[] = [
   'official_bot_uid',
   'zca_own_uid',
+  'admin_zca_uid',
   'remind_exclude_uids',
   'default_report_group_id',
   'admin_official_chat_id',

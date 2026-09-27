@@ -252,6 +252,15 @@ describe('task-proof reminders (Step 7)', () => {
       );
       expect(missing.map((m) => m.user_id)).toEqual(['u1']);
     });
+
+    it('treats a stripped submission uid as the same member', () => {
+      const missing = computeMissing(
+        [{ user_id: '123_0', display_name: 'Admin' }],
+        ['123'],
+        new Set()
+      );
+      expect(missing).toEqual([]);
+    });
   });
 
   describe('shouldAutoRemind', () => {
