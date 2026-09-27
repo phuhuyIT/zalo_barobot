@@ -149,4 +149,49 @@ describe('task-proof worker HTTP (Step 5)', () => {
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
+
+  it('ocr-debug runs the injected ocrImage and returns its text', async () => {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64'
+    );
+    let seen = Buffer.alloc(0);
+    const server = await startWorkerHttp(
+      createWorkerApp({
+        ocrImage: async (image) => {
+          seen = Buffer.from(image);
+          return 'DÒNG OCR';
+        },
+      }),
+      0,
+      WORKER_BIND_HOST
+    );
+    const addr = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${addr.port}`;
+
+    const denied = await fetch(`${base}/internal/taskproof/ocr-debug`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/png' },
+      body: png,
+    });
+    expect(denied.status).toBe(403);
+
+    const ok = await fetch(`${base}/internal/taskproof/ocr-debug`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/png', 'x-internal-key': 'test-internal-key' },
+      body: png,
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ success: true, text: 'DÒNG OCR', char_count: 'DÒNG OCR'.length });
+    expect(seen.equals(png)).toBe(true);
+
+    const junk = await fetch(`${base}/internal/taskproof/ocr-debug`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'x-internal-key': 'test-internal-key' },
+      body: Buffer.from('not-an-image'),
+    });
+    expect(junk.status).toBe(400);
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
 });
