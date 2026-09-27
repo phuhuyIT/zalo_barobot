@@ -2,7 +2,6 @@
  * facebookUrl.ts
  *
  * Nhận diện permalink Facebook trên lệnh /task.
- * Host đầu vào hẹp hơn hop redirect (l.facebook.com, lm.facebook.com).
  */
 
 const INPUT_HOSTS = new Set([
@@ -14,13 +13,6 @@ const INPUT_HOSTS = new Set([
   'www.fb.com',
   'fb.watch',
   'www.fb.watch',
-]);
-
-const REDIRECT_HOSTS = new Set([
-  ...INPUT_HOSTS,
-  'lm.facebook.com',
-  'l.facebook.com',
-  'mbasic.facebook.com',
 ]);
 
 const URL_RE = /https?:\/\/[^\s<>"'\\]+/gi;
@@ -41,10 +33,6 @@ function hostnameOf(url: URL): string {
 
 export function isFacebookInputHost(host: string): boolean {
   return INPUT_HOSTS.has(host.replace(/\.$/, '').toLowerCase());
-}
-
-export function isFacebookRedirectHost(host: string): boolean {
-  return REDIRECT_HOSTS.has(host.replace(/\.$/, '').toLowerCase());
 }
 
 export function isAcceptedFacebookPath(pathname: string, host: string): boolean {

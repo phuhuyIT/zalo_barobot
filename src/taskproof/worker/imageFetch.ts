@@ -7,7 +7,7 @@
 
 import dns from 'node:dns/promises';
 import net from 'node:net';
-import { isBlockedIp } from '../unfurlFacebook';
+import { isBlockedIp } from '../blockedIp';
 import { ZcaCredentials } from './session';
 
 export const MAX_PROOF_BYTES = 15 * 1024 * 1024;
