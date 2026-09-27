@@ -3,7 +3,8 @@
  *
  * So khớp OCR với caption nhiệm vụ (Section 8.2). Content-based, không
  * dựa vào reply/quote. Ảnh được chấm với mọi task đang collecting|overdue
- * trên cùng zca_group_id; điểm cao nhất thắng. Bốn tầng — không rút gọn.
+ * trên cùng zca_group_id; điểm cao nhất thắng. Ba tầng: exact, Dice,
+ * sliding window.
  *
  * Chuẩn hóa trước khi chấm: NFD, bỏ dấu tiếng Việt (kể cả đ), chữ thường,
  * mọi ký tự ngoài chữ/số/khoảng trắng → space. Dấu câu trong caption
@@ -16,17 +17,12 @@
 import stringSimilarity from 'string-similarity';
 
 export const DEFAULT_OCR_MATCH_THRESHOLD = 0.5;
-export const PREFIX_MATCH_SCORE = 0.95;
-/** Cửa "... Xem thêm" trên mobile: prefix mờ ≥ mức này thì tính 0.95. */
-export const PREFIX_FUZZY_MIN = 0.85;
-export const PREFIX_MIN_WORDS = 6;
 
 export type MatchTier =
   | 'exact'
   | 'dice_full'
   | 'dice_line'
   | 'sliding_window'
-  | 'prefix'
   | 'none';
 
 export interface MatchResult {
@@ -53,16 +49,6 @@ function clampScore(score: number): number {
 
 function tokensOf(text: string): string[] {
   return text.split(' ').filter(Boolean);
-}
-
-/**
- * Độ dài prefix: từ sàn 6 từ (cửa "... Xem thêm") lên ~70% caption.
- * 50–70% là khoảng chính; sàn 6 từ bắt caption bị cắt rất ngắn (eval copy 8).
- */
-export function prefixTokenRange(tokenCount: number): { lo: number; hi: number } | null {
-  if (tokenCount < PREFIX_MIN_WORDS) return null;
-  const hi = Math.max(PREFIX_MIN_WORDS, Math.floor(tokenCount * 0.7));
-  return { lo: PREFIX_MIN_WORDS, hi };
 }
 
 export function normalizeText(text: string): string {
@@ -149,26 +135,6 @@ export function matchText(
         'sliding_window',
         windowStr
       );
-    }
-  }
-
-  const prefixRange = prefixTokenRange(refTokens.length);
-  if (prefixRange) {
-    prefixScan: for (let len = prefixRange.hi; len >= prefixRange.lo; len--) {
-      const prefixStr = refTokens.slice(0, len).join(' ');
-      if (!prefixStr) continue;
-      if (normOcr.includes(prefixStr)) {
-        consider(best, PREFIX_MATCH_SCORE, 'prefix', prefixStr);
-        break;
-      }
-      if (ocrTokens.length < len) continue;
-      for (let i = 0; i <= ocrTokens.length - len; i++) {
-        const win = ocrTokens.slice(i, i + len).join(' ');
-        if (stringSimilarity.compareTwoStrings(win, prefixStr) >= PREFIX_FUZZY_MIN) {
-          consider(best, PREFIX_MATCH_SCORE, 'prefix', win);
-          break prefixScan;
-        }
-      }
     }
   }
 

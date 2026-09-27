@@ -458,15 +458,16 @@ outside `[\p{L}\p{N}\s]` to a space. Punctuation in the caption must not
 penalize the score.
 
 **Step 3 — Score every open task on that `zca_group_id`**
-(`status IN ('collecting','overdue')`). Four-tier strategy — do not
-simplify:
+(`status IN ('collecting','overdue')`). Three tiers:
 
 1. Exact substring (`ocrText.includes(referenceText)`) → 1.0, stop.
 2. Dice coefficient (`string-similarity`) on the full text and per line.
 3. Sliding window of `reference_text` token length across the OCR text
    (isolates the caption from surrounding social-UI chrome).
-4. Prefix match only when `reference_text` is 6+ words: leading ~50–70%,
-   weighted 0.95 (mobile "... See more" truncation).
+
+A leading fragment (mobile "... See more") does not get a fixed score.
+The caption is the OCR of the admin sample image, so a member screenshot
+has to contain that caption.
 
 **Step 4 — Winner.** Highest score. If `≥ OCR_MATCH_THRESHOLD` (default
 0.5), record a submission. If every score is below the threshold,

@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_OCR_MATCH_THRESHOLD,
-  PREFIX_MATCH_SCORE,
   matchText,
   normalizeText,
   pickBestMatch,
-  prefixTokenRange,
 } from '../../src/taskproof/worker/match';
 
 const CAPTION =
@@ -30,7 +28,7 @@ describe('task-proof match (Step 4)', () => {
     });
   });
 
-  describe('four match tiers', () => {
+  describe('match tiers', () => {
     it('tier 1: exact substring after normalize → 1.0 and stops', () => {
       const ocr = `${CHROME}\n${CAPTION}\nXem thêm`;
       const result = matchText(ocr, CAPTION);
@@ -87,30 +85,20 @@ describe('task-proof match (Step 4)', () => {
       expect(result.isMatch).toBe(true);
     });
 
-    it('tier 4: prefix (~50–70%) scores 0.95 for mobile See-more truncation', () => {
-      const range = prefixTokenRange(normalizeText(CAPTION).split(' ').length);
-      expect(range).not.toBeNull();
+    it('does not award a fixed 0.95 to the opening half of a long caption', () => {
       const tokens = normalizeText(CAPTION).split(' ');
-      const prefix = tokens.slice(0, Math.ceil(tokens.length * 0.5)).join(' ');
-      const ocr = `${CHROME} ${prefix} xem them`;
+      const opening = tokens.slice(0, Math.ceil(tokens.length * 0.5)).join(' ');
+      const ocr = `${CHROME} ${opening} xem them`;
       const result = matchText(ocr, CAPTION);
-      expect(result.matchType).toBe('prefix');
-      expect(result.score).toBe(PREFIX_MATCH_SCORE);
-      expect(result.isMatch).toBe(true);
+      expect(result.score).toBeGreaterThanOrEqual(DEFAULT_OCR_MATCH_THRESHOLD);
+      expect(result.score).toBeLessThan(0.95);
     });
 
-    it('tier 4: aggressive "... Xem thêm" crop (eval image copy 8) still prefixes', () => {
+    it('rejects a See-more crop that only has the opening words', () => {
       const ocr = `${CHROME}\nBỘ TƯ LỆNH THÀNH PHỐ: CỤ... xem thêm`;
       const result = matchText(ocr, CAPTION);
-      expect(result.matchType).toBe('prefix');
-      expect(result.score).toBe(PREFIX_MATCH_SCORE);
-      expect(result.isMatch).toBe(true);
-    });
-
-    it('tier 4 does not run when the caption has fewer than 6 words', () => {
-      expect(prefixTokenRange(5)).toBeNull();
-      const result = matchText('bao cao tuan hop toi nay', 'Báo cáo tuần');
-      expect(result.matchType).not.toBe('prefix');
+      expect(result.isMatch).toBe(false);
+      expect(result.score).toBeLessThan(DEFAULT_OCR_MATCH_THRESHOLD);
     });
   });
 

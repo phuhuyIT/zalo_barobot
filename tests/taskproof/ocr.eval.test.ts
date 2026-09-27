@@ -6,7 +6,8 @@ import { ocrImage, terminateOcrWorker } from '../../src/taskproof/worker/ocr';
 
 const EVAL_DIR = path.resolve(__dirname, '../eval_datasets');
 
-/** Caption đầy đủ của bài Facebook trong bộ eval (mobile cắt "... Xem thêm"). */
+/** Caption đầy đủ của bài trong bộ eval. */
+const SEE_MORE_CROP = new Set(['image copy 8.png']);
 const REFERENCE_CAPTION =
   'BỘ TƯ LỆNH THÀNH PHỐ: CỤM THI ĐUA SỐ 13 KHỞI CÔNG "NHÀ TÌNH NGHĨA QUÂN – DÂN" NĂM 2026';
 
@@ -24,7 +25,7 @@ describe('task-proof OCR eval (Step 4, before Zalo wiring)', () => {
     await terminateOcrWorker();
   });
 
-  it('OCRs every PNG in tests/eval_datasets/ and matches the post caption', async () => {
+  it('OCRs every PNG and matches the post caption, except the See-more crop', async () => {
     const files = listEvalPngs();
     expect(files.length).toBeGreaterThanOrEqual(12);
 
@@ -34,7 +35,8 @@ describe('task-proof OCR eval (Step 4, before Zalo wiring)', () => {
       const buf = fs.readFileSync(path.join(EVAL_DIR, file));
       const ocrText = await ocrImage(buf);
       const result = matchText(ocrText, REFERENCE_CAPTION);
-      if (!result.isMatch) {
+      const cropped = SEE_MORE_CROP.has(file);
+      if (cropped ? result.isMatch : !result.isMatch) {
         failures.push({
           file,
           score: result.score,
