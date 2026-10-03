@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Share-proof match demo</title>
+<style>
+  :root { color-scheme: light; --line: #d5d8de; --ink: #1c2430; --muted: #5c6778; --bg: #f4f6f8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; color: var(--ink); background: var(--bg); }
+  header, main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { padding-bottom: 0; }
+  h1 { font-size: 1.35rem; margin: 0 0 6px; }
+  p.note { color: var(--muted); margin: 0 0 12px; }
+  form, .card, .sub { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  label { display: block; font-weight: 600; margin: 8px 0 4px; }
+  select, input[type=file], button { font: inherit; }
+  select { max-width: 100%; }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; }
+  .row > * { flex: 1 1 280px; }
+  button { background: #1d4e89; color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.secondary { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+  button:disabled { opacity: 0.6; cursor: wait; }
+  .steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .steps span { background: #e8eef6; border-radius: 999px; padding: 2px 8px; font-size: 13px; }
+  img.shot { width: 100%; height: auto; border-radius: 8px; background: #eee; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 720px) { .pair { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .PASS { color: #0d7a32; font-weight: 700; }
+  .REVIEW { color: #8a5a00; font-weight: 700; }
+  .FAIL { color: #a32020; font-weight: 700; }
+  .err { color: #a32020; }
+  .admin { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Share-proof image match demo</h1>
+  <p class="note">One SIFT localization per submission. The old grayscale grid and the Sobel grid then score that same warp. REVIEW waits for a local ok / no. Nothing is written to the bot.</p>
+  <div class="steps">
+    <span>A2 auto crop</span><span>B1 SIFT</span><span>B2 localize</span><span>B3 grayscale grid</span><span>B3 Sobel grid</span>
+  </div>
+</header>
+<main>
+  <form id="form">
+    <div class="row">
+      <div>
+        <label for="samplePreset">Sample photo</label>
+        <select id="samplePreset"></select>
+        <label for="sampleFile">Or upload a sample (JPEG, PNG, WebP)</label>
+        <input id="sampleFile" type="file">
+        <p id="sampleName" class="note"></p>
+      </div>
+      <div>
+        <label for="subPreset">Eval submissions</label>
+        <select id="subPreset" multiple size="6"></select>
+        <label for="subFiles">Or upload submissions. You can pick several files.</label>
+        <input id="subFiles" type="file" multiple>
+        <p id="subNames" class="note"></p>
+      </div>
+    </div>
+    <p><button id="run" type="submit">Compare both grids</button> <button id="useAll" class="secondary" type="button">Select every other image in this folder</button></p>
+    <p id="status" class="note"></p>
+  </form>
+  <div id="out"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let presets = [];
+
+function badge(decision) {
+  return `<span class="${decision}">${decision}</span>`;
+}
+
+function gridBlock(title, caption, result) {
+  const g = result.grid;
+  const admin = result.decision === "REVIEW"
+    ? `<div class="admin" data-admin>
+         <span>Send to admin. Reply:</span>
+         <button type="button" data-ok>ok</button>
+         <button type="button" class="secondary" data-no>no</button>
+         <strong data-final>waiting</strong>
+       </div>`
+    : `<p>Final: <strong>${result.admin}</strong></p>`;
+  return `<div>
+    <h3>${title} ${badge(result.decision)}</h3>
+    <p>Grid ${g ? g.score + " (" + g.matched + "/" + g.valid + " tiles)" : "not run"}. Grid time ${result.ms} ms.</p>
+    ${g ? `<figure><img class="shot" alt="${title}" src="data:image/jpeg;base64,${g.overlay_jpeg}"><figcaption>${caption}</figcaption></figure>` : ""}
+    ${admin}
+  </div>`;
+}
+
+function render(data) {
+  const s = data.sample;
+  const cards = data.submissions.map((row) => {
+    const loc = row.result.localize;
+    return `
+    <article class="sub">
+      <h2>${row.name}</h2>
+      <p>SIFT features ${row.result.features}. Good matches ${loc.good}. Inliers ${loc.inliers} (ratio ${loc.inlier_ratio}).
+      Scale ${loc.scale ?? "—"}. Angle ${loc.angle_deg ?? "—"}°. Visible ${(loc.visible * 100).toFixed(0)}%.
+      B2 ${loc.ok ? "passed" : "blocked"}${loc.why ? ": " + loc.why : ""}.
+      Prep ${row.result.ms.prep} ms, localize ${row.result.ms.localize} ms.</p>
+      <figure><img class="shot" alt="B2 box" src="data:image/jpeg;base64,${row.result.bbox_jpeg}"><figcaption>B2 media box on the submission. Both grids use this warp.</figcaption></figure>
+      <div class="pair">
+        ${gridBlock("Grayscale grid", "Old baseline: green match, red mismatch, gray ignored", row.result.grids.gray)}
+        ${gridBlock("Sobel grid", "C9: green match, red mismatch, gray ignored", row.result.grids.sobel)}
+      </div>
+    </article>`;
+  }).join("");
+  $("out").innerHTML = `
+    <section class="card">
+      <h2>A2 automatic crop</h2>
+      <p>Box x0 ${s.crop_box.x0}, y0 ${s.crop_box.y0}, x1 ${s.crop_box.x1}, y1 ${s.crop_box.y1}
+      on ${s.width}×${s.height}. Crop time ${s.crop_ms} ms.
+      Reference SIFT features: ${s.features}.</p>
+      <div class="pair">
+        <figure><img class="shot" alt="crop box" src="data:image/jpeg;base64,${s.full_jpeg}"><figcaption>A2 box on the sample screenshot</figcaption></figure>
+        <figure><img class="shot" alt="cropped media" src="data:image/jpeg;base64,${s.crop_jpeg}"><figcaption>A4 reference (width 640)</figcaption></figure>
+      </div>
+      <p>${data.submissions.length} submission${data.submissions.length === 1 ? "" : "s"}. Each one is localized once with SIFT, then scored by both grids.</p>
+    </section>
+    ${cards}`;
+  $("out").querySelectorAll("[data-admin]").forEach((box) => {
+    const final = box.querySelector("[data-final]");
+    box.querySelector("[data-ok]").onclick = () => { final.textContent = "accepted"; };
+    box.querySelector("[data-no]").onclick = () => { final.textContent = "rejected"; };
+  });
+}
+
+function folderOf(name) {
+  const slash = name.lastIndexOf("/");
+  return slash < 0 ? "other" : name.slice(0, slash);
+}
+
+function fillSelect(select, names) {
+  const groups = new Map();
+  for (const name of names) {
+    const folder = folderOf(name);
+    if (!groups.has(folder)) groups.set(folder, []);
+    groups.get(folder).push(name);
+  }
+  select.replaceChildren();
+  for (const [folder, files] of groups) {
+    const group = document.createElement("optgroup");
+    group.label = folder;
+    for (const name of files) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name.slice(name.lastIndexOf("/") + 1);
+      group.append(option);
+    }
+    select.append(group);
+  }
+}
+
+async function loadPresets() {
+  const res = await fetch("/api/presets");
+  const data = await res.json();
+  presets = data.images;
+  fillSelect($("samplePreset"), presets);
+  fillSelect($("subPreset"), presets);
+  if (presets.length > 1) {
+    $("samplePreset").value = presets[0];
+    const folder = folderOf(presets[0]);
+    for (const opt of $("subPreset").options) opt.selected = folderOf(opt.value) === folder && opt.value !== presets[0];
+  }
+}
+
+$("useAll").onclick = () => {
+  const folder = folderOf($("samplePreset").value);
+  for (const opt of $("subPreset").options) {
+    opt.selected = folderOf(opt.value) === folder && opt.value !== $("samplePreset").value;
+  }
+};
+
+$("form").onsubmit = async (event) => {
+  event.preventDefault();
+  $("run").disabled = true;
+  $("status").textContent = "Running SIFT, then both grids…";
+  $("status").className = "note";
+  try {
+    let res;
+    const sampleFile = $("sampleFile").files[0];
+    const subFiles = [...$("subFiles").files];
+    const presetSubs = [...$("subPreset").selectedOptions].map((o) => o.value);
+    const fd = new FormData();
+    if (sampleFile) fd.append("sample", sampleFile, sampleFile.name);
+    else fd.append("sample_preset", $("samplePreset").value);
+    if (subFiles.length) {
+      for (const file of subFiles) fd.append("submission", file, file.name);
+    } else {
+      for (const name of presetSubs) {
+        if (!sampleFile && name === $("samplePreset").value) continue;
+        fd.append("submission_preset", name);
+      }
+    }
+    if (![...fd.keys()].some((key) => key === "submission" || key === "submission_preset")) {
+      throw new Error("Choose at least one submission from the list, or upload photos.");
+    }
+    res = await fetch("/api/run", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    render(data);
+    $("status").textContent = "Done.";
+  } catch (err) {
+    $("status").textContent = err.message;
+    $("status").className = "err";
+  } finally {
+    $("run").disabled = false;
+  }
+};
+
+$("sampleFile").onchange = () => {
+  const file = $("sampleFile").files[0];
+  $("sampleName").textContent = file ? `Selected sample: ${file.name}` : "";
+};
+$("subFiles").onchange = () => {
+  const files = [...$("subFiles").files];
+  $("subNames").textContent = files.length ? `Selected ${files.length}: ${files.map((f) => f.name).join(", ")}` : "";
+};
+
+loadPresets().catch((err) => { $("status").textContent = err.message; });
+</script>
+</body>
+</html>
