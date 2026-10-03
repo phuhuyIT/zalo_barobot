@@ -2,7 +2,7 @@
  * groupMap.ts
  *
  * official_chat_id (webhook) ↔ zca_group_id (threadId zca-js).
- * Không OCR nhóm chưa có trong bảng này (zca_group_id NULL trên task).
+ * Không đối chiếu ảnh nhóm chưa có trong bảng này (zca_group_id NULL trên task).
  */
 
 import Database from 'better-sqlite3';
@@ -32,13 +32,13 @@ export function findMapByZca(db: Database.Database, zcaGroupId: string): GroupMa
     .get(zcaGroupId) as GroupMapRow | undefined;
 }
 
-/** Nhóm chưa map thì không OCR / không nhắc (Step 6 + 9). */
+/** Nhóm chưa map thì không chấm ảnh và không nhắc. */
 export function isMappedZcaGroup(db: Database.Database, zcaGroupId: string): boolean {
   if (!zcaGroupId) return false;
   return Boolean(findMapByZca(db, zcaGroupId));
 }
 
-export function shouldOcrZcaGroup(db: Database.Database, zcaGroupId: string): boolean {
+export function shouldScoreZcaGroup(db: Database.Database, zcaGroupId: string): boolean {
   if (!isMappedZcaGroup(db, zcaGroupId)) return false;
   const row = db
     .prepare(

@@ -4,7 +4,7 @@
  * Cache thành viên nhóm zca-js (group_members_cache).
  * /nhac luôn refresh một lần. Listen chỉ refresh khi cache trống
  * hoặc già hơn MEMBER_CACHE_MAX_AGE_MS. Refresh lỗi mà còn cache
- * → giữ cache cũ, không chặn nhắc / OCR.
+ * → giữ cache cũ, không chặn nhắc / đối chiếu ảnh.
  */
 
 import Database from 'better-sqlite3';

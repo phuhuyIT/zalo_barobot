@@ -29,7 +29,7 @@ const lastNotified = { value: 0 };
 export function formatWorkerDownOpenTasksMessage(openCount: number): string {
   return (
     `⚠️ Task-proof worker không chạy trong khi còn ${openCount} task liên kết đang mở.\n` +
-    `OCR / nhắc /lienket sẽ dừng. Bot chính vẫn chạy — /gui không bị ảnh hưởng.\n` +
+    `Đối chiếu ảnh / nhắc /lienket sẽ dừng. Bot chính vẫn chạy — /gui không bị ảnh hưởng.\n` +
     `Hãy kiểm tra process worker (cổng 3001, chỉ localhost).`
   );
 }

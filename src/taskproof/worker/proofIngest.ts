@@ -1,12 +1,11 @@
 /**
  * proofIngest.ts
  *
- * Hàng đợi minh chứng (Section 8.2): pre-filter → tải bytes → OCR
- * (single-flight trong ocr.ts) → chấm mọi task mở trên nhóm → ghi file
- * + submissions → đóng khi đủ quota.
+ * Hàng đợi minh chứng: pre-filter → tải bytes → SIFT + lưới xám với ảnh mẫu
+ * của từng task mở → ghi file + submissions → đóng khi đủ quota.
  *
- * OCR xong mới claim processed_messages — lỗi OCR / OCR trống có thể thử lại.
- * Ảnh dưới ngưỡng: claim, không row, không đổi task.
+ * Lỗi chấm ảnh hoặc task chưa có ảnh mẫu: chưa claim, có thể thử lại.
+ * Ảnh FAIL: claim, không row, không đổi task.
  * UNIQUE(task_id, uid_from) ghi đè lần nộp trước, trừ ảnh mẫu (proof_origin=sample).
  * Worker không sendPhoto (T6 = official bot); đủ quota thì HTTP kick report-now.
  */
@@ -17,12 +16,11 @@ import path from 'path';
 import Database from 'better-sqlite3';
 import { getProofDir } from '../env';
 import { closeTaskIfQuotaReached } from '../lifecycle';
-import { getTaskproofExcludeUids, getTaskproofSetting } from '../settings';
-import { shouldOcrZcaGroup } from './groupMap';
+import { getTaskproofExcludeUids } from '../settings';
+import { shouldScoreZcaGroup } from './groupMap';
 import { downloadProofBytes } from './imageFetch';
-import { MatchCandidate, pickBestMatch } from './match';
+import { ImageMatchCandidate, ImageScore, pickBestImageMatch, ScoreImagePair } from './imageMatch';
 import { observeMember, stripMemberId } from './memberCache';
-import { ocrImage as defaultOcrImage } from './ocr';
 import { loadSession, ZcaCredentials } from './session';
 
 export interface ProofImage {
@@ -36,7 +34,7 @@ export interface ProofImage {
 
 export interface ProofIngestDeps {
   now?: () => number;
-  ocrImage?: (image: Buffer) => Promise<string>;
+  scoreImages?: ScoreImagePair;
   downloadImage?: (url: string) => Promise<Buffer | null>;
   loadSession?: () => ZcaCredentials | null;
   proofDir?: string;
@@ -69,7 +67,7 @@ export type ProofIngestResult =
 interface OpenTaskRow {
   id: string;
   short_code: string;
-  reference_text: string;
+  reference_path: string;
   created_at: number;
 }
 
@@ -98,27 +96,36 @@ export function claimProcessedMessage(
   return Number(result.changes || 0) > 0;
 }
 
+const REFERENCE_PATH_SQL = `
+  COALESCE(
+    NULLIF(t.sample_stored_path, ''),
+    (
+      SELECT s.stored_path FROM submissions s
+      WHERE s.task_id = t.id AND s.proof_origin = 'sample'
+        AND IFNULL(s.stored_path, '') != ''
+      ORDER BY s.created_at ASC
+      LIMIT 1
+    )
+  )`;
+
 function listOpenCandidates(
   db: Database.Database,
   zcaGroupId: string,
   onlyTaskId?: string
 ): OpenTaskRow[] {
-  if (onlyTaskId) {
-    return db
-      .prepare(
-        `SELECT id, short_code, reference_text, created_at FROM tasks
-         WHERE id = ? AND zca_group_id = ? AND status IN ('collecting', 'overdue')
-         ORDER BY created_at ASC, id ASC`
-      )
-      .all(onlyTaskId, zcaGroupId) as OpenTaskRow[];
-  }
+  const taskFilter = onlyTaskId ? 't.id = ? AND t.zca_group_id = ?' : 't.zca_group_id = ?';
+  const params = onlyTaskId ? [onlyTaskId, zcaGroupId] : [zcaGroupId];
   return db
     .prepare(
-      `SELECT id, short_code, reference_text, created_at FROM tasks
-       WHERE zca_group_id = ? AND status IN ('collecting', 'overdue')
+      `SELECT id, short_code, created_at, reference_path FROM (
+         SELECT t.id, t.short_code, t.created_at, ${REFERENCE_PATH_SQL} AS reference_path
+         FROM tasks t
+         WHERE ${taskFilter} AND t.status IN ('collecting', 'overdue')
+       )
+       WHERE IFNULL(reference_path, '') != ''
        ORDER BY created_at ASC, id ASC`
     )
-    .all(zcaGroupId) as OpenTaskRow[];
+    .all(...params) as OpenTaskRow[];
 }
 
 function submissionsHaveOrigin(db: Database.Database): boolean {
@@ -194,7 +201,6 @@ export async function ingestProofImage(
 ): Promise<ProofIngestResult> {
   const now = deps.now ?? Date.now;
   const proofDir = deps.proofDir ?? getProofDir();
-  const ocr = deps.ocrImage ?? defaultOcrImage;
   const newId = deps.newId ?? (() => crypto.randomUUID());
 
   const zcaGroupId = (image.threadId || '').trim();
@@ -210,7 +216,7 @@ export async function ingestProofImage(
     return { outcome: 'skipped', reason: 'excluded_sender' };
   }
   observeMember(db, zcaGroupId, uidFrom, image.displayName || uidFrom, now());
-  if (!shouldOcrZcaGroup(db, zcaGroupId)) {
+  if (!shouldScoreZcaGroup(db, zcaGroupId)) {
     return { outcome: 'skipped', reason: 'unmapped_or_closed' };
   }
   if (opts.onlyTaskId && listOpenCandidates(db, zcaGroupId, opts.onlyTaskId).length === 0) {
@@ -235,36 +241,35 @@ export async function ingestProofImage(
     return { outcome: 'discarded', reason: 'fetch_failed' };
   }
 
-  let ocrText: string;
+  const candidates: ImageMatchCandidate[] = listOpenCandidates(db, zcaGroupId, opts.onlyTaskId)
+    .filter((row) => fs.existsSync(row.reference_path))
+    .map((row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      referencePath: row.reference_path,
+    }));
+  if (candidates.length === 0) {
+    console.warn(
+      `[TaskProofWorker] Không có ảnh mẫu để chấm msg=${msgId} group=${zcaGroupId}`
+    );
+    return { outcome: 'discarded', reason: 'no_reference' };
+  }
+
+  let winner: { candidate: ImageMatchCandidate; result: ImageScore } | null;
   try {
-    ocrText = await ocr(downloaded.buffer);
+    winner = await pickBestImageMatch(downloaded.buffer, candidates, deps.scoreImages);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[TaskProofWorker] OCR lỗi (chưa claim, có thể thử lại):', msg);
-    return { outcome: 'discarded', reason: 'ocr_failed' };
+    console.error('[TaskProofWorker] Chấm ảnh lỗi (chưa claim, có thể thử lại):', msg);
+    return { outcome: 'discarded', reason: 'image_match_failed' };
   }
-
-  if (!ocrText.trim()) {
-    console.warn(
-      `[TaskProofWorker] OCR trống (chưa claim) msg=${msgId} bytes=${downloaded.buffer.length}`
-    );
-    return { outcome: 'discarded', reason: 'ocr_empty' };
-  }
-
-  const candidates: MatchCandidate[] = listOpenCandidates(db, zcaGroupId, opts.onlyTaskId).map((row) => ({
-    id: row.id,
-    referenceText: row.reference_text,
-    createdAt: row.created_at,
-  }));
-  const threshold = getTaskproofSetting('ocr_match_threshold', db);
-  const winner = pickBestMatch(ocrText, candidates, threshold);
   if (!winner) {
     const claimed = claimProcessedMessage(db, zcaGroupId, msgId, now());
     if (!opts.ignoreProcessed && !claimed) {
       return { outcome: 'skipped', reason: 'already_processed' };
     }
     console.log(
-      `[TaskProofWorker] Ảnh dưới ngưỡng msg=${msgId} bytes=${downloaded.buffer.length} ocr="${ocrText.replace(/\s+/g, ' ').slice(0, 120)}"`
+      `[TaskProofWorker] Ảnh không khớp mẫu msg=${msgId} bytes=${downloaded.buffer.length}`
     );
     return { outcome: 'discarded', reason: 'below_threshold' };
   }

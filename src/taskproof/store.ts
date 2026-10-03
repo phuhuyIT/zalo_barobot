@@ -8,7 +8,7 @@
  * Hai namespace ID (không dùng lẫn):
  * - official_chat_id: webhook Official Bot Platform (nhóm sau khi admin chọn
  *   lúc /task 1-1; /lienket và /gui vẫn gõ trong nhóm)
- * - zca_group_id: threadId zca-js (OCR, mention) — NULL đến khi /lienket
+ * - zca_group_id: threadId zca-js (đối chiếu ảnh, mention) — NULL đến khi /lienket
  * task_group_picks và task_sample_pending chỉ official bot dùng (chọn nhóm 1-1
  * và ảnh mẫu cho caption). Worker không cần hai bảng đó.
  */
@@ -50,7 +50,8 @@ export function initTaskproofTables(database: Database.Database): void {
       created_at INTEGER NOT NULL,
       reminded_at INTEGER,
       remind_count INTEGER NOT NULL DEFAULT 0,
-      reported_at INTEGER
+      reported_at INTEGER,
+      sample_stored_path TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_tasks_short_code ON tasks(short_code);
@@ -133,8 +134,16 @@ export function initTaskproofTables(database: Database.Database): void {
   `);
 
   ensureSubmissionProofOrigin(database);
+  ensureTaskSamplePath(database);
   initializedDbs.add(database);
   seedTaskproofSettings(database);
+}
+
+/** Ảnh mẫu để đối chiếu, kể cả khi không tính vào quota của admin. */
+export function ensureTaskSamplePath(database: Database.Database): void {
+  const cols = database.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>;
+  if (cols.some((col) => col.name === 'sample_stored_path')) return;
+  database.exec(`ALTER TABLE tasks ADD COLUMN sample_stored_path TEXT`);
 }
 
 /** Ảnh mẫu giữ nguyên khi cùng người gửi ảnh sau trong nhóm. Worker chỉ đọc cột này. */

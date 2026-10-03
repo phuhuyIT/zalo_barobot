@@ -97,35 +97,3 @@ export async function postMaybeStop(): Promise<{ status: number; json: Record<st
   return workerFetch('POST', '/internal/taskproof/maybe-stop');
 }
 
-/** Ngồi trên OCR_TIMEOUT_MS (90s) trong worker/ocr.ts. */
-const OCR_DEBUG_TIMEOUT_MS = 100_000;
-
-/**
- * Ảnh thô → worker ocrImage. Official bot không tự khởi tạo Tesseract
- * (tránh một bản vie+eng thứ hai trong cùng container).
- */
-export async function postOcrDebug(image: Buffer): Promise<{ status: number; json: Record<string, unknown> }> {
-  const key = getInternalApiKey();
-  let res: Response;
-  try {
-    res = await fetch(`${getWorkerOrigin()}/internal/taskproof/ocr-debug`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'x-internal-key': key,
-      },
-      body: new Uint8Array(image),
-      signal: AbortSignal.timeout(OCR_DEBUG_TIMEOUT_MS),
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`worker_unreachable: ${message}`);
-  }
-  let json: Record<string, unknown>;
-  try {
-    json = (await res.json()) as Record<string, unknown>;
-  } catch {
-    json = {};
-  }
-  return { status: res.status, json };
-}

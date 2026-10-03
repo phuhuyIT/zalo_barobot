@@ -38,7 +38,7 @@ export interface ParsedTaskFields {
   /** null = default_deadline_offset_ms lúc insert. */
   deadlineUtcMs: number | null;
   reportGroupId: string;
-  /** true: link Facebook chưa có Caption — chờ ảnh mẫu, OCR thành caption. */
+  /** true: link Facebook chưa có Caption — chờ ảnh mẫu. */
   needsSampleImage?: boolean;
 }
 

@@ -9,15 +9,12 @@
 import http from 'http';
 import express, { Express } from 'express';
 import { getWorkerPort, WORKER_BIND_HOST } from '../env';
-import { debugImageParser, sniffImageKind } from '../imageKind';
 import { rejectIfInvalidInternalKey } from '../internalAuth';
 import { historyFetchCount, QUET_DEFAULT_COUNT, QUET_MAX_COUNT, QUET_MIN_COUNT } from '../quet';
-import { ocrImage as defaultOcrImage } from './ocr';
 import { getWorkerRuntime, WorkerRuntime } from './runtime';
 
 export interface WorkerAppDeps {
   runtime?: WorkerRuntime;
-  ocrImage?: (image: Buffer) => Promise<string>;
 }
 
 export function createWorkerApp(deps: WorkerAppDeps = {}): Express {
@@ -111,34 +108,6 @@ export function createWorkerApp(deps: WorkerAppDeps = {}): Express {
       typeof req.body?.zca_group_id === 'string' ? req.body.zca_group_id : undefined;
     const result = runtimeOf().linkGroup(officialChatId, zcaGroupId);
     res.status(result.httpStatus).json(result.body);
-  });
-
-  // Cùng ocrImage với /quet và proof ingest. Không cần đăng nhập Zalo.
-  app.post('/internal/taskproof/ocr-debug', debugImageParser, async (req, res) => {
-    if (rejectIfInvalidInternalKey(req, res)) return;
-    const image = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-    if (image.length === 0) {
-      res.status(400).json({ success: false, error: 'Thiếu ảnh' });
-      return;
-    }
-    if (!sniffImageKind(image)) {
-      res.status(400).json({ success: false, error: 'Chỉ nhận JPEG, PNG hoặc WebP' });
-      return;
-    }
-    const started = Date.now();
-    try {
-      const recognize = deps.ocrImage ?? defaultOcrImage;
-      const text = await recognize(image);
-      res.json({
-        success: true,
-        text,
-        char_count: text.length,
-        elapsed_ms: Date.now() - started,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(message === 'ocr_timeout' ? 504 : 500).json({ success: false, error: message });
-    }
   });
 
   return app;

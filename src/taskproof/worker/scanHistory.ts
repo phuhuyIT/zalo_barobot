@@ -2,7 +2,7 @@
  * scanHistory.ts
  *
  * Lọc ảnh trong N tin /quet rồi ingest chỉ đúng task được gọi.
- * Không gọi zca-js — runtime fetch history, hàm này chỉ lọc + OCR.
+ * Không gọi zca-js — runtime fetch history, hàm này chỉ lọc rồi đối chiếu ảnh.
  */
 
 import Database from 'better-sqlite3';

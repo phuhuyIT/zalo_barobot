@@ -11,7 +11,6 @@ import Database from 'better-sqlite3';
 import { getDatabase, getRecipient } from '../store';
 
 export interface TaskproofSettings {
-  ocr_match_threshold: number;
   default_required_count: number;
   default_deadline_offset_ms: number;
   deadline_check_interval_ms: number;
@@ -36,7 +35,6 @@ export interface TaskproofSettings {
 export type TaskproofSettingKey = keyof TaskproofSettings;
 
 export const TASKPROOF_SETTING_DEFAULTS: TaskproofSettings = {
-  ocr_match_threshold: 0.5,
   default_required_count: 12,
   default_deadline_offset_ms: 3_600_000,
   deadline_check_interval_ms: 60_000,
@@ -104,7 +102,6 @@ export const TASKPROOF_UI_SETTING_KEYS: TaskproofSettingKey[] = [
   'admin_official_chat_id',
   'max_mentions_per_message',
   'max_reminder_text_len',
-  'ocr_match_threshold',
   'default_required_count',
   'default_deadline_offset_ms',
   'max_auto_reminders',

@@ -2,9 +2,10 @@
  * sampleCaption.ts
  *
  * /task <link Facebook> không còn lấy caption từ preview Facebook.
- * Admin gửi một ảnh trong chat 1-1. Worker OCR ảnh đó thành caption.
- * Khi task được tạo, cùng ảnh đó là minh chứng của admin_zca_uid
- * nếu uid đó có trong cache thành viên của nhóm đã chọn.
+ * Admin gửi một ảnh trong chat 1-1. Caption là chữ đã gõ, hoặc "Ảnh mẫu".
+ * Khi task được tạo, ảnh đó luôn được lưu làm mẫu đối chiếu.
+ * Ảnh còn được tính là minh chứng của admin_zca_uid khi uid đó
+ * có trong cache thành viên của nhóm đã chọn.
  * Ảnh mẫu không bị ảnh nhóm gửi sau của cùng uid ghi đè.
  */
 
@@ -22,22 +23,18 @@ import { downloadImageBytes } from './worker/imageFetch';
 
 export const SAMPLE_TTL_MS = 10 * 60 * 1000;
 
+export const SAMPLE_CAPTION_FALLBACK = 'Ảnh mẫu';
+
 export const SAMPLE_ASK_REPLY = [
   'Gửi một ảnh chụp bài viết vào chat này.',
-  'Bot đọc chữ trên ảnh làm caption, rồi mới tạo task.',
-  'Ảnh đó được tính là minh chứng của admin.',
+  'Ảnh đó là mẫu để đối chiếu minh chứng, và được tính cho admin.',
 ].join('\n');
 
 export const SAMPLE_NEED_PHOTO_REPLY = 'Cần một ảnh chụp bài, không phải tin chữ. Gửi ảnh vào chat này.';
 
-export const SAMPLE_EMPTY_OCR_REPLY = 'Không đọc được chữ trên ảnh. Gửi ảnh khác (JPEG, PNG hoặc WebP).';
-
 export const SAMPLE_BAD_IMAGE_REPLY = 'Chỉ nhận JPEG, PNG hoặc WebP.';
 
 export const SAMPLE_DOWNLOAD_FAIL_REPLY = 'Không tải được ảnh. Gửi lại.';
-
-export const SAMPLE_OCR_FAIL_REPLY =
-  'Không đọc được ảnh. Gửi lại, hoặc dùng Caption: nếu muốn tạo task không cần ảnh mẫu.';
 
 export interface SamplePending {
   adminChatId: string;
@@ -254,8 +251,8 @@ export function resolveAdminMember(
 }
 
 /**
- * Gắn ảnh mẫu vào task vừa tạo. Xóa pending dù có gắn được hay không,
- * để ảnh không dính sang task sau.
+ * Lưu ảnh mẫu làm file đối chiếu của task. Xóa pending dù có tính
+ * cho admin hay không, để ảnh không dính sang task sau.
  * Trả câu gửi kèm tin xác nhận cho admin.
  */
 export async function recordAdminSampleProof(
@@ -276,26 +273,30 @@ export async function recordAdminSampleProof(
     image = fs.readFileSync(pending.imagePath);
   } catch {
     clearSamplePending(input.adminChatId, db);
-    return 'Không đọc được file ảnh mẫu nên chưa tính minh chứng.';
+    return 'Không đọc được file ảnh mẫu nên chưa lưu mẫu đối chiếu.';
+  }
+  if (!sniffImageKind(image)) {
+    clearSamplePending(input.adminChatId, db);
+    return 'Ảnh mẫu không phải JPEG, PNG hoặc WebP nên chưa lưu mẫu đối chiếu.';
   }
 
+  const dir = path.join(getProofDir(), input.taskId);
+  fs.mkdirSync(dir, { recursive: true });
+  const storedPath = path.join(dir, 'sample.jpg');
+  fs.writeFileSync(storedPath, image);
+  db.prepare(`UPDATE tasks SET sample_stored_path = ? WHERE id = ?`).run(storedPath, input.taskId);
+
   const member = resolveAdminMember(input.zcaGroupId, db);
+  const photoUrl = pending.photoUrl || 'sample://admin';
   clearSamplePending(input.adminChatId, db);
   if (!member) {
     return [
-      'Chưa tính ảnh mẫu là minh chứng.',
-      'Đặt UID thành viên nhóm của admin vào ô "Admin zca UID" trên Web UI, rồi gửi ảnh đó trong nhóm hoặc /quet.',
+      'Đã lưu ảnh mẫu để đối chiếu minh chứng.',
+      'Chưa tính ảnh đó cho admin. Đặt UID thành viên nhóm vào ô "Admin zca UID" trên Web UI nếu muốn tính.',
     ].join(' ');
-  }
-  if (!sniffImageKind(image)) {
-    return 'Ảnh mẫu không phải JPEG, PNG hoặc WebP nên chưa tính minh chứng.';
   }
 
   const submissionId = crypto.randomUUID();
-  const dir = path.join(getProofDir(), input.taskId);
-  fs.mkdirSync(dir, { recursive: true });
-  const storedPath = path.join(dir, `${submissionId}.jpg`);
-  fs.writeFileSync(storedPath, image);
   db.prepare(
     `INSERT INTO submissions
        (id, task_id, uid_from, display_name, image_url, stored_path, match_score, created_at, proof_origin)
@@ -305,7 +306,7 @@ export async function recordAdminSampleProof(
     input.taskId,
     member.userId,
     member.displayName,
-    pending.photoUrl || 'sample://admin',
+    photoUrl,
     storedPath,
     1,
     now

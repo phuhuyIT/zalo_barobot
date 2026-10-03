@@ -7,7 +7,7 @@
  * Step 7: cache thành viên + /nhac (mention / @all).
  * Step 8: listen/stop — chỉ online khi có task liên kết mở, cửa pending, hoặc QR.
  * Task chưa liên kết không giữ worker. Timer DEADLINE_CHECK_INTERVAL_MS nhắc tự động.
- * Step 9: ảnh nhóm đã map + task mở → hàng đợi OCR, ghi file, đóng khi đủ quota.
+ * Step 9: ảnh nhóm đã map + task mở → đối chiếu với ảnh mẫu, ghi file, đóng khi đủ quota.
  */
 
 import crypto from 'crypto';
@@ -31,7 +31,7 @@ import { peekWorkerDatabase } from '../store';
 import { looksLikeTaskproofCommand } from '../commands/parser';
 import { historyFetchCount, QUET_DEFAULT_COUNT, ScanHistorySummary } from '../quet';
 import { deliverQr, postLoginResult, postLinkResult, postReportNow, postScanResult } from './callbacks';
-import { conflictForPair, isMappedZcaGroup, shouldOcrZcaGroup, upsertGroupMap } from './groupMap';
+import { conflictForPair, isMappedZcaGroup, shouldScoreZcaGroup, upsertGroupMap } from './groupMap';
 import {
   listCachedMembers,
   listLinkedOpenZcaGroups,
@@ -46,6 +46,7 @@ import {
   ReminderKind,
 } from './reminders';
 import { ingestProofImage, ProofIngestResult } from './proofIngest';
+import { ScoreImagePair } from './imageMatch';
 import { scanGroupHistoryForTask } from './scanHistory';
 import { loadSession, saveSession, ZcaCredentials } from './session';
 import { createZcaLoginPort, ZcaInboundMessage, ZcaLoginPort } from './zcaAdapter';
@@ -117,7 +118,7 @@ export interface WorkerRuntimeDeps {
   }) => Promise<unknown>;
   scheduleTimeout?: (fn: () => void, ms: number) => () => void;
   scheduleInterval?: (fn: () => void, ms: number) => () => void;
-  ocrImage?: (image: Buffer) => Promise<string>;
+  scoreImages?: ScoreImagePair;
   downloadImage?: (url: string) => Promise<Buffer | null>;
   getProofDir?: () => string;
   kickReport?: (taskId: string) => Promise<unknown>;
@@ -164,7 +165,7 @@ export class WorkerRuntime {
   > & {
     loginPort: ZcaLoginPort;
     db: Database.Database | null | undefined;
-    ocrImage?: (image: Buffer) => Promise<string>;
+    scoreImages?: ScoreImagePair;
     downloadImage?: (url: string) => Promise<Buffer | null>;
     getProofDir: () => string;
     kickReport: (taskId: string) => Promise<unknown>;
@@ -220,7 +221,7 @@ export class WorkerRuntime {
           if (typeof t.unref === 'function') t.unref();
           return () => clearInterval(t);
         }),
-      ocrImage: deps.ocrImage,
+      scoreImages: deps.scoreImages,
       downloadImage: deps.downloadImage,
       getProofDir: deps.getProofDir ?? getProofDir,
       kickReport: deps.kickReport ?? defaultKickReport,
@@ -524,14 +525,14 @@ export class WorkerRuntime {
   }
 
   /**
-   * Ảnh / tin zca-js. Nhóm chưa map → không OCR.
+   * Ảnh / tin zca-js. Nhóm chưa map → không chấm.
    * Cửa /lienket A: tin nhóm không phải lệnh → lấy threadId.
-   * Ảnh hợp lệ: enqueue OCR (không chặn listener). Lỗi một ảnh không chặn ảnh sau.
-   * Thẻ xem trước web (chat.link): không OCR, không ghi submission.
+   * Ảnh hợp lệ: xếp hàng đối chiếu (không chặn listener).
+   * Thẻ xem trước web (chat.link): không phải minh chứng.
    */
   handleZcaMessage(msg: ZcaInboundMessage): {
     linked: boolean;
-    ocr: boolean;
+    proof: boolean;
     job?: Promise<ProofIngestResult>;
   } {
     const db = this.db();
@@ -551,40 +552,40 @@ export class WorkerRuntime {
     }
 
     if (looksLikeTaskproofCommand(msg.text)) {
-      return { linked, ocr: false };
+      return { linked, proof: false };
     }
 
     if (msg.isLinkCard) {
       console.log(
-        `[TaskProofWorker] Bỏ thẻ xem trước (không OCR) msg=${msg.msgId || ''} group=${msg.threadId}`
+        `[TaskProofWorker] Bỏ thẻ xem trước msg=${msg.msgId || ''} group=${msg.threadId}`
       );
-      return { linked, ocr: false };
+      return { linked, proof: false };
     }
 
     if (!msg.hasImage || !msg.isGroup) {
-      return { linked, ocr: false };
+      return { linked, proof: false };
     }
 
     if (isExcluded) {
       console.log(
         `[TaskProofWorker] Bỏ ảnh từ bot hoặc self uid=${msg.uidFrom || ''} group=${msg.threadId}`
       );
-      return { linked, ocr: false };
+      return { linked, proof: false };
     }
 
-    const ocr = Boolean(db && shouldOcrZcaGroup(db, msg.threadId));
-    if (!ocr) {
+    const score = Boolean(db && shouldScoreZcaGroup(db, msg.threadId));
+    if (!score) {
       console.log(
         `[TaskProofWorker] Bỏ ảnh — nhóm chưa liên kết hoặc không có task mở: ${msg.threadId}`
       );
-      return { linked, ocr: false };
+      return { linked, proof: false };
     }
 
     console.log(
-      `[TaskProofWorker] Hàng đợi OCR msg=${msg.msgId || ''} group=${msg.threadId} type=${msg.msgType || ''}`
+      `[TaskProofWorker] Hàng đợi đối chiếu msg=${msg.msgId || ''} group=${msg.threadId} type=${msg.msgType || ''}`
     );
     const job = this.enqueueIngest(() => this.ingestProof(msg));
-    return { linked, ocr: true, job };
+    return { linked, proof: true, job };
   }
 
   private enqueueIngest(job: () => Promise<ProofIngestResult>): Promise<ProofIngestResult> {
@@ -630,7 +631,7 @@ export class WorkerRuntime {
         },
         {
           now: this.deps.now,
-          ocrImage: this.deps.ocrImage,
+          scoreImages: this.deps.scoreImages,
           downloadImage: this.deps.downloadImage,
           loadSession: () => loadSession(this.deps.getSessionFilePath()),
           proofDir: this.deps.getProofDir(),
@@ -672,9 +673,9 @@ export class WorkerRuntime {
     }
   }
 
-  shouldOcrGroup(zcaGroupId: string): boolean {
+  shouldScoreGroup(zcaGroupId: string): boolean {
     const db = this.db();
-    return Boolean(db && shouldOcrZcaGroup(db, zcaGroupId));
+    return Boolean(db && shouldScoreZcaGroup(db, zcaGroupId));
   }
 
   /**
@@ -706,7 +707,7 @@ export class WorkerRuntime {
   }
 
   /**
-   * /quet: validate rồi chạy scan nền. HTTP trả 202 ngay — OCR có thể lâu.
+   * /quet: validate rồi chạy scan nền. HTTP trả 202 ngay — đối chiếu ảnh có thể lâu.
    */
   enqueueScanHistory(
     taskId: string,
@@ -827,7 +828,7 @@ export class WorkerRuntime {
       },
       {
         now: this.deps.now,
-        ocrImage: this.deps.ocrImage,
+        scoreImages: this.deps.scoreImages,
         downloadImage: this.deps.downloadImage,
         loadSession: () => loadSession(this.deps.getSessionFilePath()),
         proofDir: this.deps.getProofDir(),

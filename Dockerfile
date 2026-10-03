@@ -18,8 +18,15 @@ FROM node:22-slim AS runner
 
 WORKDIR /app
 
-# Install runtime dependencies for better-sqlite3 and timezone data
-RUN apt-get update && apt-get install -y python3 make g++ tzdata && rm -rf /var/lib/apt/lists/*
+# python3-venv hosts the SIFT matcher. libglib/libgomp are for opencv-python-headless.
+RUN apt-get update && apt-get install -y python3 python3-venv python3-pip make g++ libglib2.0-0 libgomp1 tzdata && rm -rf /var/lib/apt/lists/*
+COPY demo/match-pipeline/requirements.txt /tmp/match-requirements.txt
+RUN python3 -m venv /opt/match \
+  && /opt/match/bin/pip install --no-cache-dir -r /tmp/match-requirements.txt \
+  && rm /tmp/match-requirements.txt
+COPY demo/match-pipeline/pipeline.py demo/match-pipeline/score_cli.py /app/demo/match-pipeline/
+ENV IMAGE_MATCH_PYTHON=/opt/match/bin/python
+ENV IMAGE_MATCH_SCRIPT=/app/demo/match-pipeline/score_cli.py
 
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
@@ -28,20 +35,8 @@ COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node config/ ./config/
 COPY --chown=node:node public/ ./public/
 
-# Tessdata baked into the worker image so first OCR does not download at runtime.
-ENV TESSDATA_PATH=/app/tessdata
-RUN mkdir -p /app/tessdata && node --input-type=module -e '\
-import fs from "fs";\
-const langs = ["eng", "vie"];\
-for (const lang of langs) {\
-  const url = "https://tessdata.projectnaptha.com/4.0.0/" + lang + ".traineddata.gz";\
-  const res = await fetch(url);\
-  if (!res.ok) throw new Error("tessdata " + lang + " HTTP " + res.status);\
-  fs.writeFileSync("/app/tessdata/" + lang + ".traineddata.gz", Buffer.from(await res.arrayBuffer()));\
-}'
-
 # /data is replaced by the Railway volume at runtime (root-owned). entrypoint.sh chowns it.
-RUN mkdir -p /data && chown -R node:node /data /app /app/tessdata
+RUN mkdir -p /data && chown -R node:node /data /app
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
@@ -54,7 +49,6 @@ ENV CONFIG_PATH=./config/schedules.yaml
 ENV TASKPROOF_WORKER_PORT=3001
 ENV ZCA_SESSION_FILE_PATH=/data/zca-session.json
 ENV PROOF_DIR=/data/proofs
-ENV TESSDATA_PATH=/app/tessdata
 
 # Chỉ public cổng official bot. Worker bind 127.0.0.1:3001 trong container.
 EXPOSE 3000

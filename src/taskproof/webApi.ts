@@ -22,11 +22,7 @@ import {
 import { listRecentTasks } from './tasks';
 import { getTaskByExactShortCode } from './commands/shortCode';
 import { kickTaskCompletionReport } from './report';
-import { debugImageParser, sniffImageKind } from './imageKind';
-import { postEnsureListening, postMaybeStop, postOcrDebug } from './workerClient';
-import { matchText, normalizeText } from './worker/match';
-
-const DEBUG_TEXT_MAX = 200_000;
+import { postEnsureListening, postMaybeStop } from './workerClient';
 
 export const taskproofWebRouter = Router();
 
@@ -45,7 +41,6 @@ function parseExcludeUids(raw: unknown): string[] {
 }
 
 const NUMBER_LIMITS: Partial<Record<TaskproofSettingKey, { min: number; max: number }>> = {
-  ocr_match_threshold: { min: 0, max: 1 },
   default_required_count: { min: 1, max: 100 },
   default_deadline_offset_ms: { min: 60_000, max: 7 * 24 * 60 * 60 * 1000 },
   deadline_check_interval_ms: { min: 15_000, max: 60 * 60 * 1000 },
@@ -223,69 +218,6 @@ taskproofWebRouter.post('/api/taskproof/wake-worker', async (_req: Request, res:
       error: message,
       hint: 'Worker không chạy. /gui vẫn dùng được.',
     });
-  }
-});
-
-taskproofWebRouter.post('/api/taskproof/debug-ocr', debugImageParser, async (req: Request, res: Response) => {
-  try {
-    const image = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-    if (image.length === 0) {
-      res.status(400).json({ success: false, error: 'Thiếu ảnh' });
-      return;
-    }
-    if (!sniffImageKind(image)) {
-      res.status(400).json({ success: false, error: 'Chỉ nhận JPEG, PNG hoặc WebP' });
-      return;
-    }
-    const result = await postOcrDebug(image);
-    const body = result.json;
-    if (result.status >= 400 || body.success === false) {
-      res.status(result.status >= 400 ? result.status : 502).json({
-        success: false,
-        error: typeof body.error === 'string' ? body.error : 'OCR thất bại',
-      });
-      return;
-    }
-    const text = typeof body.text === 'string' ? body.text : '';
-    res.json({
-      success: true,
-      text,
-      char_count: typeof body.char_count === 'number' ? body.char_count : text.length,
-      elapsed_ms: typeof body.elapsed_ms === 'number' ? body.elapsed_ms : null,
-    });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    res.status(502).json({
-      success: false,
-      error: 'Không gọi được worker. OCR thử chạy trên cùng Tesseract với /quet, nên worker phải đang lắng nghe.',
-      detail: message,
-    });
-  }
-});
-
-taskproofWebRouter.post('/api/taskproof/debug-match', (req: Request, res: Response) => {
-  try {
-    const ocrText = typeof req.body?.ocr_text === 'string' ? req.body.ocr_text : '';
-    const referenceText = typeof req.body?.reference_text === 'string' ? req.body.reference_text : '';
-    if (!ocrText.trim() || !referenceText.trim()) {
-      res.status(400).json({ success: false, error: 'Cần cả chữ OCR và caption' });
-      return;
-    }
-    if (ocrText.length > DEBUG_TEXT_MAX || referenceText.length > DEBUG_TEXT_MAX) {
-      res.status(400).json({ success: false, error: 'Chữ quá dài' });
-      return;
-    }
-    const threshold = getTaskproofSetting('ocr_match_threshold');
-    const match = matchText(ocrText, referenceText, threshold);
-    res.json({
-      success: true,
-      threshold,
-      match,
-      normalized_ocr: normalizeText(ocrText),
-      normalized_reference: normalizeText(referenceText),
-    });
-  } catch (error: unknown) {
-    handleRouteError(res, error);
   }
 });
 

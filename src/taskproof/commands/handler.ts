@@ -3,7 +3,7 @@
  *
  * Official bot nhận lệnh task-proof.
  * /task /tasks /nhac /huy /dong /quet: chat riêng 1-1 với admin.
- * /lienket vẫn gõ trong nhóm. Worker (OCR, nhắc, báo cáo) không đổi.
+ * /lienket vẫn gõ trong nhóm. Worker đối chiếu ảnh, nhắc, và báo cáo.
  */
 
 import { ZaloClient } from '../../core/zaloClient';
@@ -41,7 +41,6 @@ import {
   postEnsureListening,
   postLinkGroup,
   postMaybeStop,
-  postOcrDebug,
   postRemind,
   postScanHistory,
   EnsureListeningResponse,
@@ -51,10 +50,9 @@ import {
   downloadSampleImage,
   getOpenSample,
   SAMPLE_ASK_REPLY,
+  SAMPLE_CAPTION_FALLBACK,
   SAMPLE_DOWNLOAD_FAIL_REPLY,
-  SAMPLE_EMPTY_OCR_REPLY,
   SAMPLE_NEED_PHOTO_REPLY,
-  SAMPLE_OCR_FAIL_REPLY,
   saveAwaitingSample,
   updateSampleCaption,
   writeAcceptedSample,
@@ -64,7 +62,7 @@ import { isUnsupportedEvent, redactSecrets } from './payload';
 import { getTaskByExactShortCode, TaskShortCodeRow } from './shortCode';
 import { ParseCommandResult, ParsedTaskFields, WebhookInbound } from './types';
 
-export { SAMPLE_ASK_REPLY, SAMPLE_EMPTY_OCR_REPLY, SAMPLE_OCR_FAIL_REPLY, SAMPLE_NEED_PHOTO_REPLY };
+export { SAMPLE_ASK_REPLY, SAMPLE_CAPTION_FALLBACK, SAMPLE_NEED_PHOTO_REPLY };
 
 export {
   GROUP_COMMAND_HINT,
@@ -97,7 +95,6 @@ export interface TaskproofCommandDeps {
   publicBaseUrl?: () => string;
   now?: () => number;
   downloadSampleImage?: (url: string) => Promise<Buffer | null>;
-  ocrSampleImage?: (image: Buffer) => Promise<string>;
   maybeStop?: () => Promise<unknown>;
 }
 
@@ -565,16 +562,6 @@ function isSampleImageMessage(inbound: WebhookInbound): boolean {
   return Boolean(inboundPhotoUrl(inbound));
 }
 
-async function ocrSampleBuffer(image: Buffer, deps: TaskproofCommandDeps): Promise<string> {
-  if (deps.ocrSampleImage) return deps.ocrSampleImage(image);
-  const result = await postOcrDebug(image);
-  if (result.status !== 200 || result.json.success === false) {
-    const error = typeof result.json.error === 'string' ? result.json.error : `ocr_http_${result.status}`;
-    throw new Error(error);
-  }
-  return typeof result.json.text === 'string' ? result.json.text : '';
-}
-
 async function sendSamplePicker(
   inbound: WebhookInbound,
   caption: string,
@@ -634,19 +621,7 @@ async function acceptSamplePhoto(
     await deps.sendMessage(inbound.chatId, downloaded.reply);
     return;
   }
-  let caption = '';
-  try {
-    caption = (await ocrSampleBuffer(downloaded.image, deps)).trim();
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[TaskProof] OCR ảnh mẫu lỗi:', msg);
-    await deps.sendMessage(inbound.chatId, SAMPLE_OCR_FAIL_REPLY);
-    return;
-  }
-  if (!caption) {
-    await deps.sendMessage(inbound.chatId, SAMPLE_EMPTY_OCR_REPLY);
-    return;
-  }
+  const caption = (pending.caption || '').trim() || SAMPLE_CAPTION_FALLBACK;
   const saved = writeAcceptedSample(inbound.chatId, downloaded.image, caption, photoUrl, now);
   if (!saved) {
     await deps.sendMessage(inbound.chatId, 'Hết hạn chờ ảnh mẫu. Gõ /task <link> lại.');

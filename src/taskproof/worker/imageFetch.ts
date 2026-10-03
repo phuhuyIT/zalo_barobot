@@ -1,7 +1,7 @@
 /**
  * imageFetch.ts
  *
- * Tải bytes ảnh từ href, fallback thumb. Không OCR URL sống.
+ * Tải bytes ảnh từ href, fallback thumb.
  * Cookie/UA session zca-js chỉ gửi tới host Zalo. Chặn IP nội bộ (SSRF).
  */
 
