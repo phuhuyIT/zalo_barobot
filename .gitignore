@@ -13,3 +13,4 @@ logs*.json
 zalo-image-test/
 tessdata/
 *.xlsx
+tests/eval_datasets/
