@@ -8,6 +8,7 @@ import { initTaskproofTables } from '../../src/taskproof/store';
 import { setTaskproofSetting } from '../../src/taskproof/settings';
 import { handleTaskproofCommand } from '../../src/taskproof/commands';
 import { extractWebhookInbound } from '../../src/taskproof/commands/payload';
+import { ImageScore } from '../../src/taskproof/worker/imageMatch';
 import { ingestProofImage } from '../../src/taskproof/worker/proofIngest';
 import { WorkerRuntime } from '../../src/taskproof/worker/runtime';
 import {
@@ -55,6 +56,21 @@ function seedOpenTask(
       link, reference_text, required_count, deadline, status, created_at)
      VALUES (?, ?, 'off_group', ?, 'rep', 'https://x', ?, ?, 9_999_999, 'collecting', 10)`
   ).run(opts.id ?? 't1', opts.code ?? 'ABC123', zca, opts.caption ?? 'TEST TASK PROOF OCR', opts.required ?? 5);
+}
+
+function passScore(): Promise<ImageScore> {
+  return Promise.resolve({ score: 1, decision: 'PASS' });
+}
+
+function seedSample(db: Database.Database, proofDir: string, taskId = 't1'): void {
+  const samplePath = path.join(proofDir, taskId, 'sample.jpg');
+  fs.mkdirSync(path.dirname(samplePath), { recursive: true });
+  fs.writeFileSync(samplePath, PNG);
+  db.prepare(
+    `INSERT INTO submissions
+       (id, task_id, uid_from, display_name, image_url, stored_path, match_score, created_at, proof_origin)
+     VALUES (?, ?, 'admin', 'Admin', 'sample://admin', ?, 1, 1, 'sample')`
+  ).run(`sample-${taskId}`, taskId, samplePath);
 }
 
 function inboundImage(overrides: Partial<ZcaInboundMessage> = {}): ZcaInboundMessage {
@@ -155,6 +171,7 @@ describe('task-proof /quet history scan', () => {
     const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
     dirs.push(proofDir);
     seedOpenTask(db, { id: 't1', caption: 'TEST TASK PROOF OCR', required: 20 });
+    seedSample(db, proofDir);
     const messages = Array.from({ length: 20 }, (_, i) =>
       inboundImage({
         msgId: `m${i}`,
@@ -165,7 +182,7 @@ describe('task-proof /quet history scan', () => {
     );
     expect(takeRecentMessages(messages, 5).map((m) => m.msgId)).toEqual(['m15', 'm16', 'm17', 'm18', 'm19']);
 
-    const ocrImage = vi.fn(async () => 'TEST TASK PROOF OCR');
+    const scoreImages = vi.fn(() => passScore());
     const summary = await scanGroupHistoryForTask(
       db,
       {
@@ -178,13 +195,13 @@ describe('task-proof /quet history scan', () => {
       {
         now: () => 10 * 60 * 1000,
         proofDir,
-        ocrImage,
+        scoreImages,
         downloadImage: async () => PNG,
       }
     );
     expect(summary.scanned).toBe(5);
-    expect(ocrImage).toHaveBeenCalledTimes(5);
-    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1' ORDER BY uid_from`).all() as Array<{
+    expect(scoreImages).toHaveBeenCalledTimes(5);
+    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1' AND proof_origin = 'group' ORDER BY uid_from`).all() as Array<{
       uid_from: string;
     }>;
     expect(rows.map((row) => row.uid_from)).toEqual(['u15', 'u16', 'u17', 'u18', 'u19']);
@@ -216,6 +233,7 @@ describe('task-proof /quet history scan', () => {
     dirs.push(proofDir);
     seedOpenTask(db, { id: 't1', caption: 'TEST TASK PROOF OCR' });
     seedOpenTask(db, { id: 't2', code: 'OTH001', caption: 'HOAN TOAN KHAC' });
+    seedSample(db, proofDir, 't1');
 
     const summary = await scanGroupHistoryForTask(
       db,
@@ -229,12 +247,12 @@ describe('task-proof /quet history scan', () => {
       {
         now: () => 10 * 60 * 1000,
         proofDir,
-        ocrImage: async () => 'chrome UI TEST TASK PROOF OCR xem them',
+        scoreImages: () => passScore(),
         downloadImage: async () => PNG,
       }
     );
     expect(summary).toMatchObject({ recorded: 1, scanned: 1, closed: false });
-    const rows = db.prepare(`SELECT task_id FROM submissions`).all() as Array<{ task_id: string }>;
+    const rows = db.prepare(`SELECT task_id FROM submissions WHERE proof_origin = 'group'`).all() as Array<{ task_id: string }>;
     expect(rows).toEqual([{ task_id: 't1' }]);
     db.close();
   });
@@ -244,6 +262,7 @@ describe('task-proof /quet history scan', () => {
     const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
     dirs.push(proofDir);
     seedOpenTask(db, { id: 'old', code: 'OLD001', caption: 'BAI CU' });
+    seedSample(db, proofDir, 'old');
 
     const live = await ingestProofImage(
       db,
@@ -256,13 +275,14 @@ describe('task-proof /quet history scan', () => {
       },
       {
         proofDir,
-        ocrImage: async () => 'TEST TASK PROOF OCR dung caption moi',
+        scoreImages: async () => ({ score: 0.2, decision: 'FAIL' }),
         downloadImage: async () => PNG,
       }
     );
     expect(live).toEqual({ outcome: 'discarded', reason: 'below_threshold' });
 
     seedOpenTask(db, { id: 't1', code: 'ABC123', caption: 'TEST TASK PROOF OCR' });
+    seedSample(db, proofDir, 't1');
     const summary = await scanGroupHistoryForTask(
       db,
       {
@@ -275,12 +295,12 @@ describe('task-proof /quet history scan', () => {
       {
         now: () => 10 * 60 * 1000,
         proofDir,
-        ocrImage: async () => 'TEST TASK PROOF OCR dung caption moi',
+        scoreImages: () => passScore(),
         downloadImage: async () => PNG,
       }
     );
     expect(summary.recorded).toBe(1);
-    const row = db.prepare(`SELECT task_id, uid_from FROM submissions`).get() as {
+    const row = db.prepare(`SELECT task_id, uid_from FROM submissions WHERE proof_origin = 'group'`).get() as {
       task_id: string;
       uid_from: string;
     };
@@ -298,7 +318,6 @@ describe('task-proof /quet history scan', () => {
        VALUES ('s1', 't1', 'u1', 'An', 'https://img', 0.9, 1)`
     ).run();
 
-    const ocrImage = vi.fn(async () => 'TEST TASK PROOF OCR');
     const summary = await scanGroupHistoryForTask(
       db,
       {
@@ -308,10 +327,9 @@ describe('task-proof /quet history scan', () => {
         count: 5,
         messages: [inboundImage({ ts: 8 * 60 * 1000 })],
       },
-      { proofDir, ocrImage, downloadImage: async () => PNG }
+      { proofDir, downloadImage: async () => PNG }
     );
     expect(summary.skipped).toBe(1);
-    expect(ocrImage).not.toHaveBeenCalled();
     db.close();
   });
 
@@ -320,6 +338,7 @@ describe('task-proof /quet history scan', () => {
     const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
     dirs.push(proofDir);
     seedOpenTask(db, { id: 't1', caption: 'TEST TASK PROOF OCR', required: 5 });
+    seedSample(db, proofDir);
 
     const summary = await scanGroupHistoryForTask(
       db,
@@ -336,7 +355,7 @@ describe('task-proof /quet history scan', () => {
       {
         now: () => 10 * 60 * 1000,
         proofDir,
-        ocrImage: async () => 'TEST TASK PROOF OCR',
+        scoreImages: () => passScore(),
         downloadImage: async () => PNG,
       }
     );
@@ -345,7 +364,7 @@ describe('task-proof /quet history scan', () => {
     expect(summary.recorded).toBe(1);
     expect(summary.skipped).toBe(1);
 
-    const rows = db.prepare(`SELECT task_id, uid_from FROM submissions WHERE task_id = 't1'`).all() as Array<{
+    const rows = db.prepare(`SELECT task_id, uid_from FROM submissions WHERE task_id = 't1' AND proof_origin = 'group'`).all() as Array<{
       task_id: string;
       uid_from: string;
     }>;
@@ -354,7 +373,7 @@ describe('task-proof /quet history scan', () => {
     db.close();
   });
 
-  it('filters out bot uids and uid=0 from lookback images and OCR', async () => {
+  it('filters out bot uids and uid=0 from lookback images', async () => {
     const db = openDb();
     const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
     dirs.push(proofDir);
@@ -363,7 +382,8 @@ describe('task-proof /quet history scan', () => {
     setTaskproofSetting('official_bot_uid', 'bot_official', db);
     setTaskproofSetting('remind_exclude_uids', ['excluded_user'], db);
 
-    const ocrImage = vi.fn(async () => 'TEST TASK PROOF OCR');
+    seedSample(db, proofDir);
+    const scoreImages = vi.fn(() => passScore());
     const summary = await scanGroupHistoryForTask(
       db,
       {
@@ -382,16 +402,16 @@ describe('task-proof /quet history scan', () => {
       {
         now: () => 10 * 60 * 1000,
         proofDir,
-        ocrImage,
+        scoreImages,
         downloadImage: async () => PNG,
       }
     );
 
     expect(summary.scanned).toBe(1);
     expect(summary.recorded).toBe(1);
-    expect(ocrImage).toHaveBeenCalledTimes(1);
+    expect(scoreImages).toHaveBeenCalledTimes(1);
 
-    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1'`).all() as Array<{
+    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1' AND proof_origin = 'group'`).all() as Array<{
       uid_from: string;
     }>;
     expect(rows).toEqual([{ uid_from: 'valid_user' }]);
@@ -403,8 +423,9 @@ describe('task-proof /quet history scan', () => {
     const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-'));
     dirs.push(proofDir);
     seedOpenTask(db, { id: 't1', caption: 'TEST TASK PROOF OCR', required: 5 });
+    seedSample(db, proofDir);
 
-    const ocrImage = vi.fn(async () => 'TEST TASK PROOF OCR');
+    const scoreImages = vi.fn(() => passScore());
     const summary = await scanGroupHistoryForTask(
       db,
       {
@@ -420,16 +441,16 @@ describe('task-proof /quet history scan', () => {
       {
         now: () => 10 * 60 * 1000,
         proofDir,
-        ocrImage,
+        scoreImages,
         downloadImage: async () => PNG,
       }
     );
 
     expect(summary.scanned).toBe(2);
     expect(summary.recorded).toBe(2);
-    expect(ocrImage).toHaveBeenCalledTimes(2);
+    expect(scoreImages).toHaveBeenCalledTimes(2);
 
-    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1' ORDER BY uid_from`).all() as Array<{
+    const rows = db.prepare(`SELECT uid_from FROM submissions WHERE task_id = 't1' AND proof_origin = 'group' ORDER BY uid_from`).all() as Array<{
       uid_from: string;
     }>;
     expect(rows).toEqual([{ uid_from: '10001' }, { uid_from: '10002' }]);
@@ -455,7 +476,6 @@ describe('task-proof /quet history scan', () => {
       getAdminChatId: () => 'admin',
       getPublicBaseUrl: () => 'https://example.test',
       getProofDir: () => '/dev/null',
-      ocrImage: async () => '',
       downloadImage: async () => PNG,
       postScanResult: async () => ({}),
       kickReport: async () => undefined,
@@ -463,16 +483,16 @@ describe('task-proof /quet history scan', () => {
     });
 
     const selfRes = runtime.handleZcaMessage(inboundImage({ uidFrom: '0' }));
-    expect(selfRes.ocr).toBe(false);
+    expect(selfRes.proof).toBe(false);
 
     const botRes = runtime.handleZcaMessage(inboundImage({ uidFrom: 'bot_zca' }));
-    expect(botRes.ocr).toBe(false);
+    expect(botRes.proof).toBe(false);
 
     const cached = db.prepare(`SELECT user_id FROM group_members_cache WHERE zca_group_id = 'zgr-1'`).all();
     expect(cached).toEqual([]);
 
     const validRes = runtime.handleZcaMessage(inboundImage({ uidFrom: 'valid_user', displayName: 'Valid' }));
-    expect(validRes.ocr).toBe(true);
+    expect(validRes.proof).toBe(true);
 
     const cachedAfter = db.prepare(`SELECT user_id FROM group_members_cache WHERE zca_group_id = 'zgr-1'`).all();
     expect(cachedAfter).toEqual([{ user_id: 'valid_user' }]);
@@ -480,11 +500,12 @@ describe('task-proof /quet history scan', () => {
     db.close();
   });
 
-  it('runtime fetch + OCR posts scan-result and can close quota', async () => {
+  it('runtime fetch posts scan-result and can close quota', async () => {
     const db = openDb();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-rt-'));
     dirs.push(dir);
     seedOpenTask(db, { required: 1 });
+    seedSample(db, dir);
     saveSession({ cookie: [], imei: 'i', userAgent: 'ua' }, path.join(dir, 'zca-session.json'));
     const postScanResult = vi.fn().mockResolvedValue({});
     const kickReport = vi.fn().mockResolvedValue(undefined);
@@ -504,7 +525,7 @@ describe('task-proof /quet history scan', () => {
       getAdminChatId: () => 'admin',
       getPublicBaseUrl: () => 'https://example.test',
       getProofDir: () => dir,
-      ocrImage: async () => 'TEST TASK PROOF OCR',
+      scoreImages: () => passScore(),
       downloadImage: async () => PNG,
       postScanResult,
       kickReport,

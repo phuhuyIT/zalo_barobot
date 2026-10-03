@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sniffImageKind } from '../../src/taskproof/imageKind';
 
-describe('debug image sniff', () => {
+describe('image kind sniff', () => {
   it('accepts jpeg, png, and webp magic bytes', () => {
     const png = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',

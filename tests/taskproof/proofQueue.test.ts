@@ -12,6 +12,7 @@ import {
   isImageHref,
   isZaloMediaHost,
 } from '../../src/taskproof/worker/imageFetch';
+import { ImageScore } from '../../src/taskproof/worker/imageMatch';
 import { ingestProofImage } from '../../src/taskproof/worker/proofIngest';
 import { WorkerRuntime } from '../../src/taskproof/worker/runtime';
 import { saveSession } from '../../src/taskproof/worker/session';
@@ -65,6 +66,21 @@ function seedOpenTask(
   );
 }
 
+function passScore(): Promise<ImageScore> {
+  return Promise.resolve({ score: 1, decision: 'PASS' });
+}
+
+function seedSample(db: Database.Database, proofDir: string, taskId = 't1'): void {
+  const samplePath = path.join(proofDir, taskId, 'sample.jpg');
+  fs.mkdirSync(path.dirname(samplePath), { recursive: true });
+  fs.writeFileSync(samplePath, PNG);
+  db.prepare(
+    `INSERT INTO submissions
+       (id, task_id, uid_from, display_name, image_url, stored_path, match_score, created_at, proof_origin)
+     VALUES (?, ?, 'admin', 'Admin', 'sample://admin', ?, 1, 1, 'sample')`
+  ).run(`sample-${taskId}`, taskId, samplePath);
+}
+
 function proofImage(overrides: Partial<Parameters<typeof ingestProofImage>[1]> = {}) {
   return {
     threadId: 'zgr-1',
@@ -76,7 +92,7 @@ function proofImage(overrides: Partial<Parameters<typeof ingestProofImage>[1]> =
   };
 }
 
-describe('task-proof OCR queue + file store + quota (Step 9)', () => {
+describe('task-proof image queue + file store + quota (Step 9)', () => {
   const dirs: string[] = [];
 
   afterEach(() => {
@@ -89,13 +105,14 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-'));
     dirs.push(proofDir);
     seedOpenTask(db, { required: 1 });
+    seedSample(db, proofDir);
 
     const kickReport = vi.fn().mockResolvedValue(undefined);
     const result = await ingestProofImage(db, proofImage(), {
       now: () => 100,
       proofDir,
       newId: () => 'sub-1',
-      ocrImage: async () => 'chrome UI TEST TASK PROOF OCR xem them',
+      scoreImages: () => passScore(),
       downloadImage: async () => PNG,
       kickReport,
     });
@@ -119,60 +136,87 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     db.close();
   });
 
-  it('does not claim processed_messages when OCR returns empty text', async () => {
+  it('does not claim processed_messages when the open task has no sample image', async () => {
     const db = openDb();
     seedOpenTask(db);
     const result = await ingestProofImage(db, proofImage(), {
-      ocrImage: async () => '   ',
+      scoreImages: () => passScore(),
       downloadImage: async () => PNG,
       proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
     });
-    expect(result).toEqual({ outcome: 'discarded', reason: 'ocr_empty' });
+    expect(result).toEqual({ outcome: 'discarded', reason: 'no_reference' });
     expect((db.prepare(`SELECT COUNT(*) AS n FROM processed_messages`).get() as { n: number }).n).toBe(0);
     db.close();
   });
 
-  it('does not claim processed_messages when OCR fails so a retry can run', async () => {
+  it('scores a group photo against tasks.sample_stored_path with no sample submission', async () => {
     const db = openDb();
-    seedOpenTask(db);
-    const ocrImage = vi.fn(async () => {
-      throw new Error('tesseract down');
+    const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-'));
+    dirs.push(proofDir);
+    seedOpenTask(db, { required: 5 });
+    const samplePath = path.join(proofDir, 't1', 'sample.jpg');
+    fs.mkdirSync(path.dirname(samplePath), { recursive: true });
+    fs.writeFileSync(samplePath, PNG);
+    db.prepare(`UPDATE tasks SET sample_stored_path = ? WHERE id = 't1'`).run(samplePath);
+
+    const result = await ingestProofImage(db, proofImage(), {
+      now: () => 100,
+      proofDir,
+      newId: () => 'sub-1',
+      scoreImages: () => passScore(),
+      downloadImage: async () => PNG,
     });
 
+    expect(result).toMatchObject({ outcome: 'recorded', taskId: 't1', submissionId: 'sub-1', score: 1 });
+    db.close();
+  });
+
+  it('does not claim processed_messages when image match fails so a retry can run', async () => {
+    const db = openDb();
+    const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-'));
+    dirs.push(proofDir);
+    seedOpenTask(db);
+    seedSample(db, proofDir);
+    const scoreImages = vi.fn<() => Promise<ImageScore>>();
+    scoreImages.mockRejectedValueOnce(new Error('opencv down'));
+
     const first = await ingestProofImage(db, proofImage(), {
-      ocrImage,
+      scoreImages,
       downloadImage: async () => PNG,
-      proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
+      proofDir,
     });
-    expect(first).toEqual({ outcome: 'discarded', reason: 'ocr_failed' });
-    expect(ocrImage).toHaveBeenCalledOnce();
+    expect(first).toEqual({ outcome: 'discarded', reason: 'image_match_failed' });
+    expect(scoreImages).toHaveBeenCalledOnce();
     const claimed = (
       db.prepare(`SELECT COUNT(*) AS n FROM processed_messages`).get() as { n: number }
     ).n;
     expect(claimed).toBe(0);
 
-    ocrImage.mockClear();
-    ocrImage.mockResolvedValueOnce('TEST TASK PROOF OCR');
+    scoreImages.mockReset();
+    scoreImages.mockResolvedValueOnce({ score: 1, decision: 'PASS' });
     const retry = await ingestProofImage(db, proofImage(), {
-      ocrImage,
+      scoreImages,
       downloadImage: async () => PNG,
-      proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
+      proofDir,
     });
     expect(retry.outcome).toBe('recorded');
-    expect(ocrImage).toHaveBeenCalledOnce();
+    expect(scoreImages).toHaveBeenCalledOnce();
     db.close();
   });
 
   it('discards below-threshold images with no submission and no task change', async () => {
     const db = openDb();
+    const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-'));
+    dirs.push(proofDir);
     seedOpenTask(db, { caption: 'BỘ TƯ LỆNH THÀNH PHỐ CỤM THI ĐUA' });
+    seedSample(db, proofDir);
     const result = await ingestProofImage(db, proofImage(), {
-      ocrImage: async () => 'hoan toan khac bai viet nay',
+      scoreImages: async () => ({ score: 0.2, decision: 'FAIL' }),
       downloadImage: async () => PNG,
-      proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
+      proofDir,
     });
     expect(result).toEqual({ outcome: 'discarded', reason: 'below_threshold' });
-    expect((db.prepare(`SELECT COUNT(*) AS n FROM submissions`).get() as { n: number }).n).toBe(0);
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM submissions WHERE proof_origin = 'group'`).get() as { n: number }).n).toBe(0);
     expect(
       (db.prepare(`SELECT status FROM tasks WHERE id = 't1'`).get() as { status: string }).status
     ).toBe('collecting');
@@ -185,12 +229,14 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     dirs.push(proofDir);
     seedOpenTask(db, { id: 'early', code: 'EAR001', caption: 'SAME CAPTION', createdAt: 1, required: 5 });
     seedOpenTask(db, { id: 'late', code: 'LAT001', caption: 'SAME CAPTION', createdAt: 2, required: 5 });
+    seedSample(db, proofDir, 'early');
+    seedSample(db, proofDir, 'late');
 
     const first = await ingestProofImage(db, proofImage({ msgId: 'm1' }), {
       now: () => 50,
       proofDir,
       newId: () => 'keep-id',
-      ocrImage: async () => 'SAME CAPTION',
+      scoreImages: () => passScore(),
       downloadImage: async () => PNG,
     });
     expect(first).toMatchObject({ outcome: 'recorded', taskId: 'early', submissionId: 'keep-id', closed: false });
@@ -200,12 +246,12 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
       now: () => 60,
       proofDir,
       newId: () => 'should-not-use',
-      ocrImage: async () => 'SAME CAPTION',
+      scoreImages: () => passScore(),
       downloadImage: async () => bigger,
     });
     expect(second).toMatchObject({ outcome: 'recorded', taskId: 'early', submissionId: 'keep-id' });
 
-    const rows = db.prepare(`SELECT id, task_id, uid_from, match_score FROM submissions`).all();
+    const rows = db.prepare(`SELECT id, task_id, uid_from, match_score FROM submissions WHERE proof_origin = 'group'`).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 'keep-id', task_id: 'early', uid_from: 'u1' });
     expect(fs.readFileSync(path.join(proofDir, 'early', 'keep-id.jpg')).equals(bigger)).toBe(true);
@@ -229,7 +275,7 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     const second = await ingestProofImage(db, proofImage({ msgId: 'm2' }), {
       now: () => 60,
       proofDir,
-      ocrImage: async () => 'SAME CAPTION',
+      scoreImages: () => passScore(),
       downloadImage: async () => PNG,
     });
     expect(second).toEqual({ outcome: 'skipped', reason: 'already_submitted' });
@@ -242,16 +288,13 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     db.close();
   });
 
-  it('does not OCR an unmapped group and does not claim processed_messages', async () => {
+  it('does not score an unmapped group and does not claim processed_messages', async () => {
     const db = openDb();
     seedOpenTask(db, { zca: 'zgr-known' });
-    const ocrImage = vi.fn(async () => 'TEST TASK PROOF OCR');
     const result = await ingestProofImage(db, proofImage({ threadId: 'zgr-unknown' }), {
-      ocrImage,
       downloadImage: async () => PNG,
     });
     expect(result).toEqual({ outcome: 'skipped', reason: 'unmapped_or_closed' });
-    expect(ocrImage).not.toHaveBeenCalled();
     expect((db.prepare(`SELECT COUNT(*) AS n FROM processed_messages`).get() as { n: number }).n).toBe(0);
     db.close();
   });
@@ -326,7 +369,7 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     expect(isZaloMediaHost('cdn.example')).toBe(false);
   });
 
-  it('treats chat.link preview cards as not screenshots and does not OCR them', () => {
+  it('treats chat.link preview cards as not screenshots and does not score them', () => {
     const card = normalizeZcaInbound({
       type: 1,
       threadId: 'zgr-1',
@@ -350,7 +393,6 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
   it('handleZcaMessage skips link preview cards (not proof)', async () => {
     const db = openDb();
     seedOpenTask(db, { required: 1, link: 'https://www.facebook.com/share/v/1FS7f9MknZ/' });
-    const ocrImage = vi.fn(async () => 'should not run');
     const runtime = new WorkerRuntime({
       db,
       loginPort: {
@@ -362,7 +404,6 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
       now: () => 1_000,
       getAdminChatId: () => 'admin',
       getPublicBaseUrl: () => 'https://example.test',
-      ocrImage,
     });
     const handled = runtime.handleZcaMessage({
       threadId: 'zgr-1',
@@ -375,9 +416,8 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
       msgId: 'card-1',
       uidFrom: 'u4',
     });
-    expect(handled.ocr).toBe(false);
+    expect(handled.proof).toBe(false);
     expect(handled.job).toBeUndefined();
-    expect(ocrImage).not.toHaveBeenCalled();
     db.close();
   });
 
@@ -416,13 +456,14 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     seedOpenTask(db);
     const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-'));
     dirs.push(proofDir);
+    seedSample(db, proofDir);
     const urls: string[] = [];
     const result = await ingestProofImage(
       db,
       proofImage({ href: 'https://cdn.example/href.jpg', thumb: 'https://cdn.example/thumb.jpg' }),
       {
         proofDir,
-        ocrImage: async () => 'TEST TASK PROOF OCR',
+        scoreImages: () => passScore(),
         downloadImage: async (url) => {
           urls.push(url);
           if (url.includes('href')) return null;
@@ -441,6 +482,7 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
     const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-sess-'));
     dirs.push(proofDir, sessionDir);
     seedOpenTask(db, { required: 1 });
+    seedSample(db, proofDir);
     saveSession({ cookie: [], imei: 'i', userAgent: 'ua' }, path.join(sessionDir, 'zca-session.json'));
 
     const logout = vi.fn();
@@ -459,7 +501,7 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
       getPublicBaseUrl: () => 'https://example.test',
       getProofDir: () => proofDir,
       scheduleInterval: () => () => undefined,
-      ocrImage: async () => 'TEST TASK PROOF OCR',
+      scoreImages: () => passScore(),
       downloadImage: async () => PNG,
       kickReport: vi.fn().mockResolvedValue(undefined),
     });
@@ -476,7 +518,7 @@ describe('task-proof OCR queue + file store + quota (Step 9)', () => {
       uidFrom: 'u9',
       href: 'https://cdn.example/p.jpg',
     });
-    expect(handled.ocr).toBe(true);
+    expect(handled.proof).toBe(true);
     const job = await handled.job;
     expect(job).toMatchObject({ outcome: 'recorded', closed: true });
     expect(runtime.isLoggedIn()).toBe(false);

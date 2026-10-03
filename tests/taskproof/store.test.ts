@@ -117,7 +117,6 @@ describe('task-proof settings reader (Step 2)', () => {
   });
 
   it('seeds in-code defaults when rows are missing', () => {
-    expect(getTaskproofSetting('ocr_match_threshold', db)).toBe(0.5);
     expect(getTaskproofSetting('default_required_count', db)).toBe(12);
     expect(getTaskproofSetting('default_deadline_offset_ms', db)).toBe(3_600_000);
     expect(getTaskproofSetting('link_pending_ms', db)).toBe(120_000);
@@ -126,11 +125,11 @@ describe('task-proof settings reader (Step 2)', () => {
   });
 
   it('lets DB values override in-code defaults', () => {
-    setTaskproofSetting('ocr_match_threshold', 0.8, db);
+    setTaskproofSetting('default_deadline_offset_ms', 5_000, db);
     setTaskproofSetting('max_mentions_per_message', 12, db);
     setTaskproofSetting('remind_exclude_uids', ['111', '222'], db);
 
-    expect(getTaskproofSetting('ocr_match_threshold', db)).toBe(0.8);
+    expect(getTaskproofSetting('default_deadline_offset_ms', db)).toBe(5_000);
     expect(getTaskproofSetting('max_mentions_per_message', db)).toBe(12);
     expect(getTaskproofSetting('remind_exclude_uids', db)).toEqual(['111', '222']);
     expect(getTaskproofSetting('default_required_count', db)).toBe(12);
@@ -154,9 +153,9 @@ describe('task-proof settings reader (Step 2)', () => {
   it('falls back to default when stored JSON is the wrong type', () => {
     db.prepare(`UPDATE taskproof_settings SET value_json = ? WHERE key = ?`).run(
       '"not-a-number"',
-      'ocr_match_threshold'
+      'default_required_count'
     );
-    expect(getTaskproofSetting('ocr_match_threshold', db)).toBe(0.5);
+    expect(getTaskproofSetting('default_required_count', db)).toBe(12);
   });
 
   it('copies recipients.admin into admin_official_chat_id when empty', () => {

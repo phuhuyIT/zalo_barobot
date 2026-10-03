@@ -8,12 +8,9 @@ import { initTaskproofTables } from '../../src/taskproof/store';
 import { taskproofWebRouter } from '../../src/taskproof/webApi';
 import { getTaskproofSetting, setTaskproofSetting } from '../../src/taskproof/settings';
 import { kickTaskCompletionReport } from '../../src/taskproof/report';
-import { postOcrDebug } from '../../src/taskproof/workerClient';
-
 vi.mock('../../src/taskproof/workerClient', () => ({
   postEnsureListening: vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} }),
   postMaybeStop: vi.fn().mockResolvedValue({ status: 200, json: {} }),
-  postOcrDebug: vi.fn(),
 }));
 
 vi.mock('../../src/taskproof/report', () => ({
@@ -57,7 +54,7 @@ describe('Task-proof Web UI API (Step 12)', () => {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ocr_match_threshold: 0.7,
+        default_required_count: 8,
         default_report_group_id: 'rep_group',
         remind_exclude_uids: 'uid_a, uid_b',
         INTERNAL_API_KEY: 'should-not-store',
@@ -67,11 +64,11 @@ describe('Task-proof Web UI API (Step 12)', () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.success).toBe(true);
-    expect(data.settings.ocr_match_threshold).toBe(0.7);
+    expect(data.settings.default_required_count).toBe(8);
     expect(data.settings.default_report_group_id).toBe('rep_group');
     expect(data.settings.remind_exclude_uids).toEqual(['uid_a', 'uid_b']);
     expect(data.settings.INTERNAL_API_KEY).toBeUndefined();
-    expect(getTaskproofSetting('ocr_match_threshold', db)).toBe(0.7);
+    expect(getTaskproofSetting('default_required_count', db)).toBe(8);
   });
 
   it('clamps numeric UI settings to safe ranges', async () => {
@@ -79,14 +76,12 @@ describe('Task-proof Web UI API (Step 12)', () => {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ocr_match_threshold: 9,
         default_required_count: 0,
         max_mentions_per_message: 99,
       }),
     });
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.settings.ocr_match_threshold).toBe(1);
     expect(data.settings.default_required_count).toBe(1);
     expect(data.settings.max_mentions_per_message).toBe(20);
   });
@@ -164,86 +159,4 @@ describe('Task-proof Web UI API (Step 12)', () => {
     expect(huyRow.status).toBe('cancelled');
   });
 
-  it('proxies a proof image to the worker OCR and returns the raw text', async () => {
-    const png = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-      'base64'
-    );
-    vi.mocked(postOcrDebug).mockResolvedValue({
-      status: 200,
-      json: { success: true, text: 'DÒNG 1\nDÒNG 2', char_count: 13, elapsed_ms: 12 },
-    });
-
-    const res = await fetch(`${baseUrl}/api/taskproof/debug-ocr`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'image/png' },
-      body: png,
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data).toMatchObject({ success: true, text: 'DÒNG 1\nDÒNG 2', elapsed_ms: 12 });
-    const sent = vi.mocked(postOcrDebug).mock.calls[0][0];
-    expect(Buffer.isBuffer(sent) || sent instanceof Uint8Array).toBe(true);
-    expect(Buffer.from(sent).equals(png)).toBe(true);
-    expect(db.prepare(`SELECT COUNT(*) AS n FROM tasks`).get()).toEqual({ n: 0 });
-  });
-
-  it('rejects a non-image debug upload before calling the worker', async () => {
-    vi.mocked(postOcrDebug).mockClear();
-    const res = await fetch(`${baseUrl}/api/taskproof/debug-ocr`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: Buffer.from('not-an-image'),
-    });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ success: false });
-    expect(postOcrDebug).not.toHaveBeenCalled();
-  });
-
-  it('returns 502 when the worker OCR endpoint is down', async () => {
-    const png = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-      'base64'
-    );
-    vi.mocked(postOcrDebug).mockRejectedValue(new Error('worker_unreachable: connect ECONNREFUSED'));
-    const res = await fetch(`${baseUrl}/api/taskproof/debug-ocr`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'image/png' },
-      body: png,
-    });
-    expect(res.status).toBe(502);
-    const data = await res.json();
-    expect(data.success).toBe(false);
-    expect(String(data.error)).toContain('worker');
-  });
-
-  it('scores OCR text against a caption with the saved threshold', async () => {
-    setTaskproofSetting('ocr_match_threshold', 0.99, db);
-    const hit = await fetch(`${baseUrl}/api/taskproof/debug-match`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ocr_text: 'BỘ TƯ LỆNH THÀNH PHỐ',
-        reference_text: 'Bộ Tư lệnh thành phố',
-      }),
-    });
-    expect(hit.status).toBe(200);
-    const hitJson = await hit.json();
-    expect(hitJson.threshold).toBe(0.99);
-    expect(hitJson.match).toMatchObject({ score: 1, isMatch: true, matchType: 'exact' });
-    expect(hitJson.normalized_ocr).toBe('bo tu lenh thanh pho');
-    expect(hitJson.normalized_reference).toBe('bo tu lenh thanh pho');
-
-    const miss = await fetch(`${baseUrl}/api/taskproof/debug-match`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ocr_text: 'hoan toan khac',
-        reference_text: 'Bộ Tư lệnh thành phố khởi công nhà tình nghĩa',
-      }),
-    });
-    const missJson = await miss.json();
-    expect(missJson.match.isMatch).toBe(false);
-    expect(missJson.threshold).toBe(0.99);
-  });
 });

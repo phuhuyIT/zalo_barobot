@@ -5,7 +5,7 @@ import { initTaskproofTables } from '../../src/taskproof/store';
 import { handleTaskproofCommand } from '../../src/taskproof/commands';
 import { extractWebhookInbound } from '../../src/taskproof/commands/payload';
 import { WorkerRuntime } from '../../src/taskproof/worker/runtime';
-import { shouldOcrZcaGroup } from '../../src/taskproof/worker/groupMap';
+import { shouldScoreZcaGroup } from '../../src/taskproof/worker/groupMap';
 import { ZcaLoginPort } from '../../src/taskproof/worker/zcaAdapter';
 
 function inboundFrom(body: unknown) {
@@ -188,22 +188,22 @@ describe('task-proof /lienket (Step 6)', () => {
     db.close();
   });
 
-  it('does not OCR an unmapped group', () => {
+  it('does not score an unmapped group', () => {
     const db = openDb();
-    expect(shouldOcrZcaGroup(db, 'zgr-unknown')).toBe(false);
+    expect(shouldScoreZcaGroup(db, 'zgr-unknown')).toBe(false);
 
     db.prepare(
       `INSERT INTO group_id_map (official_chat_id, zca_group_id, display_name, linked_at)
        VALUES ('off', 'zgr-known', 'G', 1)`
     ).run();
-    expect(shouldOcrZcaGroup(db, 'zgr-known')).toBe(false);
+    expect(shouldScoreZcaGroup(db, 'zgr-known')).toBe(false);
 
     db.prepare(
       `INSERT INTO tasks (id, short_code, official_chat_id, zca_group_id, report_group_id,
         link, reference_text, required_count, deadline, status, created_at)
        VALUES ('t1', 'ABC123', 'off', 'zgr-known', 'rep', 'https://x', 'c', 1, 0, 'collecting', 0)`
     ).run();
-    expect(shouldOcrZcaGroup(db, 'zgr-known')).toBe(true);
+    expect(shouldScoreZcaGroup(db, 'zgr-known')).toBe(true);
 
     const runtime = new WorkerRuntime({ db, loginPort: muteLogin });
     const img = runtime.handleZcaMessage({
@@ -213,7 +213,7 @@ describe('task-proof /lienket (Step 6)', () => {
       displayName: 'x',
       hasImage: true,
     });
-    expect(img.ocr).toBe(false);
+    expect(img.proof).toBe(false);
     db.close();
   });
 
