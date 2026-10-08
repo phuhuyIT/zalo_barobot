@@ -85,6 +85,36 @@ describe('Webhook Channel Authentication & Handling', () => {
     vi.restoreAllMocks();
   });
 
+  it('accepts the Zalo header X-Bot-Api-Secret-Token in production', async () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const ok = await fetch(`${baseUrl}/webhook/zalo`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Bot-Api-Secret-Token': 'test_secret_123',
+        },
+        body: JSON.stringify({
+          message: { text: 'tuantra Văn A', chat: { id: 'group_123' }, from: { id: 'user_1' } },
+        }),
+      });
+      expect(ok.status).toBe(200);
+
+      const missing = await fetch(`${baseUrl}/webhook/zalo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: { text: 'tuantra Văn A', chat: { id: 'group_123' }, from: { id: 'user_1' } },
+        }),
+      });
+      expect(missing.status).toBe(403);
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
+  });
+
   it('accepts valid secret token in x-bot-secret-token header', async () => {
     const res = await fetch(`${baseUrl}/webhook/zalo`, {
       method: 'POST',

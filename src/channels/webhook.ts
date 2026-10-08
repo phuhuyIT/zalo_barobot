@@ -60,6 +60,7 @@ webhookRouter.post('/webhook/zalo', async (req: Request, res: Response) => {
   }
   if (webhookSecret) {
     const rawSecret =
+      req.headers['x-bot-api-secret-token'] ||
       req.headers['x-bot-secret-token'] ||
       req.headers['x-zalo-bot-secret-token'] ||
       req.headers['x-telegram-bot-api-secret-token'] ||
