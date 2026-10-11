@@ -7,13 +7,13 @@
  */
 
 import Database from 'better-sqlite3';
-import { getRecipientChatId } from '../config';
-import { ZaloClient } from '../core/zaloClient';
-import { getDatabase } from '../store';
-import { getWorkerOrigin } from './env';
-import { countLinkedOpenTasks } from './lifecycle';
-import { getTaskproofSetting } from './settings';
-import { listMissingTaskproofTables } from './store';
+import { getRecipientChatId } from '../../config';
+import { ZaloClient } from '../../core/zaloClient';
+import { getDatabase } from '../../store';
+import { getWorkerOrigin } from '../env';
+import { countLinkedOpenTasks } from '../records/lifecycle';
+import { getTaskproofSetting } from '../records/settings';
+import { listMissingTaskproofTables } from '../records/store';
 
 export interface WorkerHealthDeps {
   probe?: () => Promise<boolean>;

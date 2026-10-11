@@ -1,11 +1,11 @@
 /**
- * patrol.parser.ts
+ * parser.ts
  *
  * Phân tích và chuẩn hóa lệnh `tuantra` từ Tiểu đội trưởng Tiểu đội 1.
  * Đáp ứng các yêu cầu Mục 5, 6, 7 và Test 1 - 4.
  */
 
-import { ParsePatrolCommandResult, PatrolMember } from './patrol.types';
+import { ParsePatrolCommandResult, PatrolMember } from './types';
 
 /**
  * Loại bỏ dấu tiếng Việt, chuyển chữ thường và chuẩn hóa khoảng trắng để so khớp.

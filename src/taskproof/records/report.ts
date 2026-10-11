@@ -11,9 +11,9 @@
  */
 
 import Database from 'better-sqlite3';
-import { getDatabase } from '../store';
-import { ZaloClient } from '../core/zaloClient';
-import { buildTokenGatedUrl, getProofDir } from './env';
+import { getDatabase } from '../../store';
+import { ZaloClient } from '../../core/zaloClient';
+import { buildTokenGatedUrl, getProofDir } from '../env';
 import { deleteTaskProofDir } from './lifecycle';
 import { getTaskproofSetting } from './settings';
 import { listMissingTaskproofTables } from './store';

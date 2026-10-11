@@ -8,7 +8,7 @@
  */
 
 import Database from 'better-sqlite3';
-import { getTaskproofSetting } from '../settings';
+import { getTaskproofSetting } from '../records/settings';
 import { ZcaGroupInfoSnapshot, ZcaLoginPort, ZcaMemberProfile } from './zcaAdapter';
 
 export interface CachedMember {

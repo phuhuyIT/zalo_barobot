@@ -5,7 +5,7 @@
  * được treo chờ người quét QR (ensure-listening trả qr_required ngay).
  */
 
-import { getInternalApiKey, getWorkerOrigin } from './env';
+import { getInternalApiKey, getWorkerOrigin } from '../env';
 
 export type EnsureListeningState =
   | 'listening'

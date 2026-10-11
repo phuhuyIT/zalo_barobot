@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables } from '../../src/store';
-import { initTaskproofTables } from '../../src/taskproof/store';
-import { setTaskproofSetting } from '../../src/taskproof/settings';
+import { initTaskproofTables } from '../../src/taskproof/records/store';
+import { setTaskproofSetting } from '../../src/taskproof/records/settings';
 import {
   formatTasksListReply,
   insertNewTask,
   listOpenTasks,
   resolveTaskDeadline,
-} from '../../src/taskproof/tasks';
+} from '../../src/taskproof/records/tasks';
 
 function openDb(): Database.Database {
   const db = new Database(':memory:');

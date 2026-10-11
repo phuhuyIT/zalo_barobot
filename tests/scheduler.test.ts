@@ -3,7 +3,7 @@ import { runDueJobs } from '../src/channels/scheduler';
 import { ZaloClient } from '../src/core/zaloClient';
 import * as configModule from '../src/config';
 import * as storeModule from '../src/store';
-import { initTaskproofTables } from '../src/taskproof/store';
+import { initTaskproofTables } from '../src/taskproof/records/store';
 import Database from 'better-sqlite3';
 
 describe('Scheduler runDueJobs() reminders and failure alert', () => {

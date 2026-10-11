@@ -8,7 +8,7 @@
 
 import dotenv from 'dotenv';
 import { getWorkerPort, WORKER_BIND_HOST } from '../env';
-import { closeWorkerDatabase, getWorkerDatabase } from '../store';
+import { closeWorkerDatabase, getWorkerDatabase } from '../records/store';
 import { createWorkerApp, startWorkerHttp } from './http';
 dotenv.config();
 process.env.TZ = process.env.TZ || 'Asia/Ho_Chi_Minh';

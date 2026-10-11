@@ -8,7 +8,7 @@
 
 import { Request, Response } from 'express';
 import crypto from 'crypto';
-import { getInternalApiKey, PROOF_URL_TTL_MS, QR_URL_TTL_MS } from './env';
+import { getInternalApiKey, PROOF_URL_TTL_MS, QR_URL_TTL_MS } from '../env';
 
 export { PROOF_URL_TTL_MS, QR_URL_TTL_MS };
 

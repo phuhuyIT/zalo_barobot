@@ -25,9 +25,9 @@ import {
   resolveGroupChoice,
   updateOpenPickCaption,
 } from '../groupPick';
-import { cancelTask, completeTask } from '../lifecycle';
-import { kickTaskCompletionReport, TaskReportResult } from '../report';
-import { getTaskproofSetting } from '../settings';
+import { cancelTask, completeTask } from '../records/lifecycle';
+import { kickTaskCompletionReport, TaskReportResult } from '../records/report';
+import { getTaskproofSetting } from '../records/settings';
 import {
   formatTasksListReply,
   insertNewTask,
@@ -35,7 +35,7 @@ import {
   InsertTaskInput,
   listOpenTasks,
   TaskListRow,
-} from '../tasks';
+} from '../records/tasks';
 import { historyFetchCount } from '../quet';
 import {
   postEnsureListening,
@@ -44,7 +44,7 @@ import {
   postRemind,
   postScanHistory,
   EnsureListeningResponse,
-} from '../workerClient';
+} from '../http/workerClient';
 import {
   clearSamplePending,
   downloadSampleImage,

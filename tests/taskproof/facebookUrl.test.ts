@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { firstFacebookPostUrl, parseFacebookPostUrl } from '../../src/taskproof/facebookUrl';
+import { firstFacebookPostUrl, parseFacebookPostUrl } from '../../src/taskproof/commands/facebookUrl';
 
 const FB_SHARE = 'https://www.facebook.com/share/v/1FS7f9MknZ/';
 

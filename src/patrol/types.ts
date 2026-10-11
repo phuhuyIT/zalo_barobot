@@ -1,5 +1,5 @@
 /**
- * patrol.types.ts
+ * types.ts
  *
  * Kiểu dữ liệu cho tính năng thu thập lịch đi tuần và nhắc nhở Tiểu đội 1.
  */

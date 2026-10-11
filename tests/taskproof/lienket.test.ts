@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables } from '../../src/store';
-import { initTaskproofTables } from '../../src/taskproof/store';
+import { initTaskproofTables } from '../../src/taskproof/records/store';
 import { handleTaskproofCommand } from '../../src/taskproof/commands';
 import { extractWebhookInbound } from '../../src/taskproof/commands/payload';
 import { WorkerRuntime } from '../../src/taskproof/worker/runtime';

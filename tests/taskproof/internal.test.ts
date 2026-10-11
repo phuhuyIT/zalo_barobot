@@ -6,13 +6,13 @@ import path from 'path';
 import { Server } from 'http';
 import { AddressInfo } from 'net';
 
-vi.mock('../../src/taskproof/notifyAdmin', () => ({
+vi.mock('../../src/taskproof/http/notifyAdmin', () => ({
   notifyAdminWorkerDown: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
-import { createTaskproofInternalRouter, taskproofInternalRouter } from '../../src/taskproof/internal';
-import { notifyAdminWorkerDown } from '../../src/taskproof/notifyAdmin';
-import { signedQueryString } from '../../src/taskproof/internalAuth';
+import { createTaskproofInternalRouter, taskproofInternalRouter } from '../../src/taskproof/http/internal';
+import { notifyAdminWorkerDown } from '../../src/taskproof/http/notifyAdmin';
+import { signedQueryString } from '../../src/taskproof/http/internalAuth';
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',

@@ -4,14 +4,14 @@ import { Server } from 'http';
 import Database from 'better-sqlite3';
 import { webhookRouter } from '../src/channels/webhook';
 import * as storeModule from '../src/store';
-import { initTaskproofTables } from '../src/taskproof/store';
+import { initTaskproofTables } from '../src/taskproof/records/store';
 import { ZaloClient } from '../src/core/zaloClient';
 
 vi.mock('../src/patrol', () => ({
   handlePatrolCommand: vi.fn().mockResolvedValue({ handled: true, success: true }),
 }));
 
-vi.mock('../src/taskproof/workerClient', () => ({
+vi.mock('../src/taskproof/http/workerClient', () => ({
   postEnsureListening: vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} }),
   postLinkGroup: vi.fn(),
   postRemind: vi.fn(),

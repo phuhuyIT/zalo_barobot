@@ -14,7 +14,7 @@
 import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
-import { getProofDir } from './env';
+import { getProofDir } from '../env';
 import { getTaskproofSetting } from './settings';
 import { listMissingTaskproofTables } from './store';
 

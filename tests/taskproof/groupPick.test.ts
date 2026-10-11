@@ -4,7 +4,7 @@ import express from 'express';
 import { AddressInfo } from 'net';
 import { Server } from 'http';
 import { configureSqliteConnection, initTables, setDatabase } from '../../src/store';
-import { initTaskproofTables } from '../../src/taskproof/store';
+import { initTaskproofTables } from '../../src/taskproof/records/store';
 import {
   completePickByIndex,
   createGroupPick,
@@ -14,7 +14,7 @@ import {
   placeTaskInGroup,
   resolveGroupChoice,
 } from '../../src/taskproof/groupPick';
-import { createTaskproofInternalRouter } from '../../src/taskproof/internal';
+import { createTaskproofInternalRouter } from '../../src/taskproof/http/internal';
 
 function openDb(): Database.Database {
   const db = new Database(':memory:');

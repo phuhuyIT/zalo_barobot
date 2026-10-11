@@ -11,14 +11,14 @@ import {
   getWorkerDatabase,
   initTaskproofTables,
   listMissingTaskproofTables,
-} from '../../src/taskproof/store';
+} from '../../src/taskproof/records/store';
 import {
   TASKPROOF_SETTING_DEFAULTS,
   getAllTaskproofSettings,
   getTaskproofSetting,
   seedTaskproofSettings,
   setTaskproofSetting,
-} from '../../src/taskproof/settings';
+} from '../../src/taskproof/records/settings';
 
 function openMemory(): Database.Database {
   const db = new Database(':memory:');

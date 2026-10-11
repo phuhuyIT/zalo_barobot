@@ -14,7 +14,7 @@
  */
 
 import Database from 'better-sqlite3';
-import { openSqliteFile } from '../store';
+import { openSqliteFile } from '../../store';
 import { seedTaskproofSettings } from './settings';
 
 export const TASKPROOF_TABLES = [

@@ -9,8 +9,8 @@
 
 import crypto from 'crypto';
 import Database from 'better-sqlite3';
-import { getDatabase } from '../store';
-import { generateShortCode } from './commands/shortCode';
+import { getDatabase } from '../../store';
+import { generateShortCode } from '../commands/shortCode';
 import { getTaskproofSetting } from './settings';
 import { listMissingTaskproofTables } from './store';
 

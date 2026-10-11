@@ -10,7 +10,7 @@
  * @all vs từng người: mention từng uid khi vừa một tin; @all khi không vừa.
  */
 
-import { shouldAutoRemind } from '../lifecycle';
+import { shouldAutoRemind } from '../records/lifecycle';
 import { CachedMember, stripMemberId } from './memberCache';
 import { ZcaMention } from './zcaAdapter';
 

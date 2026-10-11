@@ -6,8 +6,8 @@
  * dùng chung client (Section 2).
  */
 
-import { getRecipientChatId } from '../config';
-import { ZaloClient } from '../core/zaloClient';
+import { getRecipientChatId } from '../../config';
+import { ZaloClient } from '../../core/zaloClient';
 
 export interface WorkerDownInfo {
   code: number | null;

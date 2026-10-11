@@ -4,7 +4,7 @@ import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables } from '../../src/store';
-import { initTaskproofTables } from '../../src/taskproof/store';
+import { initTaskproofTables } from '../../src/taskproof/records/store';
 import {
   cookieHeaderFromCredentials,
   downloadImageBytes,

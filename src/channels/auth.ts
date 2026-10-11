@@ -5,7 +5,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { timingSafeCompare } from '../taskproof/internalAuth';
+import { timingSafeCompare } from '../taskproof/http/internalAuth';
 
 export function basicAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   // Cho phép webhook của Zalo và internal cron endpoint có cơ chế xác thực riêng

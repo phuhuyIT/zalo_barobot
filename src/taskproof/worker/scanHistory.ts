@@ -7,7 +7,7 @@
 
 import Database from 'better-sqlite3';
 import { looksLikeTaskproofCommand } from '../commands/parser';
-import { getTaskproofExcludeUids } from '../settings';
+import { getTaskproofExcludeUids } from '../records/settings';
 import {
   HISTORY_API_MAX_COUNT,
   historyFetchCount,

@@ -8,7 +8,7 @@
  */
 
 import Database from 'better-sqlite3';
-import { getDatabase, getRecipient } from '../store';
+import { getDatabase, getRecipient } from '../../store';
 
 export interface TaskproofSettings {
   default_required_count: number;

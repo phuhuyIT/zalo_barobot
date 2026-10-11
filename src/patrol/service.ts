@@ -10,14 +10,14 @@ import {
   getPatrolSiteConfigs,
   getPatrolSummaryStatus,
   savePatrolSummaryStatus,
-} from './patrol.repository';
-import { parsePatrolCommand } from './patrol.parser';
+} from './repository';
+import { parsePatrolCommand } from './parser';
 import {
   PatrolCommandPayload,
   PatrolCommandResult,
   PatrolShift,
   PatrolSiteConfig,
-} from './patrol.types';
+} from './types';
 import { getRecipientChatId, getConfig } from '../config';
 import { getRecipient } from '../store';
 

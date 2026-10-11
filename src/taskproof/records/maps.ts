@@ -7,7 +7,7 @@
  */
 
 import Database from 'better-sqlite3';
-import { getDatabase } from '../store';
+import { getDatabase } from '../../store';
 
 export interface GroupMapAdminRow {
   official_chat_id: string;

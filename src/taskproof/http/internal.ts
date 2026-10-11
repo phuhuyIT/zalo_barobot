@@ -9,23 +9,23 @@
 
 import fs from 'fs';
 import path from 'path';
-import { toReportJpeg } from './reportJpeg';
+import { toReportJpeg } from '../records/reportJpeg';
 import { Router, Request, Response } from 'express';
-import { ZaloClient } from '../core/zaloClient';
-import { getDatabase } from '../store';
+import { ZaloClient } from '../../core/zaloClient';
+import { getDatabase } from '../../store';
 import { rejectIfInvalidInternalKey, rejectIfInvalidSignedFileUrl } from './internalAuth';
 import { notifyAdminWorkerDown } from './notifyAdmin';
-import { getProofDir, getQrTmpDir } from './env';
+import { getProofDir, getQrTmpDir } from '../env';
 import {
   completePickByIndex,
   getGroupPick,
   groupLabel,
   pickResultHtml,
   PlaceTaskDeps,
-} from './groupPick';
-import { formatScanResultReply, ScanHistorySummary } from './quet';
-import { kickTaskCompletionReport, reportUnreportedCompletedTasks, TaskReportResult } from './report';
-import { getTaskproofSetting } from './settings';
+} from '../groupPick';
+import { formatScanResultReply, ScanHistorySummary } from '../quet';
+import { kickTaskCompletionReport, reportUnreportedCompletedTasks, TaskReportResult } from '../records/report';
+import { getTaskproofSetting } from '../records/settings';
 import { EnsureListeningResponse } from './workerClient';
 
 const SAFE_ID_RE = /^[A-Za-z0-9_-]+$/;

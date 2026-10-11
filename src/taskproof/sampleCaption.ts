@@ -16,9 +16,9 @@ import Database from 'better-sqlite3';
 import { getDatabase } from '../store';
 import { getProofDir } from './env';
 import { sniffImageKind } from './imageKind';
-import { closeTaskIfQuotaReached } from './lifecycle';
-import { kickTaskCompletionReport } from './report';
-import { getTaskproofSetting } from './settings';
+import { closeTaskIfQuotaReached } from './records/lifecycle';
+import { kickTaskCompletionReport } from './records/report';
+import { getTaskproofSetting } from './records/settings';
 import { downloadImageBytes } from './worker/imageFetch';
 
 export const SAMPLE_TTL_MS = 10 * 60 * 1000;

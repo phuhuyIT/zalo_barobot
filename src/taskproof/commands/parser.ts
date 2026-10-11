@@ -9,7 +9,7 @@
 import {
   firstFacebookPostUrl,
   parseFacebookPostUrl,
-} from '../facebookUrl';
+} from './facebookUrl';
 import {
   parseQuetCount,
   QUET_DEFAULT_COUNT,

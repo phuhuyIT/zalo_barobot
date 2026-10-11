@@ -18,11 +18,11 @@ import { ZaloClient } from '../core/zaloClient';
 import { formatDateDMY, resolveLookupDate, getVietnamTimeParts } from '../sheets/dateUtils';
 import { runPatrolReminders } from '../patrol';
 import { getInternalApiKey } from '../taskproof/env';
-import { notifyIfWorkerDownWithOpenTasks } from '../taskproof/health';
-import { readInternalKey, timingSafeCompare } from '../taskproof/internalAuth';
-import { cancelStaleTasks } from '../taskproof/lifecycle';
-import { reportUnreportedCompletedTasks, TaskReportResult } from '../taskproof/report';
-import { pruneTaskproofEphemeral } from '../taskproof/store';
+import { notifyIfWorkerDownWithOpenTasks } from '../taskproof/http/health';
+import { readInternalKey, timingSafeCompare } from '../taskproof/http/internalAuth';
+import { cancelStaleTasks } from '../taskproof/records/lifecycle';
+import { reportUnreportedCompletedTasks, TaskReportResult } from '../taskproof/records/report';
+import { pruneTaskproofEphemeral } from '../taskproof/records/store';
 
 export const schedulerRouter = Router();
 

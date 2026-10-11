@@ -16,10 +16,10 @@ import { webhookRouter } from './channels/webhook';
 import { schedulerRouter, startScheduler, stopScheduler, refreshSchedules } from './channels/scheduler';
 import { getDatabase, closeDatabase } from './store';
 import { loadConfig } from './config';
-import { initPatrolTables } from './patrol/patrol.repository';
-import { initTaskproofTables } from './taskproof/store';
-import { taskproofInternalRouter } from './taskproof/internal';
-import { taskproofWebRouter } from './taskproof/webApi';
+import { initPatrolTables } from './patrol/repository';
+import { initTaskproofTables } from './taskproof/records/store';
+import { taskproofInternalRouter } from './taskproof/http/internal';
+import { taskproofWebRouter } from './taskproof/http/webApi';
 
 dotenv.config();
 

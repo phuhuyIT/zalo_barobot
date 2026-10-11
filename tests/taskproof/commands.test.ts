@@ -4,7 +4,7 @@ import path from 'path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables, setDatabase } from '../../src/store';
-import { initTaskproofTables } from '../../src/taskproof/store';
+import { initTaskproofTables } from '../../src/taskproof/records/store';
 import {
   collectHttpUrls,
   extractWebhookInbound,
@@ -28,7 +28,7 @@ import {
   TASK_USAGE,
 } from '../../src/taskproof/commands';
 import { WebhookInbound } from '../../src/taskproof/commands/types';
-import { setTaskproofSetting } from '../../src/taskproof/settings';
+import { setTaskproofSetting } from '../../src/taskproof/records/settings';
 
 const SAMPLE_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',

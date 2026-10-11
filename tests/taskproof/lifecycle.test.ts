@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../src/taskproof/workerClient', () => ({
+vi.mock('../../src/taskproof/http/workerClient', () => ({
   postEnsureListening: vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} }),
   postLinkGroup: vi.fn(),
   postRemind: vi.fn(),
@@ -13,8 +13,8 @@ vi.mock('../../src/taskproof/workerClient', () => ({
 }));
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables } from '../../src/store';
-import { initTaskproofTables } from '../../src/taskproof/store';
-import { setTaskproofSetting } from '../../src/taskproof/settings';
+import { initTaskproofTables } from '../../src/taskproof/records/store';
+import { setTaskproofSetting } from '../../src/taskproof/records/settings';
 import { handleTaskproofCommand } from '../../src/taskproof/commands';
 import { extractWebhookInbound } from '../../src/taskproof/commands/payload';
 import {
@@ -28,7 +28,7 @@ import {
   listDueAutoReminders,
   markOverdueTasks,
   shouldKeepWorkerOnline,
-} from '../../src/taskproof/lifecycle';
+} from '../../src/taskproof/records/lifecycle';
 import { replaceMemberCache } from '../../src/taskproof/worker/memberCache';
 import { WorkerRuntime } from '../../src/taskproof/worker/runtime';
 import { saveSession } from '../../src/taskproof/worker/session';

@@ -4,15 +4,15 @@ import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { configureSqliteConnection, initTables } from '../../src/store';
-import { initTaskproofTables } from '../../src/taskproof/store';
+import { initTaskproofTables } from '../../src/taskproof/records/store';
 import {
   formatAdminReportedNotice,
   kickTaskCompletionReport,
   listUnreportedCompletedTasks,
   reportUnreportedCompletedTasks,
   resetReportInFlightForTests,
-} from '../../src/taskproof/report';
-import { completeTask } from '../../src/taskproof/lifecycle';
+} from '../../src/taskproof/records/report';
+import { completeTask } from '../../src/taskproof/records/lifecycle';
 
 function openDb(): Database.Database {
   const db = new Database(':memory:');

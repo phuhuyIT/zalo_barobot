@@ -7,9 +7,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { getDatabase } from '../store';
-import { cancelTask, completeTask } from './lifecycle';
-import { deleteGroupMap, listGroupMaps, saveGroupMap } from './maps';
+import { getDatabase } from '../../store';
+import { cancelTask, completeTask } from '../records/lifecycle';
+import { deleteGroupMap, listGroupMaps, saveGroupMap } from '../records/maps';
 import {
   getAllTaskproofSettings,
   getTaskproofSetting,
@@ -18,10 +18,10 @@ import {
   TASKPROOF_UI_SETTING_KEYS,
   TaskproofSettingKey,
   TaskproofSettings,
-} from './settings';
-import { listRecentTasks } from './tasks';
-import { getTaskByExactShortCode } from './commands/shortCode';
-import { kickTaskCompletionReport } from './report';
+} from '../records/settings';
+import { listRecentTasks } from '../records/tasks';
+import { getTaskByExactShortCode } from '../commands/shortCode';
+import { kickTaskCompletionReport } from '../records/report';
 import { postEnsureListening, postMaybeStop } from './workerClient';
 
 export const taskproofWebRouter = Router();

@@ -1,5 +1,5 @@
 /**
- * patrol.repository.ts
+ * repository.ts
  *
  * Tầng lưu trữ SQLite cho tính năng đi tuần (Patrol Repository).
  * Quản lý trạng thái hàng ngày `patrol_daily_status` và danh sách thành viên `patrol_members`.
@@ -13,7 +13,7 @@ import {
   PatrolSiteConfig,
   PatrolShift,
   PatrolSummaryDailyStatus,
-} from './patrol.types';
+} from './types';
 
 const initializedDbs = new WeakSet<Database.Database>();
 

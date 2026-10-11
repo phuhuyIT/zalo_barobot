@@ -5,8 +5,8 @@ import {
   getPatrolDailyStatus,
   updatePatrolReminder,
   getPatrolSiteConfigs,
-} from './patrol.repository';
-import { getSquad1LeaderUserId, getPatrolGroupId } from './patrol.service';
+} from './repository';
+import { getSquad1LeaderUserId, getPatrolGroupId } from './service';
 
 export interface PatrolReminderResult {
   triggered: boolean;

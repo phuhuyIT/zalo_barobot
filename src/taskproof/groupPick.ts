@@ -11,11 +11,11 @@ import Database from 'better-sqlite3';
 import { getVietnamTimeParts } from '../sheets/dateUtils';
 import { getDatabase } from '../store';
 import { getPublicBaseUrl } from './env';
-import { listGroupMaps } from './maps';
-import { insertNewTask, InsertedTask, InsertTaskInput, resolveTaskDeadline } from './tasks';
+import { listGroupMaps } from './records/maps';
+import { insertNewTask, InsertedTask, InsertTaskInput, resolveTaskDeadline } from './records/tasks';
 import { ParsedTaskFields } from './commands/types';
 import { recordAdminSampleProof } from './sampleCaption';
-import { postEnsureListening, EnsureListeningResponse } from './workerClient';
+import { postEnsureListening, EnsureListeningResponse } from './http/workerClient';
 
 export const GROUP_PICK_TTL_MS = 10 * 60 * 1000;
 

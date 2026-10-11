@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isBlockedIp } from '../../src/taskproof/blockedIp';
+import { isBlockedIp } from '../../src/taskproof/worker/blockedIp';
 
 describe('blocked IP', () => {
   it('blocks private and link-local IPs', () => {

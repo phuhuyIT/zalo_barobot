@@ -4,16 +4,16 @@ import { Server } from 'http';
 import { AddressInfo } from 'net';
 import Database from 'better-sqlite3';
 import * as storeModule from '../../src/store';
-import { initTaskproofTables } from '../../src/taskproof/store';
-import { taskproofWebRouter } from '../../src/taskproof/webApi';
-import { getTaskproofSetting, setTaskproofSetting } from '../../src/taskproof/settings';
-import { kickTaskCompletionReport } from '../../src/taskproof/report';
-vi.mock('../../src/taskproof/workerClient', () => ({
+import { initTaskproofTables } from '../../src/taskproof/records/store';
+import { taskproofWebRouter } from '../../src/taskproof/http/webApi';
+import { getTaskproofSetting, setTaskproofSetting } from '../../src/taskproof/records/settings';
+import { kickTaskCompletionReport } from '../../src/taskproof/records/report';
+vi.mock('../../src/taskproof/http/workerClient', () => ({
   postEnsureListening: vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} }),
   postMaybeStop: vi.fn().mockResolvedValue({ status: 200, json: {} }),
 }));
 
-vi.mock('../../src/taskproof/report', () => ({
+vi.mock('../../src/taskproof/records/report', () => ({
   kickTaskCompletionReport: vi.fn().mockResolvedValue([{ reported: true }]),
   reportUnreportedCompletedTasks: vi.fn().mockResolvedValue([]),
 }));

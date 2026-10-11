@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   formatWorkerDownMessage,
   notifyAdminWorkerDown,
-} from '../../src/taskproof/notifyAdmin';
+} from '../../src/taskproof/http/notifyAdmin';
 
 describe('notifyAdminWorkerDown (Step 1)', () => {
   it('formats a message that says /gui still works', () => {

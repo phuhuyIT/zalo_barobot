@@ -21,7 +21,7 @@ import {
   isUnsupportedEvent,
   redactSecrets,
 } from '../taskproof/commands';
-import { timingSafeCompare } from '../taskproof/internalAuth';
+import { timingSafeCompare } from '../taskproof/http/internalAuth';
 
 export const webhookRouter = Router();
 

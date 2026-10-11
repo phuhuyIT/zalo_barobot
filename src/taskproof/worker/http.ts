@@ -9,7 +9,7 @@
 import http from 'http';
 import express, { Express } from 'express';
 import { getWorkerPort, WORKER_BIND_HOST } from '../env';
-import { rejectIfInvalidInternalKey } from '../internalAuth';
+import { rejectIfInvalidInternalKey } from '../http/internalAuth';
 import { historyFetchCount, QUET_DEFAULT_COUNT, QUET_MAX_COUNT, QUET_MIN_COUNT } from '../quet';
 import { getWorkerRuntime, WorkerRuntime } from './runtime';
 

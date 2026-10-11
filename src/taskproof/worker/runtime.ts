@@ -15,19 +15,19 @@ import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { getProofDir, getPublicBaseUrl, getQrTmpDir, getSessionFilePath, QR_URL_TTL_MS } from '../env';
-import { signedQueryString } from '../internalAuth';
+import { signedQueryString } from '../http/internalAuth';
 import {
   countLinkedOpenTasks,
   listDueAutoReminders,
   markOverdueTasks,
   shouldKeepWorkerOnline,
-} from '../lifecycle';
+} from '../records/lifecycle';
 import {
   getTaskproofExcludeUids,
   getTaskproofSetting,
   setTaskproofSetting,
-} from '../settings';
-import { peekWorkerDatabase } from '../store';
+} from '../records/settings';
+import { peekWorkerDatabase } from '../records/store';
 import { looksLikeTaskproofCommand } from '../commands/parser';
 import { historyFetchCount, QUET_DEFAULT_COUNT, ScanHistorySummary } from '../quet';
 import { deliverQr, postLoginResult, postLinkResult, postReportNow, postScanResult } from './callbacks';
