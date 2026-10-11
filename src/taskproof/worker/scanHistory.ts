@@ -73,10 +73,15 @@ export function historyWasTruncated(
   return messages.length >= HISTORY_API_MAX_COUNT;
 }
 
+export interface ScanHistoryDeps extends ProofIngestDeps {
+  /** Worker xếp ảnh /quet vào cùng hàng đợi với ảnh đang listen. */
+  runIngest?: (image: ProofImage) => Promise<ProofIngestResult>;
+}
+
 export async function scanGroupHistoryForTask(
   db: Database.Database,
   input: ScanHistoryInput,
-  deps: ProofIngestDeps = {}
+  deps: ScanHistoryDeps = {}
 ): Promise<ScanHistorySummary> {
   const fetchCount = historyFetchCount(input.count);
   const excludeUids = deps.excludeUids ?? getTaskproofExcludeUids(db);
@@ -105,11 +110,13 @@ export async function scanGroupHistoryForTask(
     };
     let result: ProofIngestResult;
     try {
-      result = await ingestProofImage(db, image, deps, {
-        onlyTaskId: input.taskId,
-        ignoreProcessed: true,
-        skipIfAlreadySubmitted: true,
-      });
+      result = deps.runIngest
+        ? await deps.runIngest(image)
+        : await ingestProofImage(db, image, deps, {
+            onlyTaskId: input.taskId,
+            ignoreProcessed: true,
+            skipIfAlreadySubmitted: true,
+          });
     } catch (err: unknown) {
       const text = err instanceof Error ? err.message : String(err);
       console.error('[TaskProofWorker] /quet ingest lỗi:', text);

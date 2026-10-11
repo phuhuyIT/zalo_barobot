@@ -541,6 +541,74 @@ describe('task-proof /quet history scan', () => {
     db.close();
   });
 
+  it('runs /quet photos on the same single ingest slot as a live photo', async () => {
+    const db = openDb();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-quet-slot-'));
+    dirs.push(dir);
+    seedOpenTask(db, { required: 5 });
+    seedSample(db, dir);
+    saveSession({ cookie: [], imei: 'i', userAgent: 'ua' }, path.join(dir, 'zca-session.json'));
+    const pending: Array<() => void> = [];
+    let active = 0;
+    let maxActive = 0;
+    let hold = true;
+    const seen: string[] = [];
+    const port: ZcaLoginPort = {
+      login: async () => undefined,
+      loginQR: async () => ({ cookie: [], imei: 'i', userAgent: 'ua' }),
+      getGroupChatHistory: async () => ({
+        more: 0,
+        messages: [
+          inboundImage({ msgId: 'a', uidFrom: 'u1', href: 'https://cdn.example/a.jpg', ts: 1 }),
+          inboundImage({ msgId: 'b', uidFrom: 'u2', href: 'https://cdn.example/b.jpg', ts: 2 }),
+        ],
+      }),
+    };
+    const runtime = new WorkerRuntime({
+      db,
+      loginPort: port,
+      now: () => 5_000,
+      getSessionFilePath: () => path.join(dir, 'zca-session.json'),
+      getAdminChatId: () => 'admin',
+      getPublicBaseUrl: () => 'https://example.test',
+      getProofDir: () => dir,
+      scoreImages: () => passScore(),
+      downloadImage: async (url: string) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        seen.push(`start ${url}`);
+        if (hold) await new Promise<void>((resolve) => pending.push(resolve));
+        active -= 1;
+        seen.push(`end ${url}`);
+        return PNG;
+      },
+      postScanResult: async () => ({}),
+      kickReport: async () => undefined,
+      scheduleInterval: () => () => undefined,
+    });
+    await runtime.ensureListening();
+    const scan = runtime.scanHistory('t1', 5, 'off_group');
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    expect(seen).toEqual(['start https://cdn.example/a.jpg']);
+    const live = runtime.handleZcaMessage(
+      inboundImage({ msgId: 'live', uidFrom: 'u9', href: 'https://cdn.example/live.jpg' })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(maxActive).toBe(1);
+    expect(pending).toHaveLength(1);
+    pending.shift()?.();
+    await vi.waitFor(() => expect(seen.filter((row) => row.startsWith('start'))).toHaveLength(2));
+    expect(seen.filter((row) => row.startsWith('start'))[1]).toBe('start https://cdn.example/live.jpg');
+    expect(maxActive).toBe(1);
+    hold = false;
+    pending.splice(0).forEach((release) => release());
+    const summary = await scan;
+    if (live.job) await live.job;
+    expect(maxActive).toBe(1);
+    expect(summary.recorded).toBe(2);
+    db.close();
+  });
+
   describe('official bot /quet', () => {
     it('ensure-listening then scan-history with count and reply chat', async () => {
       const sendMessage = vi.fn().mockResolvedValue({});

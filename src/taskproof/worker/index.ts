@@ -9,6 +9,7 @@
 import dotenv from 'dotenv';
 import { getWorkerPort, WORKER_BIND_HOST } from '../env';
 import { closeWorkerDatabase, getWorkerDatabase } from '../records/store';
+import { stopImageMatcher } from './imageMatch';
 import { createWorkerApp, startWorkerHttp } from './http';
 dotenv.config();
 process.env.TZ = process.env.TZ || 'Asia/Ho_Chi_Minh';
@@ -35,9 +36,11 @@ void startWorkerHttp(createWorkerApp(), port, WORKER_BIND_HOST)
       }, 8_000);
       if (typeof force.unref === 'function') force.unref();
       server.close(() => {
-        closeWorkerDatabase();
-        clearTimeout(force);
-        process.exit(0);
+        void stopImageMatcher().finally(() => {
+          closeWorkerDatabase();
+          clearTimeout(force);
+          process.exit(0);
+        });
       });
     };
 

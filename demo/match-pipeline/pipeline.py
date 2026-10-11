@@ -55,6 +55,44 @@ def load_bgr(raw: bytes) -> np.ndarray:
     return cv2.cvtColor(np.array(im), cv2.COLOR_RGB2BGR)
 
 
+def load_bgr_capped(raw: bytes, max_edge: int = 3200) -> np.ndarray:
+    """Decode for scoring and shrink the long edge before SIFT.
+
+    A phone photo is tens of megabytes uncompressed. The matcher only keeps a
+    640-wide copy, so anything above max_edge is reduced here. An image that
+    already fits is the same pixels as load_bgr. JPEG without a rotation tag
+    is decoded at a smaller DCT scale when Pillow can do that.
+    """
+    import io
+
+    im = Image.open(io.BytesIO(raw))
+    exif = im.getexif()
+    orientation = int(exif.get(274) or 1) if exif is not None else 1
+    if im.format == "JPEG" and orientation == 1 and max(im.size) > max_edge:
+        im.draft("RGB", (max_edge, max_edge))
+    im = ImageOps.exif_transpose(im).convert("RGB")
+    width, height = im.size
+    long_edge = max(width, height)
+    if long_edge > max_edge:
+        scale = max_edge / float(long_edge)
+        im = im.resize(
+            (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+            Image.Resampling.LANCZOS,
+        )
+    bgr = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)
+    del im
+    if not bgr.flags["C_CONTIGUOUS"]:
+        bgr = np.ascontiguousarray(bgr)
+    return bgr
+
+
+def sift_bgr(img: np.ndarray) -> dict:
+    """SIFT on an image that is already the working width."""
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    kp, des = SIFT.detectAndCompute(gray, None)
+    return dict(img=img, gray=gray, kp=kp or [], des=des, kind="sift")
+
+
 def _jpeg_b64(bgr: np.ndarray, quality: int = 72) -> str:
     ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     if not ok:
@@ -243,9 +281,7 @@ def auto_crop(bgr: np.ndarray, w: int = W0, sat_thr: int = 45, row_thr: float = 
 def prep(bgr: np.ndarray, kind: str = "sift", w: int = W0) -> dict:
     h = int(round(bgr.shape[0] * w / bgr.shape[1]))
     img = cv2.resize(bgr, (w, h), interpolation=cv2.INTER_AREA)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    kp, des = SIFT.detectAndCompute(gray, None)
-    return dict(img=img, gray=gray, kp=kp or [], des=des, kind="sift")
+    return sift_bgr(img)
 
 
 def localize(ref: dict, sub: dict) -> dict:

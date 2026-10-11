@@ -45,7 +45,7 @@ import {
   planReminder,
   ReminderKind,
 } from './reminders';
-import { ingestProofImage, ProofIngestResult } from './proofIngest';
+import { ingestProofImage, ProofIngestDeps, ProofIngestResult } from './proofIngest';
 import { ScoreImagePair } from './imageMatch';
 import { scanGroupHistoryForTask } from './scanHistory';
 import { loadSession, saveSession, ZcaCredentials } from './session';
@@ -192,7 +192,8 @@ export class WorkerRuntime {
   private deadlineTickInFlight = false;
   private ingestActive = 0;
   private readonly ingestPending: Array<() => Promise<void>> = [];
-  private static readonly MAX_INGEST = 2;
+  /** Một ảnh một lúc, kể cả /quet. Hai process SIFT chồng nhau khoảng 500MB. */
+  private static readonly MAX_INGEST = 1;
 
   constructor(deps: WorkerRuntimeDeps = {}) {
     this.deps = {
@@ -615,6 +616,18 @@ export class WorkerRuntime {
     }
   }
 
+  private proofIngestDeps(db: Database.Database): ProofIngestDeps {
+    return {
+      now: this.deps.now,
+      scoreImages: this.deps.scoreImages,
+      downloadImage: this.deps.downloadImage,
+      loadSession: () => loadSession(this.deps.getSessionFilePath()),
+      proofDir: this.deps.getProofDir(),
+      kickReport: this.deps.kickReport,
+      excludeUids: getTaskproofExcludeUids(db),
+    };
+  }
+
   private async ingestProof(msg: ZcaInboundMessage): Promise<ProofIngestResult> {
     const db = this.db();
     if (!db) return { outcome: 'skipped', reason: 'no_db' };
@@ -629,15 +642,7 @@ export class WorkerRuntime {
           href: msg.href,
           thumb: msg.thumb,
         },
-        {
-          now: this.deps.now,
-          scoreImages: this.deps.scoreImages,
-          downloadImage: this.deps.downloadImage,
-          loadSession: () => loadSession(this.deps.getSessionFilePath()),
-          proofDir: this.deps.getProofDir(),
-          kickReport: this.deps.kickReport,
-          excludeUids: getTaskproofExcludeUids(db),
-        }
+        this.proofIngestDeps(db)
       );
       if (result.outcome !== 'recorded') {
         const reason = 'reason' in result ? result.reason : '';
@@ -816,8 +821,10 @@ export class WorkerRuntime {
       return failed;
     }
 
+    const db = prepared.db;
+    const deps = this.proofIngestDeps(db);
     const summary = await scanGroupHistoryForTask(
-      prepared.db,
+      db,
       {
         taskId,
         shortCode: prepared.task.short_code,
@@ -827,13 +834,15 @@ export class WorkerRuntime {
         more,
       },
       {
-        now: this.deps.now,
-        scoreImages: this.deps.scoreImages,
-        downloadImage: this.deps.downloadImage,
-        loadSession: () => loadSession(this.deps.getSessionFilePath()),
-        proofDir: this.deps.getProofDir(),
-        kickReport: this.deps.kickReport,
-        excludeUids: getTaskproofExcludeUids(prepared.db),
+        ...deps,
+        runIngest: (image) =>
+          this.enqueueIngest(() =>
+            ingestProofImage(db, image, deps, {
+              onlyTaskId: taskId,
+              ignoreProcessed: true,
+              skipIfAlreadySubmitted: true,
+            })
+          ),
       }
     );
     const result: ScanHistoryResult = { ...summary, httpStatus: 200, task_id: taskId };
