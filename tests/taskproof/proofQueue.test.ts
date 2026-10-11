@@ -1,4 +1,5 @@
 import fs from 'fs';
+import http from 'node:http';
 import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,9 +9,11 @@ import { initTaskproofTables } from '../../src/taskproof/records/store';
 import {
   cookieHeaderFromCredentials,
   downloadImageBytes,
+  httpGetPinned,
   isGifUrl,
   isImageHref,
   isZaloMediaHost,
+  MAX_PROOF_BYTES,
 } from '../../src/taskproof/worker/imageFetch';
 import { ImageScore } from '../../src/taskproof/worker/imageMatch';
 import { ingestProofImage } from '../../src/taskproof/worker/proofIngest';
@@ -365,8 +368,65 @@ describe('task-proof image queue + file store + quota (Step 9)', () => {
   it('treats photo-stal and zadn hosts as Zalo media', () => {
     expect(isZaloMediaHost('photo-stal-23.zdn.vn')).toBe(true);
     expect(isZaloMediaHost('zpsocial-f54-org.zadn.vn')).toBe(true);
+    expect(isZaloMediaHost('zdn.vn')).toBe(true);
+    expect(isZaloMediaHost('zdn.vn.')).toBe(true);
     expect(isImageHref('https://zpsocial-f54-org.zadn.vn/file')).toBe(true);
     expect(isZaloMediaHost('cdn.example')).toBe(false);
+    expect(isZaloMediaHost('photo-evil.example')).toBe(false);
+    expect(isZaloMediaHost('fsh-evil.example')).toBe(false);
+    expect(isZaloMediaHost('za-chat.attacker.example')).toBe(false);
+    expect(isZaloMediaHost('files.z-cdn.example')).toBe(false);
+    expect(isZaloMediaHost('zdn.vn.evil.example')).toBe(false);
+    expect(isZaloMediaHost('notzdn.vn')).toBe(false);
+  });
+
+  it('drops a private DNS answer and a redirect onto loopback', async () => {
+    let calls = 0;
+    const blocked = await downloadImageBytes('https://cdn.example/a.jpg', {
+      lookup: async () => ['127.0.0.1'],
+      fetchImpl: (async () => {
+        calls += 1;
+        return new Response(PNG);
+      }) as unknown as typeof fetch,
+    });
+    expect(blocked).toBeNull();
+    expect(calls).toBe(0);
+
+    const seen: string[] = [];
+    const redirected = await downloadImageBytes('http://cdn.example/a.jpg', {
+      lookup: async (host) => (host === 'cdn.example' ? ['203.0.113.9'] : ['10.1.2.3']),
+      fetchImpl: (async (url: string) => {
+        seen.push(url);
+        return new Response(null, { status: 302, headers: { location: 'http://rebind.example/secret' } });
+      }) as unknown as typeof fetch,
+    });
+    expect(redirected).toBeNull();
+    expect(seen).toEqual(['http://cdn.example/a.jpg']);
+  });
+
+  it('connects to the pinned address and keeps the original Host', async () => {
+    const hits: string[] = [];
+    const server = http.createServer((req, res) => {
+      hits.push(req.headers.host || '');
+      res.setHeader('Content-Type', 'image/png');
+      res.end(PNG);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address();
+    if (!addr || typeof addr === 'string') throw new Error('no port');
+    try {
+      const res = await httpGetPinned(
+        new URL(`http://cdn.example:${addr.port}/a.png`),
+        ['127.0.0.1'],
+        { Accept: 'image/png' },
+        new AbortController().signal
+      );
+      const buf = Buffer.from(await res.arrayBuffer());
+      expect(buf.equals(PNG)).toBe(true);
+      expect(hits).toEqual([`cdn.example:${addr.port}`]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it('treats chat.link preview cards as not screenshots and does not score them', () => {
@@ -450,7 +510,51 @@ describe('task-proof image queue + file store + quota (Step 9)', () => {
       fetchImpl,
     });
     await downloadImageBytes('https://cdn.example/a.jpg', { cookieHeader: cookie, fetchImpl });
-    expect(cookies).toEqual(['zpw=abc', 'zpw=abc', undefined]);
+    await downloadImageBytes('https://photo-evil.example/a.jpg', { cookieHeader: cookie, fetchImpl });
+    expect(cookies).toEqual(['zpw=abc', 'zpw=abc', undefined, undefined]);
+
+    const streamed = await downloadImageBytes('https://cdn.example/stream.jpg', {
+      fetchImpl: (async () => new Response(PNG)) as unknown as typeof fetch,
+    });
+    expect(streamed?.equals(PNG)).toBe(true);
+
+    let declaredPulls = 0;
+    const declaredTooBig = new Response(
+      new ReadableStream({
+        pull(controller) {
+          declaredPulls += 1;
+          controller.enqueue(new Uint8Array(1024));
+        },
+      }),
+      { headers: { 'content-length': String(MAX_PROOF_BYTES + 1) } }
+    );
+    const skipped = await downloadImageBytes('https://cdn.example/declared-big.jpg', {
+      fetchImpl: (async () => declaredTooBig) as unknown as typeof fetch,
+    });
+    expect(skipped).toBeNull();
+    // Cancelling the unread body can still pull one chunk. It must not drain 15MB.
+    expect(declaredPulls).toBeLessThan(3);
+
+    let chunkPulls = 0;
+    const chunk = new Uint8Array(1024 * 1024);
+    const chunked = new Response(
+      new ReadableStream({
+        pull(controller) {
+          chunkPulls += 1;
+          if (chunkPulls > 40) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(chunk);
+        },
+      })
+    );
+    const capped = await downloadImageBytes('https://cdn.example/chunked-big.jpg', {
+      fetchImpl: (async () => chunked) as unknown as typeof fetch,
+    });
+    expect(capped).toBeNull();
+    expect(chunkPulls).toBeGreaterThan(14);
+    expect(chunkPulls).toBeLessThan(20);
 
     const db = openDb();
     seedOpenTask(db);

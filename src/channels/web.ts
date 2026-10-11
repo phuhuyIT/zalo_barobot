@@ -6,6 +6,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { rejectCrossOriginWrite } from './auth';
 import { getConfig, getRecipientChatId } from '../config';
 import {
   buildScheduleMessage,
@@ -51,6 +52,7 @@ export function registerSchedulerRefreshCallback(cb: () => void): void {
 }
 
 export const webRouter = Router();
+webRouter.use(rejectCrossOriginWrite);
 
 /**
  * Xử lý và format lỗi tập trung cho các router của Web API.

@@ -71,6 +71,31 @@ describe('Task-proof Web UI API (Step 12)', () => {
     expect(getTaskproofSetting('default_required_count', db)).toBe(8);
   });
 
+  it('rejects a cross-origin settings write', async () => {
+    const cross = await fetch(`${baseUrl}/api/taskproof/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+      body: JSON.stringify({ default_required_count: 4 }),
+    });
+    expect(cross.status).toBe(403);
+    expect(getTaskproofSetting('default_required_count', db)).not.toBe(4);
+
+    const site = await fetch(`${baseUrl}/api/taskproof/settings`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Sec-Fetch-Site': 'cross-site',
+      },
+      body: JSON.stringify({ default_required_count: 4 }),
+    });
+    expect(site.status).toBe(403);
+
+    const read = await fetch(`${baseUrl}/api/taskproof/settings`, {
+      headers: { Origin: 'https://evil.example' },
+    });
+    expect(read.status).toBe(200);
+  });
+
   it('clamps numeric UI settings to safe ranges', async () => {
     const res = await fetch(`${baseUrl}/api/taskproof/settings`, {
       method: 'PUT',

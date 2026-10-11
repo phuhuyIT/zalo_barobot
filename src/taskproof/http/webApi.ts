@@ -7,6 +7,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { rejectCrossOriginWrite } from '../../channels/auth';
 import { getDatabase } from '../../store';
 import { cancelTask, completeTask } from '../records/lifecycle';
 import { deleteGroupMap, listGroupMaps, saveGroupMap } from '../records/maps';
@@ -25,6 +26,7 @@ import { kickTaskCompletionReport } from '../records/report';
 import { postEnsureListening, postMaybeStop } from './workerClient';
 
 export const taskproofWebRouter = Router();
+taskproofWebRouter.use(rejectCrossOriginWrite);
 
 function handleRouteError(res: Response, error: unknown, statusCode = 500): void {
   const message = error instanceof Error ? error.message : String(error);

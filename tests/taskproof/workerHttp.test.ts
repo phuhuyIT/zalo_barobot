@@ -48,6 +48,10 @@ describe('task-proof worker HTTP (Step 5)', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  it('refuses to bind a public address', async () => {
+    await expect(startWorkerHttp(createWorkerApp(), 0, '0.0.0.0')).rejects.toThrow(/loopback/);
+  });
+
   it('worker must not CREATE TABLE or import zaloClient; official bot must not import zca-js', () => {
     const workerDir = path.resolve(__dirname, '../../src/taskproof/worker');
     for (const file of walkTsFiles(workerDir)) {

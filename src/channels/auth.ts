@@ -52,3 +52,55 @@ export function basicAuthMiddleware(req: Request, res: Response, next: NextFunct
   res.setHeader('WWW-Authenticate', 'Basic realm="Zalo Barobot Admin"');
   res.status(401).json({ success: false, error: 'Tài khoản hoặc mật khẩu không chính xác.' });
 }
+
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function hostnameFromHostHeader(host: string): string {
+  const value = host.trim().toLowerCase();
+  if (value.startsWith('[')) {
+    const end = value.indexOf(']');
+    return end > 1 ? value.slice(1, end) : '';
+  }
+  return value.split(':')[0];
+}
+
+/** undefined = header absent. null = present but not a usable origin. */
+function headerOriginHost(raw: string | undefined): string | null | undefined {
+  if (raw === undefined) return undefined;
+  const value = raw.trim();
+  if (!value || value.toLowerCase() === 'null') return null;
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * State-changing admin routes must come from the same host the browser called.
+ * GET stays open so the page can load. Missing Origin is allowed for non-browser clients.
+ */
+export function rejectCrossOriginWrite(req: Request, res: Response, next: NextFunction): void {
+  if (!UNSAFE_METHODS.has(req.method.toUpperCase())) {
+    next();
+    return;
+  }
+  if ((req.get('sec-fetch-site') || '').toLowerCase() === 'cross-site') {
+    res.status(403).json({ success: false, error: 'cross-origin request rejected' });
+    return;
+  }
+  const expected = hostnameFromHostHeader(req.get('host') || '');
+  const origin = headerOriginHost(req.get('origin'));
+  if (origin === null || (typeof origin === 'string' && origin !== expected)) {
+    res.status(403).json({ success: false, error: 'cross-origin request rejected' });
+    return;
+  }
+  if (origin === undefined) {
+    const referer = headerOriginHost(req.get('referer'));
+    if (referer === null || (typeof referer === 'string' && referer !== expected)) {
+      res.status(403).json({ success: false, error: 'cross-origin request rejected' });
+      return;
+    }
+  }
+  next();
+}

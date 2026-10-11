@@ -125,6 +125,28 @@ describe('Web API Endpoints (F12 & F13)', () => {
       expect(stored?.chat_id).toBe('chat_culi_999');
     });
 
+    it('rejects a cross-origin POST and accepts the page host', async () => {
+      const cross = await fetch(`${baseUrl}/api/recipients`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+        body: JSON.stringify({ key: 'evil', display_name: 'Evil', chat_id: 'x' }),
+      });
+      expect(cross.status).toBe(403);
+      expect(storeModule.getRecipient('evil', mockDb)).toBeNull();
+
+      const same = await fetch(`${baseUrl}/api/recipients`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: new URL(baseUrl).origin },
+        body: JSON.stringify({ key: 'same_origin', display_name: 'Same', chat_id: 'chat_same' }),
+      });
+      expect(same.status).toBe(200);
+
+      const listed = await fetch(`${baseUrl}/api/recipients`, {
+        headers: { Origin: 'https://evil.example' },
+      });
+      expect(listed.status).toBe(200);
+    });
+
     it('PUT /api/recipients/:key updates recipient details', async () => {
       const res = await fetch(`${baseUrl}/api/recipients/group_main`, {
         method: 'PUT',

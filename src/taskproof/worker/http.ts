@@ -113,13 +113,26 @@ export function createWorkerApp(deps: WorkerAppDeps = {}): Express {
   return app;
 }
 
+/** Railway publishes only PORT. The worker must not listen on a public or private-network address. */
+export function requireLoopbackHost(host: string): string {
+  const value = host.trim().toLowerCase();
+  if (value === '127.0.0.1' || value === '::1') return value;
+  throw new Error(`task-proof worker must bind loopback, refused "${host}"`);
+}
+
 export function startWorkerHttp(
   app: Express = createWorkerApp(),
   port: number = getWorkerPort(),
   host: string = WORKER_BIND_HOST
 ): Promise<http.Server> {
+  let bindHost: string;
+  try {
+    bindHost = requireLoopbackHost(host);
+  } catch (err) {
+    return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, host, () => resolve(server));
+    const server = app.listen(port, bindHost, () => resolve(server));
     server.on('error', reject);
   });
 }

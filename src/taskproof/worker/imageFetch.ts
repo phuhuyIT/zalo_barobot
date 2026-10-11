@@ -6,7 +6,10 @@
  */
 
 import dns from 'node:dns/promises';
+import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
+import { Readable } from 'node:stream';
 import { isBlockedIp } from './blockedIp';
 import { ZcaCredentials } from './session';
 
@@ -60,26 +63,32 @@ export function looksLikeHtmlBuffer(buf: Buffer): boolean {
   return head.startsWith('<!doctype') || head.startsWith('<html');
 }
 
+const ZALO_MEDIA_SUFFIXES = ['zalo.me', 'zalo.vn', 'zalocdn.me', 'zdn.vn', 'zadn.vn', 'zaloapp.com'];
+
+/** Exact host or a subdomain. `photo-` / `za-chat` anywhere in the name is not enough. */
 export function isZaloMediaHost(hostname: string): boolean {
   const host = (hostname || '').replace(/\.$/, '').toLowerCase();
   if (!host) return false;
-  return (
-    host === 'zalo.me' ||
-    host === 'zalo.vn' ||
-    host.endsWith('.zalo.me') ||
-    host.endsWith('.zalo.vn') ||
-    host.endsWith('.zalocdn.me') ||
-    host.endsWith('.zdn.vn') ||
-    host.endsWith('.zadn.vn') ||
-    host.endsWith('.zaloapp.com') ||
-    host.includes('za-chat') ||
-    host.includes('z-cdn') ||
-    host.startsWith('photo-') ||
-    host.startsWith('fsh-')
-  );
+  return ZALO_MEDIA_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
 }
 
-async function assertPublicHttpUrl(raw: string): Promise<URL | null> {
+export type PublicLookup = (hostname: string) => Promise<string[]>;
+
+export async function defaultPublicLookup(hostname: string): Promise<string[]> {
+  const rows = await dns.lookup(hostname, { all: true });
+  return rows.map((row) => row.address);
+}
+
+export interface ResolvedPublicUrl {
+  url: URL;
+  addresses: string[];
+}
+
+/** Parse an http(s) URL and keep only addresses that are not private or link-local. */
+export async function resolvePublicHttpUrl(
+  raw: string,
+  lookup: PublicLookup = defaultPublicLookup
+): Promise<ResolvedPublicUrl | null> {
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -89,30 +98,146 @@ async function assertPublicHttpUrl(raw: string): Promise<URL | null> {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
   if (parsed.username || parsed.password) return null;
   const host = parsed.hostname.replace(/\.$/, '');
+  if (!host) return null;
   if (net.isIP(host)) {
     if (isBlockedIp(host)) return null;
-    return parsed;
+    return { url: parsed, addresses: [host] };
   }
+  let addresses: string[];
   try {
-    const rows = await dns.lookup(host, { all: true });
-    const addresses = rows.map((row) => row.address);
-    if (!addresses.length || addresses.some((ip) => isBlockedIp(ip))) return null;
+    addresses = await lookup(host);
   } catch {
     return null;
   }
-  return parsed;
+  if (!addresses.length || addresses.some((ip) => isBlockedIp(ip))) return null;
+  return { url: parsed, addresses };
+}
+
+/**
+ * Connect to the addresses already accepted by resolvePublicHttpUrl.
+ * The URL hostname stays on the Host header and on TLS SNI.
+ */
+export function httpGetPinned(
+  target: URL,
+  addresses: readonly string[],
+  headers: Record<string, string>,
+  signal: AbortSignal
+): Promise<Response> {
+  const usable = addresses.filter((ip) => net.isIP(ip) !== 0);
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+      return;
+    }
+    if (!usable.length) {
+      reject(new Error('no pinned address'));
+      return;
+    }
+    const lib = target.protocol === 'https:' ? https : http;
+    const req = lib.request(
+      target,
+      {
+        method: 'GET',
+        headers,
+        lookup: (_hostname, options, callback) => {
+          const rows = usable.map((address) => ({
+            address,
+            family: net.isIP(address) as 4 | 6,
+          }));
+          if (options.all) {
+            callback(null, rows);
+            return;
+          }
+          callback(null, rows[0].address, rows[0].family);
+        },
+        servername: target.protocol === 'https:' ? target.hostname : undefined,
+        signal,
+      },
+      (incoming) => {
+        resolve(incomingToResponse(incoming));
+      }
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade']);
+
+function looseHttpUrl(raw: string): ResolvedPublicUrl | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  if (parsed.username || parsed.password) return null;
+  if (net.isIP(parsed.hostname) && isBlockedIp(parsed.hostname)) return null;
+  return { url: parsed, addresses: [] };
+}
+
+function incomingToResponse(incoming: http.IncomingMessage): Response {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(incoming.headers)) {
+    if (value === undefined || HOP_BY_HOP.has(key)) continue;
+    headers.set(key, Array.isArray(value) ? value.join(', ') : String(value));
+  }
+  const body = Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
+  return new Response(body, { status: incoming.statusCode || 502, headers });
+}
+
+async function cancelBody(res: Response): Promise<void> {
+  try {
+    await res.body?.cancel();
+  } catch {
+    // body đã đóng hoặc không phải stream
+  }
 }
 
 async function readLimitedBytes(res: Response): Promise<Buffer | null> {
   const declared = Number(res.headers.get('content-length') || 0);
-  if (Number.isFinite(declared) && declared > MAX_PROOF_BYTES) return null;
+  if (Number.isFinite(declared) && declared > MAX_PROOF_BYTES) {
+    console.warn(`[TaskProofWorker] Ảnh vượt ${MAX_PROOF_BYTES} byte, bỏ`);
+    await cancelBody(res);
+    return null;
+  }
   try {
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length === 0 || buf.length > MAX_PROOF_BYTES) return null;
-    return buf;
+    const body = res.body;
+    if (!body || typeof body.getReader !== 'function') {
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length === 0 || buf.length > MAX_PROOF_BYTES) {
+        console.warn(
+          `[TaskProofWorker] Ảnh ${buf.length === 0 ? 'rỗng' : `vượt ${MAX_PROOF_BYTES} byte`}, bỏ`
+        );
+        return null;
+      }
+      return buf;
+    }
+    const reader = body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      total += value.byteLength;
+      if (total > MAX_PROOF_BYTES) {
+        console.warn(`[TaskProofWorker] Ảnh vượt ${MAX_PROOF_BYTES} byte, dừng đọc`);
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+    if (total === 0) {
+      console.warn('[TaskProofWorker] Ảnh rỗng, bỏ');
+      return null;
+    }
+    return Buffer.concat(chunks, total);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn('[TaskProofWorker] Đọc bytes ảnh lỗi:', msg);
+    await cancelBody(res);
     return null;
   }
 }
@@ -133,20 +258,14 @@ export async function downloadImageBytes(
 
   const cookie = opts.cookieHeader || cookieHeaderFromCredentials(opts.session?.cookie);
   const ua = opts.userAgent || opts.session?.userAgent || '';
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = opts.fetchImpl;
+  const lookup = opts.lookup ?? defaultPublicLookup;
 
-  let current: URL | null;
-  if (opts.fetchImpl && !opts.lookup) {
-    try {
-      current = new URL(trimmed);
-    } catch {
-      return null;
-    }
-    if (current.protocol !== 'http:' && current.protocol !== 'https:') return null;
-    if (current.username || current.password) return null;
-    if (net.isIP(current.hostname) && isBlockedIp(current.hostname)) return null;
+  let current: ResolvedPublicUrl | null;
+  if (fetchImpl && !opts.lookup) {
+    current = looseHttpUrl(trimmed);
   } else {
-    current = await assertPublicHttpUrl(trimmed);
+    current = await resolvePublicHttpUrl(trimmed, lookup);
     if (!current) {
       console.warn('[TaskProofWorker] Bỏ URL ảnh (SSRF/DNS):', trimmed.slice(0, 160));
     }
@@ -156,17 +275,19 @@ export async function downloadImageBytes(
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const headers: Record<string, string> = { Accept: 'image/*,*/*;q=0.8' };
     if (ua) headers['User-Agent'] = ua;
-    if (cookie && isZaloMediaHost(current.hostname)) headers.Cookie = cookie;
+    if (cookie && isZaloMediaHost(current.url.hostname)) headers.Cookie = cookie;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     let res: Response;
     try {
-      res = await fetchImpl(current.href, {
-        headers,
-        redirect: 'manual',
-        signal: controller.signal,
-      });
+      res = fetchImpl
+        ? await fetchImpl(current.url.href, {
+            headers,
+            redirect: 'manual',
+            signal: controller.signal,
+          })
+        : await httpGetPinned(current.url, current.addresses, headers, controller.signal);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn('[TaskProofWorker] Tải ảnh thất bại:', trimmed.slice(0, 120), msg);
@@ -176,15 +297,16 @@ export async function downloadImageBytes(
     }
 
     if (res.status >= 300 && res.status < 400) {
+      await cancelBody(res);
       const location = res.headers.get('location');
       if (!location) return null;
       let next: URL;
       try {
-        next = new URL(location, current);
+        next = new URL(location, current.url);
       } catch {
         return null;
       }
-      current = await assertPublicHttpUrl(next.href);
+      current = await resolvePublicHttpUrl(next.href, lookup);
       if (!current) {
         console.warn('[TaskProofWorker] Bỏ redirect ảnh (SSRF/DNS):', next.href.slice(0, 160));
         return null;
@@ -193,15 +315,17 @@ export async function downloadImageBytes(
     }
 
     if (!res.ok) {
+      await cancelBody(res);
       console.warn(
-        `[TaskProofWorker] Tải ảnh HTTP ${res.status} host=${current.hostname}`
+        `[TaskProofWorker] Tải ảnh HTTP ${res.status} host=${current.url.hostname}`
       );
       return null;
     }
     const buf = await readLimitedBytes(res);
-    if (!buf || looksLikeHtmlBuffer(buf) || looksLikeGifBuffer(buf)) {
+    if (!buf) return null;
+    if (looksLikeHtmlBuffer(buf) || looksLikeGifBuffer(buf)) {
       console.warn(
-        `[TaskProofWorker] Ảnh không dùng được host=${current.hostname} bytes=${buf?.length ?? 0}`
+        `[TaskProofWorker] Ảnh không dùng được host=${current.url.hostname} bytes=${buf.length}`
       );
       return null;
     }
