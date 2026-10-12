@@ -27,6 +27,29 @@ export interface PatrolReminderResult {
 
 const DEFAULT_REMINDER_SCHEDULE_TIMES = ['06:30', '06:35', '06:40'];
 const DEFAULT_MAX_REMINDERS = 3;
+/** A Free-plan cron wake can land after the exact minute. Still send that slot once. */
+const REMINDER_GRACE_MINUTES = 4;
+
+function minutesOfDay(timeHM: string): number {
+  const [h, m] = timeHM.split(':').map(Number);
+  return (Number(h) || 0) * 60 + (Number(m) || 0);
+}
+
+/**
+ * The slot to send now: the exact configured minute, or a slot at most
+ * REMINDER_GRACE_MINUTES earlier. Later slots win if more than one is in range.
+ */
+export function reminderSlotForNow(reminderTimes: string[], currentTime: string): string | null {
+  const slots = reminderTimes.filter((time) => /^\d{2}:\d{2}$/.test(time));
+  if (slots.includes(currentTime)) return currentTime;
+  const now = minutesOfDay(currentTime);
+  let chosen: string | null = null;
+  for (const slot of [...slots].sort((a, b) => minutesOfDay(a) - minutesOfDay(b))) {
+    const delta = now - minutesOfDay(slot);
+    if (delta > 0 && delta <= REMINDER_GRACE_MINUTES) chosen = slot;
+  }
+  return chosen;
+}
 
 /**
  * Kiểm tra và thực hiện gửi nhắc nhở nếu đến giờ và chưa nộp lịch cho từng site độc lập.
@@ -86,8 +109,9 @@ export async function runPatrolReminders(
         : DEFAULT_REMINDER_SCHEDULE_TIMES;
     const maxReminders = site.maxReminders || DEFAULT_MAX_REMINDERS;
 
-    // 1. Kiểm tra xem thời điểm hiện tại có phải là mốc giờ nhắc nhở của site này không
-    if (!reminderTimes.includes(currentTime)) {
+    // 1. Đúng mốc giờ, hoặc trễ tối đa 4 phút (cron Free plan có thể lệch phút).
+    const slotTime = reminderSlotForNow(reminderTimes, currentTime);
+    if (!slotTime) {
       siteResults.push({
         siteKey: site.siteKey,
         triggered: false,
@@ -131,9 +155,9 @@ export async function runPatrolReminders(
     }
 
     // 5. Kiểm tra Idempotency: Nếu mốc giờ này đã được gửi nhắc nhở rồi thì không gửi lại
-    if (status?.lastReminderAt === currentTime) {
+    if (status?.lastReminderAt === slotTime) {
       console.log(
-        `[Patrol] Bỏ qua nhắc nhở lúc ${currentTime} cho ${site.displayName} vì đã gửi trước đó (Idempotency).`
+        `[Patrol] Bỏ qua nhắc nhở lúc ${slotTime} cho ${site.displayName} vì đã gửi trước đó (Idempotency).`
       );
       siteResults.push({
         siteKey: site.siteKey,
@@ -176,7 +200,7 @@ export async function runPatrolReminders(
 
     try {
       console.log(
-        `[Patrol] Đang gửi nhắc nhở #${nextReminderCount} tới ${recipientChatId} cho ${site.displayName} lúc ${currentTime}...`
+        `[Patrol] Đang gửi nhắc nhở #${nextReminderCount} tới ${recipientChatId} cho ${site.displayName} lúc ${slotTime} (kiểm tra ${currentTime})...`
       );
       await zalo.sendMessage(recipientChatId, reminderMessage);
 
@@ -188,13 +212,13 @@ export async function runPatrolReminders(
           groupId: site.chatId || recipientChatId,
           leaderUserId: site.leaderUserId || recipientChatId,
           reminderCount: nextReminderCount,
-          lastReminderAt: currentTime,
+          lastReminderAt: slotTime,
         },
         options?.database
       );
 
       console.log(
-        `[Patrol]\nReminder #${nextReminderCount} sent for ${site.displayName}\nDate: ${todayDmy}\nTime: ${currentTime}`
+        `[Patrol]\nReminder #${nextReminderCount} sent for ${site.displayName}\nDate: ${todayDmy}\nTime: ${slotTime}`
       );
 
       siteResults.push({

@@ -517,6 +517,31 @@ describe('Patrol Feature Tests (Mục 30: Tests 1 - 16)', () => {
       expect(secondRun.reason).toContain('đã được gửi');
       expect(sendSpy).toHaveBeenCalledTimes(1); // Only 1 message sent!
     });
+
+    it('sends the 06:30 slot when the cron wake lands at 06:32, and does not send it again at 06:33', async () => {
+      const mockZalo = new ZaloClient('dummy_token');
+      const sendSpy = vi.spyOn(mockZalo, 'sendMessage').mockResolvedValue({ messageId: 'rem_late', raw: {} });
+
+      const late = await runPatrolReminders(new Date(), {
+        overrideTimeHM: '06:32',
+        zaloClient: mockZalo,
+        database: mockDb,
+      });
+      expect(late.triggered).toBe(true);
+      expect(late.reminderCount).toBe(1);
+
+      const d = formatDateDMY(new Date());
+      const status = getPatrolDailyStatus(d, mockDb);
+      expect(status?.lastReminderAt).toBe('06:30');
+
+      const again = await runPatrolReminders(new Date(), {
+        overrideTimeHM: '06:33',
+        zaloClient: mockZalo,
+        database: mockDb,
+      });
+      expect(again.triggered).toBe(false);
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('Report Message Formatting (Mục 13 & 35)', () => {
