@@ -5,9 +5,10 @@
  * (baseline trong demo/match-pipeline). Chỉ PASS mới được ghi minh chứng.
  * Task không có file ảnh mẫu thì không tham gia.
  *
- * Một process Python (`score_cli.py --serve`) sống cùng worker. Ảnh mẫu đã
- * prep được cache trong process đó. Mọi lần chấm xếp hàng, kể cả khi hai
- * task mở. Hết 60s thì SIGKILL và đợi process thoát trước lần chấm sau.
+ * Một process Python (`score_cli.py --serve`) sống cùng worker. Ảnh mẫu và
+ * ảnh nộp đều được cắt về phần bài viết trước SIFT. Ảnh mẫu đã prep được
+ * cache trong process đó. Mọi lần chấm xếp hàng, kể cả khi hai task mở.
+ * Hết 60s thì SIGKILL và đợi process thoát trước lần chấm sau.
  */
 
 import { ChildProcess, spawn } from 'child_process';

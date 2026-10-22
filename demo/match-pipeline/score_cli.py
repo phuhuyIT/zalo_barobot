@@ -37,9 +37,17 @@ def _resize_width(bgr, width: int):
     return cv2.resize(bgr, (width, height), interpolation=cv2.INTER_AREA)
 
 
-def _features(bgr):
-    """One 640-wide resize, then drop the input before SIFT allocates."""
-    small = _resize_width(bgr, W0)
+def _cropped_features(path: str) -> dict:
+    """SIFT the shared media, not the whole screenshot.
+
+    The feature cap is 1500. Facebook chrome on a light-mode capture can
+    take every slot, so the collage has no keypoints and the match fails.
+    Cropping the member photo the same way as the sample keeps those
+    keypoints on the post.
+    """
+    bgr = load_bgr_capped(Path(path).read_bytes(), score_max_edge())
+    x0, y0, x1, y1 = auto_crop(bgr)
+    small = _resize_width(bgr[y0:y1, x0:x1], W0)
     del bgr
     return sift_bgr(small)
 
@@ -81,17 +89,11 @@ def _cache_key(path: str) -> tuple:
 
 
 def prepare_reference(path: str) -> dict:
-    bgr = load_bgr_capped(Path(path).read_bytes(), score_max_edge())
-    x0, y0, x1, y1 = auto_crop(bgr)
-    small = _resize_width(bgr[y0:y1, x0:x1], W0)
-    del bgr
-    return sift_bgr(small)
+    return _cropped_features(path)
 
 
 def prepare_query(path: str) -> dict:
-    # The load result is only named inside _features, so the full array can
-    # be freed before detectAndCompute.
-    return _features(load_bgr_capped(Path(path).read_bytes(), score_max_edge()))
+    return _cropped_features(path)
 
 
 def score_paths(reference: str, query: str, cache: ReferenceCache | None = None) -> dict:
