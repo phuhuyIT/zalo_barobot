@@ -282,7 +282,7 @@ async function runDueJobsOnce(now: Date): Promise<{
     console.error('[Scheduler] ❌ Lỗi stale-cancel task-proof:', msg);
   }
 
-  // 5. T6 báo cáo: completed AND reported_at IS NULL — sendPhoto URL https, skip ảnh chết
+  // 5. T6 báo cáo: completed AND reported_at IS NULL — ảnh vào chat 1-1 admin
   try {
     const reports: TaskReportResult[] = await reportUnreportedCompletedTasks(getDatabase());
     for (const row of reports) {

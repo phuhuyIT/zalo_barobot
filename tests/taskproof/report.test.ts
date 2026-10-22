@@ -113,11 +113,10 @@ describe('T6 completion report (Step 10)', () => {
     expect(results[0].reported).toBe(true);
     expect(results[0].photosSkipped).toBe(1);
     expect(results[0].photosSent).toBe(1);
-    expect(results[0].destination).toBe('report_group');
+    expect(results[0].destination).toBe('admin_dm');
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith('admin_dm', 'Đã báo cáo task REP001.');
-    expect(sendMessage.mock.calls.some((call) => call[0] === 'report_group')).toBe(false);
-    expect(sendPhoto.mock.calls.every((call) => call.length === 2)).toBe(true);
+    expect(sendPhoto.mock.calls.every((call) => call[0] === 'admin_dm' && call.length === 2)).toBe(true);
     expect(sendPhoto.mock.calls.some((c) => String(c[1]).includes('dead1'))).toBe(true);
 
     const row = db
@@ -129,7 +128,7 @@ describe('T6 completion report (Step 10)', () => {
     db.close();
   });
 
-  it('falls back to the task group when report_group photo send fails', async () => {
+  it('sends proof photos to the admin 1-1 chat and not a group', async () => {
     const db = openDb();
     insertTask(db, { id: 't2', code: 'FB001', official: 'off_group', report: 'report_group' });
     insertSub(db, {
@@ -141,10 +140,7 @@ describe('T6 completion report (Step 10)', () => {
       imageUrl: 'http://cdn.example/not-https.jpg',
     });
 
-    const sendPhoto = vi.fn(async (chatId: string) => {
-      if (chatId === 'report_group') throw new Error('bot is not a member');
-      return { messageId: 'p' };
-    });
+    const sendPhoto = vi.fn().mockResolvedValue({ messageId: 'p' });
     const sendMessage = vi.fn().mockResolvedValue({ messageId: 'm' });
 
     const results = await reportUnreportedCompletedTasks(db, {
@@ -157,13 +153,50 @@ describe('T6 completion report (Step 10)', () => {
     });
 
     expect(results[0].reported).toBe(true);
-    expect(results[0].destination).toBe('fallback_group');
-    expect(sendPhoto).toHaveBeenCalledWith('off_group', 'https://public.example/file/s-fb');
+    expect(results[0].destination).toBe('admin_dm');
+    expect(sendPhoto).toHaveBeenCalledTimes(1);
+    expect(sendPhoto).toHaveBeenCalledWith('admin_dm', 'https://public.example/file/s-fb');
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith('admin_dm', 'Đã báo cáo task FB001.');
+    expect(sendPhoto.mock.calls.some((call) => call[0] === 'off_group' || call[0] === 'report_group')).toBe(
+      false
+    );
     expect(sendMessage.mock.calls.some((call) => call[0] === 'off_group' || call[0] === 'report_group')).toBe(
       false
     );
+    db.close();
+  });
+
+  it('does not report when admin_official_chat_id is empty', async () => {
+    const db = openDb();
+    insertTask(db, { id: 't-noadmin', code: 'NOADM1', official: 'off_group', report: 'report_group' });
+    insertSub(db, {
+      id: 's-noadmin',
+      taskId: 't-noadmin',
+      uid: 'u1',
+      name: 'A',
+      storedPath: '/tmp/missing.jpg',
+      imageUrl: 'https://cdn.example/a.jpg',
+    });
+    const sendPhoto = vi.fn().mockResolvedValue({ messageId: 'p' });
+    const sendMessage = vi.fn().mockResolvedValue({ messageId: 'm' });
+    const results = await reportUnreportedCompletedTasks(db, {
+      sendPhoto,
+      sendMessage,
+      proofFileUrl: (id) => `https://public.example/file/${id}`,
+      proofDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tp-proof-')),
+      now: () => 11,
+      getAdminChatId: () => '  ',
+    });
+    expect(results[0].reported).toBe(false);
+    expect(results[0].destination).toBeNull();
+    expect(results[0].error).toBe('no admin chat id');
+    expect(sendPhoto).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    const row = db.prepare(`SELECT reported_at FROM tasks WHERE id = 't-noadmin'`).get() as {
+      reported_at: number | null;
+    };
+    expect(row.reported_at).toBeNull();
     db.close();
   });
 
@@ -201,6 +234,7 @@ describe('T6 completion report (Step 10)', () => {
     });
     expect(results).toHaveLength(1);
     expect(results[0].shortCode).toBe('KCK001');
+    expect(results[0].destination).toBe('admin_dm');
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith('admin_dm', formatAdminReportedNotice('KCK001'));
     const leftover = listUnreportedCompletedTasks(db);
@@ -264,6 +298,9 @@ describe('T6 completion report (Step 10)', () => {
       getAdminChatId: () => 'admin_dm',
     });
     expect(results[0].reported).toBe(false);
+    expect(results[0].destination).toBeNull();
+    expect(results[0].error).toBe('admin photo send failed');
+    expect(sendPhoto.mock.calls.every((call) => call[0] === 'admin_dm')).toBe(true);
     expect(sendMessage).not.toHaveBeenCalled();
     const row = db.prepare(`SELECT reported_at FROM tasks WHERE id = 't-fail'`).get() as {
       reported_at: number | null;
@@ -295,7 +332,7 @@ describe('T6 completion report (Step 10)', () => {
       getAdminChatId: () => 'admin_dm',
     });
     expect(results[0].reported).toBe(true);
-    expect(sendPhoto).toHaveBeenCalledWith('report_group', 'https://photo-stal-1.zdn.vn/gr/jpg/123/img.jpg');
+    expect(sendPhoto).toHaveBeenCalledWith('admin_dm', 'https://photo-stal-1.zdn.vn/gr/jpg/123/img.jpg');
     // Ensure proofFileUrl was not used when CDN URL succeeded
     expect(proofFileUrl).not.toHaveBeenCalled();
     db.close();

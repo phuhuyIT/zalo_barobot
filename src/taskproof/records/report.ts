@@ -1,12 +1,11 @@
 /**
  * report.ts
  *
- * T6 — báo cáo hoàn thành (official bot only, Section 8.6).
+ * T6 — báo cáo hoàn thành (official bot only).
  * sendPhoto chỉ nhận URL https (không đường dẫn đĩa).
- * Nhóm báo cáo chỉ nhận ảnh, không caption và không tin chữ.
- * Admin 1-1 nhận một câu "Đã báo cáo task …".
- * Một ảnh chết: log + bỏ qua, không hủy cả báo cáo.
- * Ảnh không tới report_group_id → gửi ảnh sang official_chat_id của nhóm task.
+ * Ảnh minh chứng và câu "Đã báo cáo task …" chỉ vào chat 1-1 admin
+ * (admin_official_chat_id). Không gửi nhóm báo cáo hay nhóm task.
+ * Ảnh không có caption. Một ảnh chết: log + bỏ qua, không hủy cả báo cáo.
  * /huy (cancelled) không vào hàng đợi này. Xóa proofs sau khi set reported_at.
  */
 
@@ -44,7 +43,7 @@ export interface ReportSendDeps {
   proofFileUrl?: (submissionId: string) => string;
   proofDir?: string;
   now?: () => number;
-  /** Chat 1-1 nhận câu đã báo cáo. Mặc định admin_official_chat_id. */
+  /** Chat 1-1 nhận ảnh và câu đã báo cáo. Mặc định admin_official_chat_id. */
   getAdminChatId?: () => string;
   /** Chỉ task này — kick ngay khi đủ quota / /dong. Cron không truyền. */
   taskId?: string;
@@ -56,7 +55,7 @@ export interface TaskReportResult {
   reported: boolean;
   photosSent: number;
   photosSkipped: number;
-  destination: 'report_group' | 'fallback_group' | null;
+  destination: 'admin_dm' | null;
   error?: string;
 }
 
@@ -211,15 +210,20 @@ function photosLanded(submissionCount: number, photosSent: number): boolean {
   return submissionCount === 0 || photosSent > 0;
 }
 
-async function notifyAdminReported(
+function resolveAdminReportChatId(
   db: Database.Database,
-  task: UnreportedTask,
-  sendMessage: (chatId: string, text: string) => Promise<unknown>,
   getAdminChatId?: () => string
-): Promise<void> {
-  const adminChatId = (
+): string {
+  return (
     getAdminChatId ? getAdminChatId() : getTaskproofSetting('admin_official_chat_id', db) || ''
   ).trim();
+}
+
+async function notifyAdminReported(
+  adminChatId: string,
+  task: UnreportedTask,
+  sendMessage: (chatId: string, text: string) => Promise<unknown>
+): Promise<void> {
   if (!adminChatId) {
     console.warn(`[TaskProof] Không có admin_official_chat_id, bỏ qua báo đã báo cáo ${task.short_code}.`);
     return;
@@ -262,9 +266,8 @@ function isAlreadyReported(db: Database.Database, taskId: string): boolean {
 }
 
 /**
- * Gửi một task completed. Ảnh chết không hủy báo cáo.
- * Nhóm chỉ nhận ảnh. Câu chữ chỉ tới admin 1-1, sau khi ảnh đã gửi.
- * report_group không nhận được ảnh → gửi ảnh sang nhóm task.
+ * Gửi một task completed vào chat 1-1 admin. Ảnh chết không hủy báo cáo.
+ * Câu chữ gửi sau khi ảnh đã tới, cùng chat đó.
  * Kick ngay + cron cùng process: một lần gửi (in-flight + reported_at).
  */
 export async function sendTaskCompletionReport(
@@ -298,55 +301,42 @@ async function sendTaskCompletionReportOnce(
   const submissions = listSubmissionsForTask(task.id, db);
 
   const photoDeps = { sendPhoto, proofFileUrl };
-  const reportChatId = (task.report_group_id || '').trim();
-  const fallbackChatId = (task.official_chat_id || '').trim();
-
-  let photosSent = 0;
-  let photosSkipped = 0;
-  let destination: TaskReportResult['destination'] = null;
-
-  if (reportChatId) {
-    const first = await deliverPhotosToChat(reportChatId, task, submissions, photoDeps);
-    photosSent = first.photosSent;
-    photosSkipped = first.photosSkipped;
-    if (photosLanded(submissions.length, first.photosSent)) destination = 'report_group';
-  }
-
-  if (!destination && fallbackChatId && fallbackChatId !== reportChatId) {
-    const second = await deliverPhotosToChat(fallbackChatId, task, submissions, photoDeps);
-    if (photosLanded(submissions.length, second.photosSent)) {
-      photosSent = second.photosSent;
-      photosSkipped = second.photosSkipped;
-      destination = 'fallback_group';
-    } else {
-      photosSent += second.photosSent;
-      photosSkipped += second.photosSkipped;
-    }
-  }
-
-  if (!destination) {
+  const adminChatId = resolveAdminReportChatId(db, deps.getAdminChatId);
+  if (!adminChatId) {
+    console.warn(`[TaskProof] Không có admin_official_chat_id, bỏ qua báo cáo ${task.short_code}.`);
     return {
       taskId: task.id,
       shortCode: task.short_code,
       reported: false,
-      photosSent,
-      photosSkipped,
+      photosSent: 0,
+      photosSkipped: 0,
       destination: null,
-      error: reportChatId || fallbackChatId ? 'both destinations failed' : 'no destination chat id',
+      error: 'no admin chat id',
+    };
+  }
+
+  const delivered = await deliverPhotosToChat(adminChatId, task, submissions, photoDeps);
+  if (!photosLanded(submissions.length, delivered.photosSent)) {
+    return {
+      taskId: task.id,
+      shortCode: task.short_code,
+      reported: false,
+      photosSent: delivered.photosSent,
+      photosSkipped: delivered.photosSkipped,
+      destination: null,
+      error: 'admin photo send failed',
     };
   }
 
   markReported(db, task.id, now(), proofDir);
-  await notifyAdminReported(db, task, sendMessage, deps.getAdminChatId);
+  await notifyAdminReported(adminChatId, task, sendMessage);
   return {
     taskId: task.id,
     shortCode: task.short_code,
     reported: true,
-    photosSent,
-    photosSkipped,
-    destination,
-    error:
-      destination === 'fallback_group' && reportChatId ? 'report_group failed, used fallback' : undefined,
+    photosSent: delivered.photosSent,
+    photosSkipped: delivered.photosSkipped,
+    destination: 'admin_dm',
   };
 }
 

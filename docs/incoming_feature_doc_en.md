@@ -13,7 +13,7 @@ participants, and a deadline). Members share the post and send a
 screenshot into the group as proof. The system verifies each screenshot
 with OCR + fuzzy text matching, reminds members who have not submitted,
 and once the quota is reached sends a completion report with every proof
-image to a designated report group.
+image to the admin 1-1 chat.
 
 This module supersedes any previous screenshot-collection design based on
 tagging or replying to the bot. It is not compatible with that design
@@ -47,9 +47,9 @@ the first service's volume.
   `/data/proofs/`.
 
 Both identities must be members of the task group: the official bot to
-receive commands, the secondary account to read images. The official bot
-must also be a member of the report group or it cannot deliver the
-report. The secondary account does not need to join the report group.
+receive commands, the secondary account to read images. The completion
+report is a 1-1 `sendPhoto` to `admin_official_chat_id`, so the official
+bot does not need a report-group membership to deliver it.
 
 Using zca-js means driving a personal Zalo account through an unofficial
 library. The account may be suspended. That risk is accepted for this
@@ -63,9 +63,10 @@ One variable must never be reused for both clients.
 
 | Name in this spec | Source | Used for |
 |---|---|---|
-| `official_chat_id` | Official-bot webhook when a command is typed in the group (same convention as `/gui`) | Receive commands, reply in-group, report fallback |
+| `official_chat_id` | Official-bot webhook when a command is typed in the group (same convention as `/gui`) | Receive commands, reply in-group |
 | `zca_group_id` | `message.threadId` / `GroupInfo.groupId` on the secondary account | Listen for images, OCR scope, mentions, member cache |
-| `report_group_id` | `BaoCao:` parameter or the default setting | Send the report — this is an **official** chat_id |
+| `report_group_id` | `BaoCao:` parameter or the default setting | Stored on the task. Completion photos go to `admin_official_chat_id` |
+| `admin_official_chat_id` | Task-proof setting (copied from the schedule admin recipient when empty) | 1-1 chat for QR, alerts, and the completion report |
 
 The mapping lives in `group_id_map`, created by `/lienket` (Section 8.10)
 or the Web UI. A task created before the map exists keeps
@@ -138,10 +139,12 @@ Official bot webhook receives the command
         ├─ if no linked collecting/overdue task remains, worker logs out
         ▼
 Official-bot scheduler (same run-due-jobs pattern as the schedule
-module) selects completed AND reported_at IS NULL. Sends images from
-local files (URL only as fallback) + a summary to report_group_id,
-falls back to the task group's official_chat_id, sets reported_at,
-deletes /data/proofs/{task_id}/ immediately.
+module) selects completed AND reported_at IS NULL. Sends proof images
+(no caption) to the admin 1-1 chat `admin_official_chat_id`, then the
+line `Đã báo cáo task {short_code}.` Quota close, `/dong`, and the Web
+UI close kick that send immediately. The minute poll only retries.
+`report_group_id` is stored and is not a send target. Sets
+`reported_at`, then deletes `/data/proofs/{task_id}/`.
 ```
 
 ## 3. Dependencies
@@ -258,15 +261,17 @@ LINK_PENDING_MS = 120_000;
 IDs stay empty on the UI until an admin fills them or runs `/lienket`:
 
 - `admin_official_chat_id` — default-copy from the schedule module's
-  `recipients.admin` if present; overridable
-- `default_report_group_id` — official chat_id of the report group
+  `recipients.admin` if present; overridable. Completion reports go here.
+- `default_report_group_id` — stored on the task as `report_group_id`.
+  Completion photos are not sent to this chat.
 - `official_bot_uid`
 - `zca_own_uid` — may be auto-filled after `getOwnId()`, still editable
 - `remind_exclude_uids` — csv / list
 - group map: see `group_id_map` (edit on the UI or via `/lienket`)
 
-`/task BaoCao:` still overrides `report_group_id` **for that one task**.
-The default comes from `default_report_group_id`.
+`/task BaoCao:` still stores `report_group_id` **for that one task**.
+The default comes from `default_report_group_id`. The completion report
+is sent to `admin_official_chat_id`.
 
 The worker and the official bot **read settings from the DB at handling
 time**, not once at process start — a UI change takes effect on the next
@@ -583,18 +588,16 @@ SELECT * FROM tasks WHERE status='completed' AND reported_at IS NULL
 
 For each row:
 
-1. Build the summary from `submissions` (short_code, caption, link,
-   display_name, timestamps, scores).
-2. For each submission, `sendPhoto` into `report_group_id` using the
-   **local file** at `stored_path`. `image_url` is fallback only. One
-   failed image → log + skip; do not abort the report.
-3. `sendMessage` with the summary (existing Zalo client, preformatted
-   text).
-4. If the report-group send fails (bot not a member, etc.), resend
-   images + text to the task group's `official_chat_id`. Sequential, one
-   recipient at a time — not a broadcast.
-5. `reported_at = now`.
-6. Delete `/data/proofs/{task_id}/` immediately.
+1. Resolve `admin_official_chat_id`. If it is empty, leave `reported_at`
+   NULL and retry later. Do not send to `report_group_id` or the task
+   group's `official_chat_id`.
+2. For each submission, `sendPhoto` into that admin 1-1 chat. Prefer the
+   Zalo CDN `image_url` when it is https; otherwise the public proof
+   file URL. No caption. One failed image → log + skip; do not abort
+   the report. If every photo fails, leave `reported_at` NULL.
+3. `sendMessage` to the same admin chat: `Đã báo cáo task {short_code}.`
+4. `reported_at = now`.
+5. Delete `/data/proofs/{task_id}/` immediately.
 
 `/huy` never enters this queue. Skip `cancelled` tasks.
 
@@ -687,8 +690,8 @@ One form; submit writes `taskproof_settings` immediately:
 
 - Official-bot UID, secondary-account UID
 - UIDs excluded from reminders (multiline or csv)
-- Default report group (`default_report_group_id`, official chat_id)
-- Admin chat that receives QR / alerts (`admin_official_chat_id`)
+- BaoCao chat id stored on the task (`default_report_group_id`, official chat_id)
+- Admin 1-1 chat that receives QR, alerts, and the completion report (`admin_official_chat_id`)
 - `max_mentions_per_message`, `max_reminder_text_len`
 - `ocr_match_threshold`, `default_required_count`
 - `max_auto_reminders`, `reminder_interval_ms`
@@ -834,8 +837,8 @@ schedule module's admin-reminder channel). `/task` / `/nhac` / `/lienket`
 - [ ] **Step 9**: OCR queue + file store + quota close (Section 8.2).
       Tesseract data files in the worker image.
 - [ ] **Step 10**: Report job on the existing scheduler (Section 8.6):
-      local files first, skip a dead image, fallback group, delete
-      proofs after `reported_at`.
+      photos to the admin 1-1 chat, skip a dead image, delete proofs
+      after `reported_at`.
 - [ ] **Step 11**: Health: if the worker is down while linked open tasks
       exist, notify admin.
 - [ ] **Step 12**: Task-proof Web UI section (Section 8.12): edit IDs /
@@ -843,9 +846,9 @@ schedule module's admin-reminder channel). `/task` / `/nhac` / `/lienket`
       DB, take effect without a restart. Same auth as the schedule page.
 - [ ] **Step 13**: E2E on a real group:
       `/lienket` → `/task` → passing and failing screenshots → `/tasks` →
-      `/nhac` (few missing vs `@all`) → quota → report group → fallback
-      when the bot is removed from the report group → `/dong` mid-task
-      still reports → `/huy` does not → worker restart mid-task still
+      `/nhac` (few missing vs `@all`) → quota → admin 1-1 report →
+      `/dong` mid-task still reports to that same chat → `/huy` does
+      not → worker restart mid-task still
       collects → `/gui` still works.
 
 ## 12. Coding rules carried over from the schedule module

@@ -86,7 +86,7 @@ describe('official-bot task-proof internal routes (Step 5)', () => {
       reported: true,
       photosSent: 1,
       photosSkipped: 0,
-      destination: 'report_group',
+      destination: 'admin_dm',
     },
   ]);
 
