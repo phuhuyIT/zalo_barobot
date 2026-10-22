@@ -944,6 +944,51 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       }
     });
 
+    it('counts the sample when admin uid is set but missing from the member cache', async () => {
+      const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-sample-'));
+      const prevProof = process.env.PROOF_DIR;
+      process.env.PROOF_DIR = proofDir;
+      try {
+        setTaskproofSetting('admin_zca_uid', '555', db);
+        const sendMessage = vi.fn().mockResolvedValue({});
+        const fb = 'https://www.facebook.com/share/p/proof/';
+        const deps = {
+          sendMessage,
+          ensureListening: async () => ({ status: 200, state: 'listening' as const, raw: {} }),
+          getAdminChatId: () => ADMIN,
+          listLinkedGroups: () => ONE_GROUP,
+          now: () => 4_000,
+          downloadSampleImage: async () => SAMPLE_PNG,
+        };
+        await handleTaskproofCommand(adminMessage(`/task ${fb}`), deps);
+        await handleTaskproofCommand(
+          inboundFrom({
+            event_name: 'message.image.received',
+            message: {
+              photo: 'https://cdn.example/admin.png',
+              chat: { id: ADMIN, chat_type: 'PRIVATE' },
+              from: { id: ADMIN },
+            },
+          }),
+          deps
+        );
+        await handleTaskproofCommand(adminMessage('1'), deps);
+        const task = db.prepare(`SELECT id FROM tasks`).get() as { id: string };
+        const submission = db
+          .prepare(`SELECT uid_from, display_name, proof_origin FROM submissions WHERE task_id = ?`)
+          .get(task.id) as { uid_from: string; display_name: string; proof_origin: string };
+        expect(submission).toEqual({
+          uid_from: '555',
+          display_name: '555',
+          proof_origin: 'sample',
+        });
+      } finally {
+        if (prevProof === undefined) delete process.env.PROOF_DIR;
+        else process.env.PROOF_DIR = prevProof;
+        fs.rmSync(proofDir, { recursive: true, force: true });
+      }
+    });
+
     it('keeps the sample file for matching when admin uid is unset', async () => {
       const proofDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-sample-'));
       const prevProof = process.env.PROOF_DIR;

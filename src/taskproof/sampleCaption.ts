@@ -4,8 +4,8 @@
  * /task <link Facebook> không còn lấy caption từ preview Facebook.
  * Admin gửi một ảnh trong chat 1-1. Caption là chữ đã gõ, hoặc "Ảnh mẫu".
  * Khi task được tạo, ảnh đó luôn được lưu làm mẫu đối chiếu.
- * Ảnh còn được tính là minh chứng của admin_zca_uid khi uid đó
- * có trong cache thành viên của nhóm đã chọn.
+ * Ảnh còn được tính là minh chứng của admin_zca_uid. Tên lấy từ
+ * cache thành viên nếu có; uid đã cấu hình vẫn được tính khi cache trống.
  * Ảnh mẫu không bị ảnh nhóm gửi sau của cùng uid ghi đè.
  */
 
@@ -237,7 +237,8 @@ export function resolveAdminMember(
   database?: Database.Database
 ): { userId: string; displayName: string } | null {
   const configured = stripMemberId(getTaskproofSetting('admin_zca_uid', database));
-  if (!configured || !zcaGroupId) return null;
+  if (!configured) return null;
+  if (!zcaGroupId) return { userId: configured, displayName: configured };
   const rows = dbOf(database)
     .prepare(
       `SELECT user_id, display_name FROM group_members_cache WHERE zca_group_id = ?`
@@ -246,8 +247,9 @@ export function resolveAdminMember(
   const hit = rows.find(
     (row) => row.user_id === configured || stripMemberId(row.user_id) === configured
   );
-  if (!hit) return null;
-  return { userId: hit.user_id, displayName: (hit.display_name || '').trim() || hit.user_id };
+  if (!hit) return { userId: configured, displayName: configured };
+  const userId = stripMemberId(hit.user_id) || hit.user_id;
+  return { userId, displayName: (hit.display_name || '').trim() || userId };
 }
 
 /**
