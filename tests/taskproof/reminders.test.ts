@@ -495,7 +495,7 @@ describe('task-proof reminders (Step 7)', () => {
               currentMems: [
                 { id: 'u1', dName: 'An', accountType: 0 },
                 { id: 'own-zca', dName: 'Baro', accountType: 0 },
-                { id: 'bot1', dName: 'Bot Trùm a2', accountType: 1 },
+                { id: 'bot1', dName: 'Bot culi của Baro', accountType: 1 },
               ],
             }),
           sendGroupMessage: async (_threadId, content) => {
@@ -507,6 +507,45 @@ describe('task-proof reminders (Step 7)', () => {
       const result = await runtime.remind('t1');
       expect(result).toMatchObject({ httpStatus: 200, reminded: true, kind: 'mentions', missing_count: 1 });
       expect(sent[0].mentions).toEqual([{ pos: 0, len: '@Name-u1'.length, uid: 'u1' }]);
+      expect(getTaskproofSetting('official_bot_uid', db)).toBe('bot1');
+      db.close();
+    });
+
+    it('drops a member named Bot when Zalo omits the account type', async () => {
+      const db = openDb();
+      insertOpenTask(db);
+      setTaskproofSetting('official_bot_uid', '1789269039087327867:session-token', db);
+      setTaskproofSetting('zca_own_uid', 'own-zca', db);
+      setTaskproofSetting('max_mentions_per_message', 8, db);
+
+      const sent: Array<{ mentions?: Array<{ uid: string }> }> = [];
+      const runtime = loggedInRuntime(
+        db,
+        mockPort({
+          getOwnId: () => 'own-zca',
+          getGroupInfo: async () =>
+            groupInfo({
+              memberIds: ['u1', 'own-zca', 'bot1'],
+              currentMems: [
+                { id: 'u1', dName: 'An' },
+                { id: 'own-zca', dName: 'Baro' },
+                { id: 'bot1', dName: 'Bot culi của Baro' },
+              ],
+            }),
+          getGroupMembersInfo: async (ids) =>
+            ids.map((id) => ({
+              id,
+              displayName: id === 'bot1' ? 'Bot culi của Baro' : id === 'own-zca' ? 'Baro' : 'An',
+            })),
+          sendGroupMessage: async (_threadId, content) => {
+            sent.push({ mentions: content.mentions });
+          },
+        })
+      );
+
+      const result = await runtime.remind('t1');
+      expect(result).toMatchObject({ httpStatus: 200, reminded: true, kind: 'mentions', missing_count: 1 });
+      expect(sent[0].mentions).toEqual([{ pos: 0, len: '@An'.length, uid: 'u1' }]);
       expect(getTaskproofSetting('official_bot_uid', db)).toBe('bot1');
       db.close();
     });

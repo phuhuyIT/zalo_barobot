@@ -33,6 +33,7 @@ import { historyFetchCount, QUET_DEFAULT_COUNT, ScanHistorySummary } from '../qu
 import { deliverQr, postLoginResult, postLinkResult, postReportNow, postScanResult } from './callbacks';
 import { conflictForPair, isMappedZcaGroup, shouldScoreZcaGroup, upsertGroupMap } from './groupMap';
 import {
+  botUidsFromDisplayNames,
   listCachedMembers,
   listLinkedOpenZcaGroups,
   observeMember,
@@ -1011,9 +1012,20 @@ export class WorkerRuntime {
       onlyWhenEmpty: learnBot ? false : opts.onlyWhenEmpty,
     });
 
-    const seenBots = refresh.botUids.length > 0 ? refresh.botUids : this.knownBotUids.get(task.zca_group_id) || [];
-    if (refresh.botUids.length > 0) this.knownBotUids.set(task.zca_group_id, refresh.botUids);
-    const configuredIsBot = seenBots.some((id) => stripMemberId(id) === configuredBot);
+    const members = listCachedMembers(db, task.zca_group_id);
+    const seenBots = [
+      ...new Set(
+        [
+          ...refresh.botUids,
+          ...(this.knownBotUids.get(task.zca_group_id) || []),
+          ...botUidsFromDisplayNames(members),
+        ]
+          .map((id) => stripMemberId(id))
+          .filter(Boolean)
+      ),
+    ];
+    if (seenBots.length > 0) this.knownBotUids.set(task.zca_group_id, seenBots);
+    const configuredIsBot = seenBots.some((id) => id === configuredBot);
     if (seenBots.length > 0 && !configuredIsBot && (!configuredBot || learnBot)) {
       try {
         setTaskproofSetting('official_bot_uid', seenBots[0], db);
@@ -1026,7 +1038,6 @@ export class WorkerRuntime {
       }
     }
 
-    const members = listCachedMembers(db, task.zca_group_id);
     const exclude = collectExcludeUids({
       officialBotUid: getTaskproofSetting('official_bot_uid', db),
       zcaOwnUid: getTaskproofSetting('zca_own_uid', db),

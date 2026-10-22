@@ -25,6 +25,23 @@ export function isBotAccountType(type: number | undefined): boolean {
   return type === ZALO_OA_ACCOUNT_TYPE;
 }
 
+/** Official bot in the squad group is "Bot culi của Baro". Zalo often omits account type. */
+export function isBotDisplayName(name: string): boolean {
+  const cleaned = (name || '').trim();
+  if (/^bot culi của baro$/i.test(cleaned)) return true;
+  return /^bot\b/i.test(cleaned);
+}
+
+export function botUidsFromDisplayNames(members: CachedMember[]): string[] {
+  const ids = new Set<string>();
+  for (const member of members) {
+    if (!isBotDisplayName(member.display_name)) continue;
+    const id = stripMemberId(member.user_id);
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
 export function botIdsFromMembers(
   members: Array<{ id: string; accountType?: number }>
 ): string[] {
