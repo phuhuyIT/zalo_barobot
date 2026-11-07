@@ -100,6 +100,16 @@ export function createWorkerApp(deps: WorkerAppDeps = {}): Express {
     res.json({ success: true, stopped, ...runtimeOf().status() });
   });
 
+  app.post('/internal/taskproof/refresh-members', async (req, res) => {
+    if (rejectIfInvalidInternalKey(req, res)) return;
+    const result = await runtimeOf().refreshMappedMembers();
+    res.status(result.httpStatus).json({
+      success: result.httpStatus < 400,
+      refreshed: result.refreshed,
+      error: result.error,
+    });
+  });
+
   app.post('/internal/taskproof/link-group', (req, res) => {
     if (rejectIfInvalidInternalKey(req, res)) return;
     const officialChatId =

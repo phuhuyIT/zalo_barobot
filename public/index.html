@@ -1989,10 +1989,6 @@
             <input type="number" min="0" x-model.number="taskproofSettings.qr_login_timeout_ms" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
           </label>
         </div>
-        <label class="text-xs font-semibold text-slate-600 space-y-1 block">
-          <span>UID loại trừ khi nhắc (csv / mỗi dòng một uid)</span>
-          <textarea x-model="taskproofExcludeText" rows="3" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono" placeholder="uid1, uid2"></textarea>
-        </label>
         <div class="flex justify-end">
           <button
             type="submit"
@@ -2003,6 +1999,118 @@
           </button>
         </div>
       </form>
+
+      <!-- Section A2: Exclude members by name -->
+      <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-bold text-slate-800">Thành viên không phải làm task</h3>
+            <p class="text-xs text-slate-500 mt-1">
+              Bấm <span class="font-semibold">Loại trừ</span> cạnh tên. Người đó không bị nhắc, và ảnh của họ không tính là minh chứng.
+              <span x-text="'Đang phải làm: ' + taskproofRosterCount().active + '. Đã loại trừ trong nhóm: ' + taskproofRosterCount().excluded + '.'"></span>
+            </p>
+          </div>
+          <div class="flex w-full sm:w-auto gap-2">
+            <button
+              type="button"
+              @click="reloadTaskproofMembers()"
+              :disabled="loadingTaskproofMembers"
+              class="touch-btn shrink-0 px-3 py-2 bg-indigo-50 text-indigo-700 rounded-xl text-xs font-semibold hover:bg-indigo-100 disabled:opacity-60"
+            >
+              <span x-text="loadingTaskproofMembers ? 'Đang tải…' : 'Tải tên thành viên'"></span>
+            </button>
+            <input
+              x-model="taskproofMemberQuery"
+              type="search"
+              placeholder="Tìm tên"
+              class="w-full sm:w-52 rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+
+        <div class="max-h-[28rem] overflow-y-auto space-y-4 pr-1">
+          <template x-for="group in taskproofMemberGroups()" :key="group.key">
+            <div class="space-y-2">
+              <div>
+                <h4 class="text-xs font-bold text-slate-700" x-text="group.title"></h4>
+                <p class="text-[11px] font-mono text-slate-400 truncate" x-text="group.subtitle"></p>
+              </div>
+              <template x-for="member in group.members" :key="group.key + '-' + member.user_id">
+                <div
+                  class="flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
+                  :class="member.excluded ? 'border-rose-200 bg-rose-50/70' : 'border-slate-100'"
+                >
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium text-slate-800 truncate" x-text="member.label"></div>
+                    <div
+                      x-show="member.user_id !== member.label"
+                      class="text-[11px] font-mono text-slate-400 truncate"
+                      x-text="member.user_id"
+                    ></div>
+                    <div x-show="member.autoSkip" class="text-[11px] text-amber-700" x-text="member.autoSkip"></div>
+                  </div>
+                  <button
+                    type="button"
+                    x-show="!member.autoSkip"
+                    @click="toggleTaskproofExclude(member.user_id)"
+                    :disabled="taskproofExcludeBusy !== ''"
+                    class="touch-btn shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-60"
+                    :class="member.excluded ? 'bg-slate-100 text-slate-700 hover:bg-slate-200' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'"
+                  >
+                    <span x-text="taskproofExcludeBusy === member.user_id ? 'Đang lưu…' : (member.excluded ? 'Bỏ loại trừ' : 'Loại trừ')"></span>
+                  </button>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <p x-show="loadingTaskproof && taskproofMembers.length === 0" class="text-sm text-slate-400">Đang tải danh sách thành viên…</p>
+        <p x-show="!loadingTaskproof && taskproofMembers.length === 0" class="text-sm text-slate-400">
+          Chưa có tên thành viên. Bấm Đánh thức worker nếu tài khoản phụ chưa đăng nhập, rồi bấm Tải tên thành viên. Nhóm phải đã liên kết (/lienket).
+        </p>
+        <p
+          x-show="taskproofMembers.length > 0 && taskproofMemberGroups().length === 0"
+          class="text-sm text-slate-400"
+        >Không thấy tên khớp.</p>
+
+        <div x-show="taskproofOrphanExcludes().length > 0" class="space-y-2">
+          <h4 class="text-xs font-bold text-slate-700">UID loại trừ chưa có trong danh sách nhóm</h4>
+          <template x-for="uid in taskproofOrphanExcludes()" :key="uid">
+            <div class="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/70 px-3 py-2">
+              <span class="font-mono text-xs text-slate-700 truncate" x-text="uid"></span>
+              <button
+                type="button"
+                @click="toggleTaskproofExclude(uid)"
+                :disabled="taskproofExcludeBusy !== ''"
+                class="touch-btn shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-60"
+              >
+                <span x-text="taskproofExcludeBusy === uid ? 'Đang lưu…' : 'Bỏ loại trừ'"></span>
+              </button>
+            </div>
+          </template>
+        </div>
+
+        <details class="rounded-xl border border-slate-200 px-3 py-2">
+          <summary class="cursor-pointer text-xs font-semibold text-slate-600">Thêm UID khi chưa có tên trong danh sách</summary>
+          <div class="mt-3 space-y-2">
+            <textarea
+              x-model="taskproofExcludeText"
+              rows="3"
+              class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono"
+              placeholder="Mỗi dòng một uid"
+            ></textarea>
+            <div class="flex justify-end">
+              <button
+                type="button"
+                @click="saveTaskproofExcludeText()"
+                :disabled="taskproofExcludeBusy !== ''"
+                class="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-semibold disabled:opacity-60"
+              >Lưu UID</button>
+            </div>
+          </div>
+        </details>
+      </div>
 
       <!-- Section B: Group map -->
       <div class="bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200 space-y-4">
@@ -2598,6 +2706,10 @@
           qr_login_timeout_ms: 90000,
         },
         taskproofExcludeText: '',
+        taskproofMembers: [],
+        taskproofMemberQuery: '',
+        taskproofExcludeBusy: '',
+        loadingTaskproofMembers: false,
         taskproofMaps: [],
         taskproofTasks: [],
         newGroupMap: { official_chat_id: '', zca_group_id: '', display_name: '' },
@@ -3348,12 +3460,192 @@
             this.taskproofSettings = { ...this.taskproofSettings, ...(data.settings || {}) };
             const exclude = (data.settings && data.settings.remind_exclude_uids) || [];
             this.taskproofExcludeText = Array.isArray(exclude) ? exclude.join('\n') : '';
+            this.taskproofMembers = data.members || [];
             this.taskproofMaps = data.maps || [];
             this.taskproofTasks = data.tasks || [];
           } catch (e) {
             this.showToast(e.message, 'error');
           } finally {
             this.loadingTaskproof = false;
+          }
+        },
+
+        stripTaskproofUid(raw) {
+          const value = String(raw || '').trim();
+          const match = value.match(/^(.+)_(\d+)$/);
+          return match ? match[1] : value;
+        },
+
+        taskproofExcludeIds() {
+          const seen = new Set();
+          const out = [];
+          for (const part of String(this.taskproofExcludeText || '').split(/[\s,;]+/)) {
+            const id = part.trim();
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            out.push(id);
+          }
+          return out;
+        },
+
+        isTaskproofExcluded(userId) {
+          const want = this.stripTaskproofUid(userId);
+          if (!want) return false;
+          return this.taskproofExcludeIds().some((id) => this.stripTaskproofUid(id) === want);
+        },
+
+        taskproofAutoSkipLabel(userId, displayName) {
+          const id = this.stripTaskproofUid(userId);
+          if (id && id === this.stripTaskproofUid(this.taskproofSettings.official_bot_uid)) {
+            return 'Bot chính thức — đã bỏ qua';
+          }
+          if (id && id === this.stripTaskproofUid(this.taskproofSettings.zca_own_uid)) {
+            return 'Tài khoản phụ — đã bỏ qua';
+          }
+          const name = String(displayName || '').trim();
+          if (/^bot culi của baro$/i.test(name) || /^bot\b/i.test(name)) return 'Bot — đã bỏ qua';
+          return '';
+        },
+
+        taskproofMemberGroups() {
+          const query = String(this.taskproofMemberQuery || '').trim().toLowerCase();
+          const groups = [];
+          const index = new Map();
+          for (const row of this.taskproofMembers || []) {
+            const userId = String(row.user_id || '');
+            const displayName = String(row.display_name || userId || 'Thành viên');
+            const title = row.group_name ? String(row.group_name) : 'Nhóm chưa đặt tên';
+            const subtitle = String(row.zca_group_id || '');
+            const hay = (displayName + ' ' + userId + ' ' + title + ' ' + subtitle).toLowerCase();
+            if (query && !hay.includes(query)) continue;
+            const key = subtitle || title;
+            let group = index.get(key);
+            if (!group) {
+              group = { key, title, subtitle, members: [] };
+              index.set(key, group);
+              groups.push(group);
+            }
+            group.members.push({
+              user_id: userId,
+              label: displayName,
+              excluded: this.isTaskproofExcluded(userId),
+              autoSkip: this.taskproofAutoSkipLabel(userId, displayName),
+            });
+          }
+          for (const group of groups) {
+            group.members.sort((a, b) => {
+              if (a.excluded !== b.excluded) return a.excluded ? -1 : 1;
+              if (Boolean(a.autoSkip) !== Boolean(b.autoSkip)) return a.autoSkip ? 1 : -1;
+              return a.label.localeCompare(b.label, 'vi');
+            });
+          }
+          return groups;
+        },
+
+        taskproofRosterCount() {
+          const active = new Set();
+          const excluded = new Set();
+          for (const row of this.taskproofMembers || []) {
+            const id = this.stripTaskproofUid(row.user_id);
+            if (!id || this.taskproofAutoSkipLabel(id, row.display_name)) continue;
+            if (this.isTaskproofExcluded(id)) excluded.add(id);
+            else active.add(id);
+          }
+          return { active: active.size, excluded: excluded.size };
+        },
+
+        taskproofOrphanExcludes() {
+          const known = new Set(
+            (this.taskproofMembers || []).map((row) => this.stripTaskproofUid(row.user_id)).filter(Boolean)
+          );
+          return this.taskproofExcludeIds().filter((id) => !known.has(this.stripTaskproofUid(id)));
+        },
+
+        async putTaskproofExcludeIds(ids) {
+          const res = await fetch('/api/taskproof/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ remind_exclude_uids: ids }),
+          });
+          const data = await res.json();
+          if (!data.success) {
+            this.showToast(data.error || 'Không lưu được loại trừ', 'error');
+            return false;
+          }
+          const exclude = (data.settings && data.settings.remind_exclude_uids) || [];
+          this.taskproofExcludeText = Array.isArray(exclude) ? exclude.join('\n') : '';
+          this.taskproofSettings.remind_exclude_uids = Array.isArray(exclude) ? exclude : [];
+          return true;
+        },
+
+        async toggleTaskproofExclude(userId) {
+          const want = this.stripTaskproofUid(userId);
+          if (!want || this.taskproofExcludeBusy) return;
+          const removing = this.isTaskproofExcluded(want);
+          const next = [];
+          const seen = new Set();
+          for (const id of this.taskproofExcludeIds()) {
+            const stripped = this.stripTaskproofUid(id);
+            if (!stripped || stripped === want || seen.has(stripped)) continue;
+            seen.add(stripped);
+            next.push(stripped);
+          }
+          if (!removing) next.push(want);
+          this.taskproofExcludeBusy = userId;
+          try {
+            const ok = await this.putTaskproofExcludeIds(next);
+            if (ok) {
+              this.showToast(removing ? 'Đã tính người này vào task' : 'Đã loại trừ khỏi task');
+            }
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.taskproofExcludeBusy = '';
+          }
+        },
+
+        async reloadTaskproofMembers() {
+          if (this.loadingTaskproofMembers) return;
+          this.loadingTaskproofMembers = true;
+          try {
+            const res = await fetch('/api/taskproof/members/refresh', { method: 'POST' });
+            const data = await res.json();
+            if (Array.isArray(data.members)) this.taskproofMembers = data.members;
+            if (!data.success) {
+              if (data.error === 'not_listening') {
+                this.showToast('Worker chưa đăng nhập. Bấm Đánh thức worker, rồi tải lại tên.', 'error');
+              } else {
+                this.showToast(data.error || data.hint || 'Không tải được tên thành viên', 'error');
+              }
+              return;
+            }
+            const count = (this.taskproofMembers || []).length;
+            this.showToast(count ? ('Đã tải ' + count + ' thành viên') : 'Chưa thấy thành viên. Hãy liên kết nhóm rồi tải lại.');
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.loadingTaskproofMembers = false;
+          }
+        },
+
+        async saveTaskproofExcludeText() {
+          if (this.taskproofExcludeBusy) return;
+          const ids = [];
+          const seen = new Set();
+          for (const id of this.taskproofExcludeIds()) {
+            const stripped = this.stripTaskproofUid(id);
+            if (!stripped || seen.has(stripped)) continue;
+            seen.add(stripped);
+            ids.push(stripped);
+          }
+          this.taskproofExcludeBusy = '*';
+          try {
+            const ok = await this.putTaskproofExcludeIds(ids);
+            if (ok) this.showToast('Đã lưu UID loại trừ');
+          } catch (e) {
+            this.showToast(e.message, 'error');
+          } finally {
+            this.taskproofExcludeBusy = '';
           }
         },
 
@@ -3372,6 +3664,8 @@
             const data = await res.json();
             if (data.success) {
               this.taskproofSettings = { ...this.taskproofSettings, ...(data.settings || {}) };
+              const exclude = (data.settings && data.settings.remind_exclude_uids) || [];
+              this.taskproofExcludeText = Array.isArray(exclude) ? exclude.join('\n') : '';
               this.showToast('Đã lưu cài đặt Task proof');
             } else {
               this.showToast(data.error || 'Lỗi lưu cài đặt', 'error');

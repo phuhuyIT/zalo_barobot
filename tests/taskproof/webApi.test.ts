@@ -8,9 +8,11 @@ import { initTaskproofTables } from '../../src/taskproof/records/store';
 import { taskproofWebRouter } from '../../src/taskproof/http/webApi';
 import { getTaskproofSetting, setTaskproofSetting } from '../../src/taskproof/records/settings';
 import { kickTaskCompletionReport } from '../../src/taskproof/records/report';
+import { postRefreshMembers } from '../../src/taskproof/http/workerClient';
 vi.mock('../../src/taskproof/http/workerClient', () => ({
   postEnsureListening: vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} }),
   postMaybeStop: vi.fn().mockResolvedValue({ status: 200, json: {} }),
+  postRefreshMembers: vi.fn().mockResolvedValue({ status: 200, json: { refreshed: [] } }),
 }));
 
 vi.mock('../../src/taskproof/records/report', () => ({
@@ -69,6 +71,82 @@ describe('Task-proof Web UI API (Step 12)', () => {
     expect(data.settings.remind_exclude_uids).toEqual(['uid_a', 'uid_b']);
     expect(data.settings.INTERNAL_API_KEY).toBeUndefined();
     expect(getTaskproofSetting('default_required_count', db)).toBe(8);
+  });
+
+  it('lists cached group members for the exclude buttons', async () => {
+    db.prepare(
+      `INSERT INTO group_id_map (official_chat_id, zca_group_id, display_name, linked_at, linked_by_uid)
+       VALUES ('off_1', 'zca-1', 'Nhom A', 1, NULL)`
+    ).run();
+    const insertMember = db.prepare(
+      `INSERT INTO group_members_cache (zca_group_id, user_id, display_name, updated_at)
+       VALUES (?, ?, ?, ?)`
+    );
+    insertMember.run('zca-1', 'uid_b', 'Binh', 2);
+    insertMember.run('zca-1', 'uid_a', 'An', 2);
+    insertMember.run('zca-orphan', 'uid_c', 'Chi', 1);
+
+    const res = await fetch(`${baseUrl}/api/taskproof`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.members).toEqual([
+      {
+        zca_group_id: 'zca-1',
+        official_chat_id: 'off_1',
+        group_name: 'Nhom A',
+        user_id: 'uid_a',
+        display_name: 'An',
+      },
+      {
+        zca_group_id: 'zca-1',
+        official_chat_id: 'off_1',
+        group_name: 'Nhom A',
+        user_id: 'uid_b',
+        display_name: 'Binh',
+      },
+      {
+        zca_group_id: 'zca-orphan',
+        official_chat_id: null,
+        group_name: null,
+        user_id: 'uid_c',
+        display_name: 'Chi',
+      },
+    ]);
+  });
+
+  it('returns cached members after the worker refresh, and surfaces not_listening', async () => {
+    vi.mocked(postRefreshMembers).mockResolvedValueOnce({
+      status: 409,
+      json: { success: false, error: 'not_listening', refreshed: [] },
+    });
+    const denied = await fetch(`${baseUrl}/api/taskproof/members/refresh`, { method: 'POST' });
+    expect(denied.status).toBe(409);
+    expect(await denied.json()).toMatchObject({ success: false, error: 'not_listening', members: [] });
+
+    vi.mocked(postRefreshMembers).mockImplementationOnce(async () => {
+      db.prepare(
+        `INSERT INTO group_id_map (official_chat_id, zca_group_id, display_name, linked_at, linked_by_uid)
+         VALUES ('off_1', 'zca-1', 'Nhom A', 1, NULL)`
+      ).run();
+      db.prepare(
+        `INSERT INTO group_members_cache (zca_group_id, user_id, display_name, updated_at)
+         VALUES ('zca-1', 'uid_a', 'An', 1)`
+      ).run();
+      return { status: 200, json: { refreshed: [{ zca_group_id: 'zca-1', member_count: 1, ok: true }] } };
+    });
+    const res = await fetch(`${baseUrl}/api/taskproof/members/refresh`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.members).toEqual([
+      {
+        zca_group_id: 'zca-1',
+        official_chat_id: 'off_1',
+        group_name: 'Nhom A',
+        user_id: 'uid_a',
+        display_name: 'An',
+      },
+    ]);
   });
 
   it('rejects a cross-origin settings write', async () => {

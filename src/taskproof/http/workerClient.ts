@@ -97,3 +97,8 @@ export async function postMaybeStop(): Promise<{ status: number; json: Record<st
   return workerFetch('POST', '/internal/taskproof/maybe-stop');
 }
 
+/** Tải lại tên thành viên các nhóm đã map. Worker phải đang login. */
+export async function postRefreshMembers(): Promise<{ status: number; json: Record<string, unknown> }> {
+  return workerFetch('POST', '/internal/taskproof/refresh-members', {}, 30_000);
+}
+

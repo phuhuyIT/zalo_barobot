@@ -10,6 +10,7 @@ import { Router, Request, Response } from 'express';
 import { rejectCrossOriginWrite } from '../../channels/auth';
 import { getDatabase } from '../../store';
 import { cancelTask, completeTask } from '../records/lifecycle';
+import { listTaskproofMembers } from '../records/members';
 import { deleteGroupMap, listGroupMaps, saveGroupMap } from '../records/maps';
 import {
   getAllTaskproofSettings,
@@ -23,7 +24,7 @@ import {
 import { listRecentTasks } from '../records/tasks';
 import { getTaskByExactShortCode } from '../commands/shortCode';
 import { kickTaskCompletionReport } from '../records/report';
-import { postEnsureListening, postMaybeStop } from './workerClient';
+import { postEnsureListening, postMaybeStop, postRefreshMembers } from './workerClient';
 
 export const taskproofWebRouter = Router();
 taskproofWebRouter.use(rejectCrossOriginWrite);
@@ -223,6 +224,27 @@ taskproofWebRouter.post('/api/taskproof/wake-worker', async (_req: Request, res:
   }
 });
 
+taskproofWebRouter.post('/api/taskproof/members/refresh', async (_req: Request, res: Response) => {
+  try {
+    const result = await postRefreshMembers();
+    const members = listTaskproofMembers();
+    if (result.status >= 400) {
+      const error = typeof result.json.error === 'string' ? result.json.error : 'refresh failed';
+      res.status(result.status).json({ success: false, error, members });
+      return;
+    }
+    res.json({ success: true, members, refresh: result.json.refreshed || [] });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(502).json({
+      success: false,
+      error: message,
+      members: listTaskproofMembers(),
+      hint: 'Worker không chạy. Bấm Đánh thức worker.',
+    });
+  }
+});
+
 taskproofWebRouter.get('/api/taskproof', (_req: Request, res: Response) => {
   try {
     const all = getAllTaskproofSettings();
@@ -234,6 +256,7 @@ taskproofWebRouter.get('/api/taskproof', (_req: Request, res: Response) => {
       success: true,
       settings,
       maps: listGroupMaps(),
+      members: listTaskproofMembers(),
       tasks: listRecentTasks(),
       default_required_count: getTaskproofSetting('default_required_count'),
     });

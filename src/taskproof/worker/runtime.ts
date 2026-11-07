@@ -1114,6 +1114,44 @@ export class WorkerRuntime {
     };
   }
 
+  /**
+   * Web UI: tải lại tên thành viên của mọi nhóm đã map.
+   * Không tự login — caller phải đang nghe (Đánh thức worker).
+   */
+  async refreshMappedMembers(): Promise<{
+    httpStatus: number;
+    refreshed: Array<{ zca_group_id: string; member_count: number; ok: boolean; warning?: string }>;
+    error?: string;
+  }> {
+    if (!this.loggedIn) {
+      return { httpStatus: 409, refreshed: [], error: 'not_listening' };
+    }
+    const db = this.db();
+    if (!db) return { httpStatus: 503, refreshed: [], error: 'no_db' };
+    const rows = db.prepare(`SELECT zca_group_id FROM group_id_map`).all() as Array<{
+      zca_group_id: string;
+    }>;
+    const ids = [...new Set(rows.map((row) => row.zca_group_id).filter(Boolean))];
+    const refreshed: Array<{ zca_group_id: string; member_count: number; ok: boolean; warning?: string }> =
+      [];
+    for (const zcaGroupId of ids) {
+      const result = await refreshMemberCache({
+        db,
+        port: this.deps.loginPort,
+        zcaGroupId,
+        now: this.deps.now(),
+        forceRefresh: true,
+      });
+      refreshed.push({
+        zca_group_id: zcaGroupId,
+        member_count: result.memberCount,
+        ok: result.ok,
+        warning: result.warning,
+      });
+    }
+    return { httpStatus: 200, refreshed };
+  }
+
   /** Listen: refresh cache già/trống, không chờ, không chặn webhook. */
   private refreshStaleLinkedCaches(): void {
     const db = this.db();
