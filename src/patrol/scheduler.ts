@@ -5,8 +5,10 @@ import {
   getPatrolDailyStatus,
   updatePatrolReminder,
   getPatrolSiteConfigs,
+  getPatrolReporterStatus,
+  updatePatrolReporterReminder,
 } from './repository';
-import { getSquad1LeaderUserId, getPatrolGroupId } from './service';
+import { getSquad1LeaderUserId, getPatrolGroupId, getSiteReporterIds } from './service';
 
 export interface PatrolReminderResult {
   triggered: boolean;
@@ -118,6 +120,96 @@ export async function runPatrolReminders(
         reminderCount: 0,
         reason: `Thời gian hiện tại (${currentTime}) không thuộc các mốc nhắc nhở của ${site.displayName} (${reminderTimes.join(', ')})`,
       });
+      continue;
+    }
+
+    // Trụ sở 1 do hai người gửi: nhắc riêng từng người chưa nộp. Trụ sở 2 giữ một người.
+    const reporterIds = getSiteReporterIds(site);
+    if (site.siteKey === 'site_1' && reporterIds.length >= 2) {
+      for (const reporterId of reporterIds) {
+        const reporter = getPatrolReporterStatus(
+          todayDmy,
+          site.siteKey,
+          reporterId,
+          options?.database
+        );
+        if (reporter?.submitted) {
+          siteResults.push({
+            siteKey: site.siteKey,
+            triggered: false,
+            reminderCount: reporter.reminderCount,
+            reason: `${site.displayName}: ${reporterId} đã nộp lịch hôm nay.`,
+          });
+          continue;
+        }
+
+        const currentCount = reporter?.reminderCount || 0;
+        if (currentCount >= maxReminders) {
+          siteResults.push({
+            siteKey: site.siteKey,
+            triggered: false,
+            reminderCount: currentCount,
+            reason: `Đã đạt giới hạn tối đa ${maxReminders} lần nhắc nhở cho ${reporterId}.`,
+          });
+          continue;
+        }
+        if (reporter?.lastReminderAt === slotTime) {
+          siteResults.push({
+            siteKey: site.siteKey,
+            triggered: false,
+            reminderCount: currentCount,
+            reason: `Nhắc nhở cho mốc giờ này của ${reporterId} đã được gửi thành công.`,
+          });
+          continue;
+        }
+
+        const nextReminderCount = currentCount + 1;
+        const reminderMessage =
+          `⏰ Nhắc nhở nộp lịch tuần tra (Lần ${nextReminderCount}/${maxReminders})\n\n` +
+          `Người phụ trách ${site.displayName} chưa nộp lịch đi tuần hôm nay (${todayDmy}).\n\n` +
+          `Vui lòng sử dụng cú pháp:\n` +
+          `tuantra <tên 1>, <tên 2>\n` +
+          `hoặc đa ca:\n` +
+          `tuantra\nCa 1: <tên>\nCa 2: <tên>\n` +
+          `hoặc báo nghỉ nếu không có ca tuần:\n` +
+          `tuantra 0 / tuantra nghi / tuantra none`;
+
+        try {
+          console.log(
+            `[Patrol] Đang gửi nhắc nhở #${nextReminderCount} tới ${reporterId} cho ${site.displayName} lúc ${slotTime} (kiểm tra ${currentTime})...`
+          );
+          await zalo.sendMessage(reporterId, reminderMessage);
+          updatePatrolReporterReminder(
+            {
+              date: todayDmy,
+              siteKey: site.siteKey,
+              reporterUserId: reporterId,
+              groupId: site.chatId || reporterId,
+              reminderCount: nextReminderCount,
+              lastReminderAt: slotTime,
+            },
+            options?.database
+          );
+          siteResults.push({
+            siteKey: site.siteKey,
+            triggered: true,
+            reminderCount: nextReminderCount,
+            sentChatId: reporterId,
+          });
+        } catch (err: unknown) {
+          const messageText = err instanceof Error ? err.message : String(err);
+          console.error(
+            `[Patrol] Lỗi gửi nhắc nhở #${nextReminderCount} cho ${reporterId}:`,
+            messageText
+          );
+          siteResults.push({
+            siteKey: site.siteKey,
+            triggered: false,
+            reminderCount: currentCount,
+            reason: `Gửi tin nhắn thất bại: ${messageText}`,
+          });
+        }
+      }
       continue;
     }
 
