@@ -36,6 +36,8 @@ describe('Patrol Feature Tests (Mục 30: Tests 1 - 16)', () => {
     storeModule.initTables(mockDb);
     storeModule.setDatabase(mockDb);
 
+    delete process.env.SITE_1_LEADER_2_USER_ID;
+    delete process.env.TIUDOI_1_LEADER_2_USER_ID;
     process.env.TIUDOI_1_LEADER_USER_ID = squad1LeaderId;
     process.env.PATROL_GROUP_ID = patrolGroupId;
     process.env.PLATOON_LEADER_CHAT_ID = platoonLeaderId;
