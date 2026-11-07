@@ -10,11 +10,14 @@ import {
   getPatrolSiteConfigs,
   getPatrolSummaryStatus,
   savePatrolSummaryStatus,
+  getPatrolReporterStatus,
+  savePatrolReporterSubmission,
 } from './repository';
 import { parsePatrolCommand } from './parser';
 import {
   PatrolCommandPayload,
   PatrolCommandResult,
+  PatrolReporterStatus,
   PatrolShift,
   PatrolSiteConfig,
 } from './types';
@@ -313,6 +316,270 @@ export function groupPatrolTasksIntoShifts(
 }
 
 /**
+ * User ID người báo cáo thứ hai của Trụ sở 1, từ biến môi trường.
+ * Dùng khi cột trong SQLite còn trống.
+ */
+export function getSite1SecondLeaderUserId(): string {
+  return (
+    process.env.SITE_1_LEADER_2_USER_ID ||
+    process.env.TIUDOI_1_LEADER_2_USER_ID ||
+    ''
+  ).trim();
+}
+
+/**
+ * Những người được phép gửi lịch của một site.
+ * Trụ sở 1 có thể có hai người. Trụ sở 2 luôn một người.
+ */
+export function getSiteReporterIds(site: PatrolSiteConfig): string[] {
+  const ids: string[] = [];
+  const primary = (site.leaderUserId || '').trim();
+  if (primary) ids.push(primary);
+  if (site.siteKey === 'site_1') {
+    const second = (site.leaderUserId2 || getSite1SecondLeaderUserId()).trim();
+    if (second && !ids.includes(second)) ids.push(second);
+  }
+  return ids;
+}
+
+export interface ReportedPatrolPiece {
+  hasPatrol: boolean;
+  isMultiShift: boolean;
+  members: string[];
+  shifts: PatrolShift[];
+}
+
+/**
+ * Ghép phần lịch của hai người ở Trụ sở 1.
+ * Hai người phải cùng báo nghỉ, hoặc cùng một kiểu chia ca. Lệch thì không đoán.
+ */
+export function combineHeadquartersReports(
+  pieces: ReportedPatrolPiece[]
+):
+  | { ok: true; hasPatrol: boolean; isMultiShift: boolean; members: string[]; shifts: PatrolShift[] }
+  | { ok: false; error: string } {
+  if (pieces.length === 0) {
+    return { ok: false, error: 'Chưa có báo cáo nào từ Trụ sở 1.' };
+  }
+
+  const anyPatrol = pieces.some((p) => p.hasPatrol);
+  const anyOff = pieces.some((p) => !p.hasPatrol);
+  if (anyPatrol && anyOff) {
+    return {
+      ok: false,
+      error:
+        'Hai người báo cáo Trụ sở 1 không khớp: một người có ca tuần tra, một người báo nghỉ.',
+    };
+  }
+  if (!anyPatrol) {
+    return { ok: true, hasPatrol: false, isMultiShift: false, members: [], shifts: [] };
+  }
+
+  const multiFlags = pieces.map((p) => p.isMultiShift);
+  if (multiFlags.some(Boolean) && multiFlags.some((flag) => !flag)) {
+    return {
+      ok: false,
+      error: 'Hai người báo cáo Trụ sở 1 không khớp: một người gửi một ca, một người gửi nhiều ca.',
+    };
+  }
+
+  if (!multiFlags[0]) {
+    const members: string[] = [];
+    for (const piece of pieces) {
+      for (const name of piece.members) {
+        if (name && !members.includes(name)) members.push(name);
+      }
+    }
+    return {
+      ok: true,
+      hasPatrol: true,
+      isMultiShift: false,
+      members,
+      shifts: [{ shiftNumber: 1, shiftLabel: 'Ca 1', members }],
+    };
+  }
+
+  const shiftKey = (piece: ReportedPatrolPiece) =>
+    [...piece.shifts]
+      .map((s) => s.shiftNumber)
+      .sort((a, b) => a - b)
+      .join(',');
+  const keys = pieces.map(shiftKey);
+  if (new Set(keys).size > 1) {
+    return {
+      ok: false,
+      error: 'Hai người báo cáo Trụ sở 1 lệch số ca. Hệ thống không tự ghép khi số ca khác nhau.',
+    };
+  }
+
+  const shiftNumbers = [...pieces[0].shifts]
+    .map((s) => s.shiftNumber)
+    .sort((a, b) => a - b);
+  const shifts: PatrolShift[] = shiftNumbers.map((shiftNumber) => {
+    const members: string[] = [];
+    let shiftLabel = `Ca ${shiftNumber}`;
+    for (const piece of pieces) {
+      const shift = piece.shifts.find((s) => s.shiftNumber === shiftNumber);
+      if (shift?.shiftLabel) shiftLabel = shift.shiftLabel;
+      for (const name of shift?.members || []) {
+        if (name && !members.includes(name)) members.push(name);
+      }
+    }
+    return { shiftNumber, shiftLabel, members };
+  });
+
+  return {
+    ok: true,
+    hasPatrol: true,
+    isMultiShift: true,
+    members: shifts.flatMap((s) => s.members),
+    shifts,
+  };
+}
+
+/** Để lần gửi lại cùng messageId vẫn được xét, khi ghép lịch thất bại. */
+function releaseReporterMessageId(
+  date: string,
+  siteKey: string,
+  reporterUserId: string,
+  database?: Database.Database
+): void {
+  const row = getPatrolReporterStatus(date, siteKey, reporterUserId, database);
+  if (!row?.messageId) return;
+  savePatrolReporterSubmission(
+    {
+      date,
+      siteKey,
+      reporterUserId,
+      groupId: row.groupId,
+      senderId: row.senderId || reporterUserId,
+      selectedMembers: row.selectedMembers,
+      shifts: row.shifts,
+      hasPatrol: row.hasPatrol,
+      isMultiShift: row.isMultiShift,
+      rawMessage: row.rawMessage,
+      receivedAt: row.receivedAt,
+    },
+    database
+  );
+}
+
+function reporterPiece(row: PatrolReporterStatus): ReportedPatrolPiece {
+  return {
+    hasPatrol: row.hasPatrol,
+    isMultiShift: row.isMultiShift,
+    members: row.selectedMembers,
+    shifts: row.shifts,
+  };
+}
+
+async function warnPatrolAdmin(zalo: ZaloClient, message: string): Promise<void> {
+  try {
+    const config = getConfig();
+    const adminChatId = getRecipientChatId('admin', config);
+    if (!adminChatId) return;
+    await zalo.sendMessage(adminChatId, message);
+    console.log(`[Patrol] Đã gửi cảnh báo tới Admin (${adminChatId}).`);
+  } catch (adminErr: unknown) {
+    const messageText = adminErr instanceof Error ? adminErr.message : String(adminErr);
+    console.error('[Patrol] Lỗi gửi cảnh báo tới Admin:', messageText);
+  }
+}
+
+/**
+ * Ghép phần lịch đã báo với cột Tuần tra trên Google Sheet.
+ * Site không bật ghép sheet thì giữ nguyên phần đã báo.
+ */
+async function resolveMergedShifts(
+  matchedSite: PatrolSiteConfig,
+  todayDmy: string,
+  report: { isNoPatrol: boolean; isMultiShift: boolean; members: string[]; shifts: PatrolShift[] },
+  options:
+    | {
+        database?: Database.Database;
+        skipSheetFetchForTesting?: boolean;
+        mockMySquadTasks?: { taskName: string; assignee: string; subTask?: string }[];
+      }
+    | undefined,
+  zalo: ZaloClient
+): Promise<{ ok: true; shifts: PatrolShift[]; members: string[] } | { ok: false; error: string }> {
+  if (!matchedSite.mergeWithSheet) {
+    if (report.isNoPatrol) return { ok: true, shifts: [], members: [] };
+    const shifts = report.shifts.length > 0
+      ? report.shifts
+      : [{ shiftNumber: 1, shiftLabel: 'Ca 1', members: report.members }];
+    const members = report.members.length > 0 ? report.members : shifts.flatMap((s) => s.members);
+    return { ok: true, shifts, members };
+  }
+
+  let mySquadTasks: { taskName: string; assignee: string; subTask?: string }[] = [];
+  if (options?.mockMySquadTasks) {
+    mySquadTasks = options.mockMySquadTasks;
+  } else if (!options?.skipSheetFetchForTesting) {
+    try {
+      console.log(`[Patrol] Đang tải lịch đi tuần từ Google Sheets ngày ${todayDmy}...`);
+      mySquadTasks = await fetchMySquadPatrolTasks(todayDmy);
+      console.log(
+        `[Patrol] Lịch Google Sheets giải quyết thành công (${mySquadTasks.length} ca):`,
+        mySquadTasks.map((t) => `${t.taskName}: ${t.assignee}`).join(', ')
+      );
+    } catch (sheetErr: unknown) {
+      const messageText = sheetErr instanceof Error ? sheetErr.message : String(sheetErr);
+      console.error('[Patrol] PATROL SUMMARY FAILED');
+      console.error('Reason: Cannot resolve current team\'s patrol schedule:', messageText);
+      return {
+        ok: false,
+        error: `Không thể đọc lịch đi tuần của tiểu đội từ Google Sheet: ${messageText}`,
+      };
+    }
+  }
+
+  const sheetShifts = groupPatrolTasksIntoShifts(mySquadTasks);
+  const sheetShiftCount = sheetShifts.length;
+  const reportedShiftCount = report.isNoPatrol ? 0 : report.isMultiShift ? report.shifts.length : 1;
+
+  if (reportedShiftCount !== sheetShiftCount) {
+    console.warn(
+      `[Patrol] LỆCH SỐ CA: Người báo cáo có ${reportedShiftCount} ca, Sheet có ${sheetShiftCount} ca`
+    );
+    const warnMsg =
+      `⚠️ CẢNH BÁO LỆCH SỐ CA TUẦN TRA (${todayDmy}):\n` +
+      `Tại ${matchedSite.displayName}, Google Sheet có ${sheetShiftCount} ca nhưng người báo cáo gửi ${reportedShiftCount} ca.\n` +
+      `Hệ thống tạm dừng tự động gửi báo cáo tổng hợp. Vui lòng kiểm tra lại Google Sheet hoặc nhắc người báo cáo điều chỉnh.`;
+    await warnPatrolAdmin(zalo, warnMsg);
+    return {
+      ok: false,
+      error: `Lệch số ca tuần tra: Google Sheet có ${sheetShiftCount} ca nhưng người báo cáo gửi ${reportedShiftCount} ca (Shift count mismatch)`,
+    };
+  }
+
+  if (report.isNoPatrol) {
+    return { ok: true, shifts: [], members: [] };
+  }
+
+  if (report.isMultiShift) {
+    const shifts = report.shifts.map((shift, idx) => {
+      const sheetShiftMembers = sheetShifts[idx]?.members || [];
+      const members = [...shift.members, ...sheetShiftMembers];
+      return {
+        shiftNumber: shift.shiftNumber,
+        shiftLabel: shift.shiftLabel || `Ca ${shift.shiftNumber}`,
+        members,
+      };
+    });
+    return { ok: true, shifts, members: shifts.flatMap((s) => s.members) };
+  }
+
+  const sheetShiftMembers = sheetShifts[0]?.members || [];
+  const members = [...report.members, ...sheetShiftMembers];
+  return {
+    ok: true,
+    shifts: [{ shiftNumber: 1, shiftLabel: 'Ca 1', members }],
+    members,
+  };
+}
+
+/**
  * Tìm site phù hợp cho lệnh tuantra nhận được dựa trên người gửi hoặc nhóm gửi.
  */
 export function resolveSiteForCommand(
@@ -326,19 +593,21 @@ export function resolveSiteForCommand(
 } {
   const configs = getPatrolSiteConfigs(database).filter((s) => s.enabled);
 
-  // 1. Tìm site mà senderId trùng khớp với leaderUserId
-  let matchedSite = configs.find((s) => s.leaderUserId && s.leaderUserId === senderId) || null;
+  // 1. Tìm site mà senderId trùng người báo cáo (Trụ sở 1 có thể có hai người)
+  let matchedSite = configs.find((s) => getSiteReporterIds(s).includes(senderId)) || null;
 
   // Fallback: nếu chưa cấu hình trong DB, kiểm tra env vars cho site_1
   if (!matchedSite) {
     const s1Leader = getSquad1LeaderUserId();
+    const s1Second = getSite1SecondLeaderUserId();
     const s2Leader = (process.env.SITE_2_LEADER_USER_ID || '').trim();
 
-    if (s1Leader && senderId === s1Leader) {
+    if ((s1Leader && senderId === s1Leader) || (s1Second && senderId === s1Second)) {
       matchedSite = configs.find((s) => s.siteKey === 'site_1') || {
         siteKey: 'site_1',
         displayName: 'Trụ sở 1 (Tân Phước Khánh)',
         leaderUserId: s1Leader,
+        leaderUserId2: s1Second,
         chatId: getPatrolGroupId(),
         mergeWithSheet: true,
         reminderTimes: ['06:30', '06:35', '06:40'],
@@ -448,19 +717,27 @@ export async function handlePatrolCommand(
   const vnTime = getVietnamTimeParts(new Date());
   const todayDmy = vnTime.dateDMY; // DD/MM/YYYY
 
+  const reporterIds = getSiteReporterIds(matchedSite);
+  const twoReporters = matchedSite.siteKey === 'site_1' && reporterIds.length >= 2;
+
   // 4. Kiểm tra Idempotency cho messageId (tránh webhook retry)
   const currentDailyStatus = getPatrolDailyStatus(todayDmy, matchedSite.siteKey, options?.database);
-  if (messageId && currentDailyStatus?.messageId === messageId) {
-    console.log(`[Patrol] Bỏ qua messageId trùng lặp đã xử lý trước đó: ${messageId}`);
-    return {
-      handled: true,
-      success: true,
-      siteKey: matchedSite.siteKey,
-      ignoredReason: 'duplicate_message',
-      members: currentDailyStatus.selectedMembers,
-      shifts: currentDailyStatus.shifts,
-      summarySent: false,
-    };
+  if (messageId) {
+    const duplicateSource = twoReporters
+      ? getPatrolReporterStatus(todayDmy, matchedSite.siteKey, senderId, options?.database)
+      : currentDailyStatus;
+    if (duplicateSource?.messageId === messageId && duplicateSource.submitted) {
+      console.log(`[Patrol] Bỏ qua messageId trùng lặp đã xử lý trước đó: ${messageId}`);
+      return {
+        handled: true,
+        success: true,
+        siteKey: matchedSite.siteKey,
+        ignoredReason: 'duplicate_message',
+        members: duplicateSource.selectedMembers,
+        shifts: duplicateSource.shifts,
+        summarySent: false,
+      };
+    }
   }
 
   // 5. Phân tích lệnh tuantra
@@ -488,115 +765,136 @@ export async function handlePatrolCommand(
     };
   }
 
-  // 6. Xử lý logic ghép Sheet (áp dụng cho Site 1 / merge_with_sheet)
-  let mergedShifts: PatrolShift[];
-  let mergedMembers: string[];
+  // 6. Trụ sở 1 do hai người gửi: lưu từng người, chờ đủ rồi mới ghép và đối chiếu Sheet.
+  let reportIsNoPatrol = Boolean(parseResult.isNoPatrol);
+  let reportIsMultiShift = Boolean(parseResult.isMultiShift);
+  let reportMembers = parseResult.members;
+  let reportShifts = parseResult.shifts || [];
+  let storedRawMessage = text;
 
-  if (matchedSite.mergeWithSheet) {
-    let mySquadTasks: { taskName: string; assignee: string; subTask?: string }[] = [];
-    if (options?.mockMySquadTasks) {
-      mySquadTasks = options.mockMySquadTasks;
-    } else if (!options?.skipSheetFetchForTesting) {
-      try {
-        console.log(`[Patrol] Đang tải lịch đi tuần từ Google Sheets ngày ${todayDmy}...`);
-        mySquadTasks = await fetchMySquadPatrolTasks(todayDmy);
-        console.log(
-          `[Patrol] Lịch Google Sheets giải quyết thành công (${mySquadTasks.length} ca):`,
-          mySquadTasks.map((t) => `${t.taskName}: ${t.assignee}`).join(', ')
-        );
-      } catch (sheetErr: any) {
-        console.error('[Patrol] PATROL SUMMARY FAILED');
-        console.error('Reason: Cannot resolve current team\'s patrol schedule:', sheetErr.message);
-        return {
-          handled: true,
-          success: false,
-          siteKey: matchedSite.siteKey,
-          error: `Không thể đọc lịch đi tuần của tiểu đội từ Google Sheet: ${sheetErr.message}`,
-        };
+  if (twoReporters) {
+    savePatrolReporterSubmission(
+      {
+        date: todayDmy,
+        siteKey: matchedSite.siteKey,
+        reporterUserId: senderId,
+        groupId: chatId,
+        senderId,
+        selectedMembers: parseResult.members,
+        shifts: parseResult.shifts || [],
+        hasPatrol: !parseResult.isNoPatrol,
+        isMultiShift: Boolean(parseResult.isMultiShift),
+        rawMessage: text,
+        messageId,
+        receivedAt: new Date().toISOString(),
+      },
+      options?.database
+    );
+
+    const reporterRows = reporterIds.map((id) =>
+      getPatrolReporterStatus(todayDmy, matchedSite.siteKey, id, options?.database)
+    );
+    const pendingIds = reporterIds.filter((_, idx) => !reporterRows[idx]?.submitted);
+
+    if (pendingIds.length > 0) {
+      console.log(
+        `[Patrol] ${matchedSite.displayName} đã nhận lịch của ${senderId}. Còn chờ ${pendingIds.length} người báo cáo nữa.`
+      );
+      if (isDirectChat) {
+        try {
+          const ownLines = parseResult.isNoPatrol
+            ? `(Hôm nay không có ca tuần tra)`
+            : parseResult.members.map((m) => `• ${m}`).join('\n');
+          const confirmMsg =
+            `✅ Đã nhận phần lịch của bạn cho ${matchedSite.displayName} ngày ${todayDmy}:\n` +
+            `${ownLines}\n\n` +
+            `⏳ Đang chờ người báo cáo còn lại của ${matchedSite.displayName}. ` +
+            `Khi đủ 2 người, hệ thống sẽ ghép lịch và gửi tổng hợp cho Trung đội trưởng.`;
+          await zalo.sendMessage(chatId, confirmMsg);
+        } catch (confirmErr: unknown) {
+          const messageText = confirmErr instanceof Error ? confirmErr.message : String(confirmErr);
+          console.error('[Patrol] Lỗi gửi xác nhận chờ người còn lại:', messageText);
+        }
       }
+      return {
+        handled: true,
+        success: true,
+        siteKey: matchedSite.siteKey,
+        members: parseResult.members,
+        shifts: parseResult.shifts,
+        isNoPatrol: parseResult.isNoPatrol,
+        waitingForOtherReporter: true,
+        waitingForOtherSite: false,
+        summarySent: false,
+      };
     }
 
-    const sheetShifts = groupPatrolTasksIntoShifts(mySquadTasks);
-    const sheetShiftCount = sheetShifts.length;
-
-    const reportedShiftCount = parseResult.isNoPatrol
-      ? 0
-      : parseResult.isMultiShift
-      ? parseResult.shifts?.length || 0
-      : 1;
-
-    // Mục 4: Kiểm tra số ca khớp giữa người báo cáo và Sheet
-    if (reportedShiftCount !== sheetShiftCount) {
-      console.warn(
-        `[Patrol] LỆCH SỐ CA: Người báo cáo có ${reportedShiftCount} ca, Sheet có ${sheetShiftCount} ca`
-      );
-
-      // Gửi cảnh báo riêng cho Admin qua kênh nhắc nhở
+    const combined = combineHeadquartersReports(reporterRows.map((row) => reporterPiece(row!)));
+    if (!combined.ok) {
+      releaseReporterMessageId(todayDmy, matchedSite.siteKey, senderId, options?.database);
+      console.warn(`[Patrol] Không ghép được lịch Trụ sở 1: ${combined.error}`);
+      const warnMsg =
+        `⚠️ CẢNH BÁO LỆCH LỊCH TUẦN TRA (${todayDmy}):\n` +
+        `Tại ${matchedSite.displayName}, hai người báo cáo không khớp nhau.\n` +
+        `${combined.error}\n` +
+        `Hệ thống tạm dừng tự động gửi báo cáo tổng hợp.`;
+      await warnPatrolAdmin(zalo, warnMsg);
       try {
-        const config = getConfig();
-        const adminChatId = getRecipientChatId('admin', config);
-        if (adminChatId) {
-          const warnMsg =
-            `⚠️ CẢNH BÁO LỆCH SỐ CA TUẦN TRA (${todayDmy}):\n` +
-            `Tại ${matchedSite.displayName}, Google Sheet có ${sheetShiftCount} ca nhưng người báo cáo gửi ${reportedShiftCount} ca.\n` +
-            `Hệ thống tạm dừng tự động gửi báo cáo tổng hợp. Vui lòng kiểm tra lại Google Sheet hoặc nhắc người báo cáo điều chỉnh.`;
-          await zalo.sendMessage(adminChatId, warnMsg);
-          console.log(`[Patrol] Đã gửi cảnh báo lệch ca tới Admin (${adminChatId}).`);
-        }
-      } catch (adminErr: any) {
-        console.error('[Patrol] Lỗi gửi cảnh báo tới Admin:', adminErr.message);
+        await zalo.sendMessage(chatId, `⚠️ ${combined.error}`);
+      } catch (sendErr: unknown) {
+        const messageText = sendErr instanceof Error ? sendErr.message : String(sendErr);
+        console.error('[Patrol] Lỗi gửi cảnh báo lệch lịch cho người báo cáo:', messageText);
       }
-
       return {
         handled: true,
         success: false,
         siteKey: matchedSite.siteKey,
-        error: `Lệch số ca tuần tra: Google Sheet có ${sheetShiftCount} ca nhưng người báo cáo gửi ${reportedShiftCount} ca (Shift count mismatch)`,
+        error: combined.error,
       };
     }
 
-    // Ghép theo thứ tự vị trí (left -> right)
-    if (parseResult.isNoPatrol) {
-      mergedShifts = [];
-      mergedMembers = [];
-    } else if (parseResult.isMultiShift && parseResult.shifts) {
-      mergedShifts = parseResult.shifts.map((shift, idx) => {
-        const sheetShiftMembers = sheetShifts[idx]?.members || [];
-        const members = [...shift.members, ...sheetShiftMembers];
-        return {
-          shiftNumber: shift.shiftNumber,
-          shiftLabel: shift.shiftLabel || `Ca ${shift.shiftNumber}`,
-          members,
-        };
-      });
-      mergedMembers = mergedShifts.flatMap((s) => s.members);
-    } else {
-      // Đơn ca: ghép toàn bộ thành viên của Sheet Ca 1 (bao gồm cả Người 1 và Người 2 nếu có)
-      const sheetShiftMembers = sheetShifts[0]?.members || [];
-      mergedMembers = [...parseResult.members, ...sheetShiftMembers];
-      mergedShifts = [
-        {
-          shiftNumber: 1,
-          shiftLabel: 'Ca 1',
-          members: mergedMembers,
-        },
-      ];
-    }
-  } else {
-    // Site 2 / không ghép sheet
-    if (parseResult.isNoPatrol) {
-      mergedShifts = [];
-      mergedMembers = [];
-    } else {
-      mergedShifts = parseResult.shifts || [];
-      mergedMembers = parseResult.members;
-    }
+    reportIsNoPatrol = !combined.hasPatrol;
+    reportIsMultiShift = combined.isMultiShift;
+    reportMembers = combined.members;
+    reportShifts = combined.shifts;
+    storedRawMessage = reporterIds
+      .map((id) => getPatrolReporterStatus(todayDmy, matchedSite.siteKey, id, options?.database)?.rawMessage || '')
+      .filter(Boolean)
+      .join('\n---\n');
   }
+
+  const merged = await resolveMergedShifts(
+    matchedSite,
+    todayDmy,
+    {
+      isNoPatrol: reportIsNoPatrol,
+      isMultiShift: reportIsMultiShift,
+      members: reportMembers,
+      shifts: reportShifts,
+    },
+    options,
+    zalo
+  );
+  if (!merged.ok) {
+    if (twoReporters) {
+      releaseReporterMessageId(todayDmy, matchedSite.siteKey, senderId, options?.database);
+    }
+    return {
+      handled: true,
+      success: false,
+      siteKey: matchedSite.siteKey,
+      error: merged.error,
+    };
+  }
+
+  const mergedShifts = merged.shifts;
+  const mergedMembers = merged.members;
+  const effectiveNoPatrol = reportIsNoPatrol;
 
   // 7. Kiểm tra xem lịch của site có thay đổi so với lần nộp trước không
   const isScheduleChanged =
     !currentDailyStatus?.submitted ||
-    currentDailyStatus?.hasPatrol !== !parseResult.isNoPatrol ||
+    currentDailyStatus?.hasPatrol !== !effectiveNoPatrol ||
     !areArraysEqual(currentDailyStatus.selectedMembers, mergedMembers);
 
   // 8. Lưu trạng thái nộp vào SQLite
@@ -609,8 +907,8 @@ export async function handlePatrolCommand(
       leaderUserId: matchedSite.leaderUserId || senderId,
       selectedMembers: mergedMembers,
       shifts: mergedShifts,
-      hasPatrol: !parseResult.isNoPatrol,
-      rawMessage: text,
+      hasPatrol: !effectiveNoPatrol,
+      rawMessage: storedRawMessage,
       messageId: messageId,
       receivedAt: new Date().toISOString(),
     },
@@ -648,7 +946,7 @@ export async function handlePatrolCommand(
       try {
         const confirmMsg =
           `✅ Đã nhận lịch tuần tra ${matchedSite.displayName} ngày ${todayDmy}:\n` +
-          (parseResult.isNoPatrol
+          (effectiveNoPatrol
             ? `(Hôm nay không có ca tuần tra)`
             : mergedMembers.map((m) => `• ${m}`).join('\n')) +
           `\n\n` +
@@ -665,7 +963,7 @@ export async function handlePatrolCommand(
       siteKey: matchedSite.siteKey,
       members: mergedMembers,
       shifts: mergedShifts,
-      isNoPatrol: parseResult.isNoPatrol,
+      isNoPatrol: effectiveNoPatrol,
       waitingForOtherSite: true,
       summarySent: false,
     };
@@ -738,7 +1036,7 @@ export async function handlePatrolCommand(
     try {
       const confirmMsg =
         `✅ Đã nhận lịch tuần tra ${matchedSite.displayName} ngày ${todayDmy}:\n` +
-        (parseResult.isNoPatrol
+        (effectiveNoPatrol
           ? `(Hôm nay không có ca tuần tra)`
           : mergedMembers.map((m) => `• ${m}`).join('\n')) +
         `\n\n` +
@@ -757,7 +1055,7 @@ export async function handlePatrolCommand(
     siteKey: matchedSite.siteKey,
     members: mergedMembers,
     shifts: mergedShifts,
-    isNoPatrol: parseResult.isNoPatrol,
+    isNoPatrol: effectiveNoPatrol,
     waitingForOtherSite: false,
     summarySent,
   };
