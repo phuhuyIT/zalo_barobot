@@ -37,6 +37,8 @@ import {
   getPatrolSiteConfigs,
   getPatrolSiteConfig,
   savePatrolSiteConfig,
+  listPatrolReporterStatuses,
+  getSite1SecondLeaderUserId,
   runPatrolReminders,
   handlePatrolCommand,
   resetPatrolDailyStatus,
@@ -565,6 +567,7 @@ webRouter.put('/api/patrol/sites/:siteKey', (req: Request, res: Response) => {
     const {
       displayName,
       leaderUserId,
+      leaderUserId2,
       chatId,
       mergeWithSheet,
       reminderTimes,
@@ -576,6 +579,7 @@ webRouter.put('/api/patrol/sites/:siteKey', (req: Request, res: Response) => {
       siteKey,
       displayName,
       leaderUserId,
+      leaderUserId2,
       chatId,
       mergeWithSheet,
       reminderTimes,
@@ -597,6 +601,7 @@ webRouter.get('/api/patrol/status', (req: Request, res: Response) => {
     const targetDate = (req.query.date as string) || getVietnamTimeParts().dateDMY;
     const sites = getPatrolSiteConfigs();
     const dailyStatuses = getAllPatrolDailyStatusForDate(targetDate);
+    const reporterStatuses = listPatrolReporterStatuses(targetDate);
     const summaryStatus = getPatrolSummaryStatus(targetDate);
     const site1Status = getPatrolDailyStatus(targetDate, 'site_1');
     const platoonLeaderChatId = getPlatoonLeaderChatId();
@@ -615,6 +620,7 @@ webRouter.get('/api/patrol/status', (req: Request, res: Response) => {
       },
       sites,
       dailyStatuses,
+      reporterStatuses,
       summaryStatus,
       platoonLeaderChatId,
     });
@@ -644,10 +650,11 @@ webRouter.post('/api/patrol/test-reminders', async (req: Request, res: Response)
  */
 webRouter.post('/api/patrol/simulate-command', async (req: Request, res: Response) => {
   try {
-    const { text, senderId, chatId, messageId, siteKey } = req.body || {};
+    const { text, senderId, chatId, messageId, siteKey, reporterSlot } = req.body || {};
 
     let effectiveSender = senderId;
     let effectiveChat = chatId;
+    const slot = Number(reporterSlot) === 2 ? 2 : 1;
 
     if (!effectiveSender) {
       if (siteKey === 'site_2') {
@@ -656,7 +663,14 @@ webRouter.post('/api/patrol/simulate-command', async (req: Request, res: Respons
         effectiveChat = s2Config?.chatId || process.env.SITE_2_PATROL_GROUP_ID || effectiveSender;
       } else {
         const s1Config = getPatrolSiteConfig('site_1');
-        effectiveSender = s1Config?.leaderUserId || getSquad1LeaderUserId() || 'squad1_leader_test';
+        if (slot === 2) {
+          effectiveSender =
+            s1Config?.leaderUserId2 ||
+            getSite1SecondLeaderUserId() ||
+            'squad1_leader_2_test';
+        } else {
+          effectiveSender = s1Config?.leaderUserId || getSquad1LeaderUserId() || 'squad1_leader_test';
+        }
         effectiveChat = s1Config?.chatId || getPatrolGroupId() || effectiveSender;
       }
     }

@@ -1462,7 +1462,7 @@
           <div class="flex items-center justify-between mb-3">
             <div>
               <h3 class="text-sm font-bold text-slate-800">Trụ sở 1 (Tân Phước Khánh)</h3>
-              <span class="text-xs text-indigo-600 font-medium">Ghép lịch Google Sheet</span>
+              <span class="text-xs text-indigo-600 font-medium" x-text="site1ReporterView().length >= 2 ? '2 người báo cáo, ghép Google Sheet' : 'Ghép lịch Google Sheet'"></span>
             </div>
             <template x-if="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.submitted">
               <span
@@ -1476,14 +1476,31 @@
             </template>
           </div>
           <div class="space-y-2 text-sm">
-            <div class="flex justify-between text-slate-600 text-xs">
-              <span>Số lần nhắc:</span>
-              <span class="font-semibold text-slate-800" x-text="(patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.reminderCount || 0) + ' / 3 lần'"></span>
-            </div>
-            <div class="flex justify-between text-slate-600 text-xs">
-              <span>Nhắc gần nhất:</span>
-              <span class="font-semibold text-slate-800" x-text="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.lastReminderAt || 'Chưa gửi'"></span>
-            </div>
+            <template x-if="site1ReporterView().length >= 2">
+              <div class="space-y-1">
+                <template x-for="rep in site1ReporterView()" :key="rep.userId">
+                  <div class="flex justify-between gap-2 text-xs text-slate-600">
+                    <span class="font-semibold text-slate-700" x-text="rep.label"></span>
+                    <span
+                      class="text-right"
+                      x-text="rep.submitted ? (rep.noPatrol ? 'Báo nghỉ' : ('Đã nộp' + (rep.members ? ': ' + rep.members : ''))) : ('Chưa nộp · nhắc ' + rep.reminderCount)"
+                    ></span>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <template x-if="site1ReporterView().length < 2">
+              <div class="space-y-2">
+                <div class="flex justify-between text-slate-600 text-xs">
+                  <span>Số lần nhắc:</span>
+                  <span class="font-semibold text-slate-800" x-text="(patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.reminderCount || 0) + ' / 3 lần'"></span>
+                </div>
+                <div class="flex justify-between text-slate-600 text-xs">
+                  <span>Nhắc gần nhất:</span>
+                  <span class="font-semibold text-slate-800" x-text="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.lastReminderAt || 'Chưa gửi'"></span>
+                </div>
+              </div>
+            </template>
             <div class="pt-2 border-t border-slate-100">
               <span class="text-xs text-slate-500 block mb-1">Lịch ca hôm nay:</span>
               <template x-if="patrolDailyStatuses.find(s => s.siteKey === 'site_1')?.shifts?.length > 0">
@@ -1623,14 +1640,15 @@
             <h3 class="text-sm font-bold text-slate-800">Test Gửi Lệnh tuantra</h3>
             <span class="text-xs text-slate-400">Giả lập Webhook</span>
           </div>
-          <p class="text-xs text-slate-500 mb-3">Giả lập nhận lệnh từ người phụ trách Tân Phước Khánh hoặc Thạnh Hội (hỗ trợ đơn ca, đa ca, hoặc báo nghỉ).</p>
+          <p class="text-xs text-slate-500 mb-3">Giả lập nhận lệnh. Trụ sở 1 có thể gửi từ người 1 và người 2; Trụ sở 2 vẫn một người.</p>
           <div class="space-y-2">
             <div class="flex gap-2">
               <select
                 x-model="simSiteKey"
                 class="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
-                <option value="site_1">Từ Trụ sở 1 (Tân Phước Khánh)</option>
+                <option value="site_1">Từ Trụ sở 1 — người 1</option>
+                <option value="site_1_r2">Từ Trụ sở 1 — người 2</option>
                 <option value="site_2">Từ Trụ sở 2 (Thạnh Hội)</option>
               </select>
               <input
@@ -1722,7 +1740,7 @@
 
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
-                  <label class="block text-xs font-semibold text-slate-600 mb-1">User ID Người Báo Cáo:</label>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1" x-text="site.siteKey === 'site_1' ? 'User ID Người Báo Cáo 1:' : 'User ID Người Báo Cáo:'"></label>
                   <input
                     type="text"
                     x-model="site.leaderUserId"
@@ -1739,6 +1757,17 @@
                     class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                   />
                 </div>
+              </div>
+
+              <div x-show="site.siteKey === 'site_1'" class="space-y-1">
+                <label class="block text-xs font-semibold text-slate-600 mb-1">User ID Người Báo Cáo 2:</label>
+                <input
+                  type="text"
+                  x-model="site.leaderUserId2"
+                  placeholder="Zalo User ID người thứ hai của Trụ sở 1"
+                  class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                />
+                <p class="text-[11px] text-slate-500">Khi đã có cả hai User ID, bot chờ đủ hai tin nhắn tuantra của Trụ sở 1, ghép danh sách, rồi mới tổng hợp gửi Trung đội trưởng. Trụ sở 2 vẫn một người.</p>
               </div>
 
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -2537,6 +2566,7 @@
         patrolStatus: null,
         patrolSites: [],
         patrolDailyStatuses: [],
+        patrolReporterStatuses: [],
         patrolSummaryStatus: null,
         platoonLeaderChatId: '',
         savingPlatoonLeader: false,
@@ -3077,11 +3107,13 @@
             if (sData.success) {
               this.patrolStatus = sData.status;
               this.patrolDailyStatuses = sData.dailyStatuses || [];
+              this.patrolReporterStatuses = sData.reporterStatuses || [];
               this.patrolSummaryStatus = sData.summaryStatus || null;
             }
             if (siteData.success) {
               this.patrolSites = siteData.sites.map(s => ({
                 ...s,
+                leaderUserId2: s.leaderUserId2 || '',
                 reminderTimesInput: (s.reminderTimes || []).join(', ')
               }));
             }
@@ -3132,6 +3164,7 @@
               body: JSON.stringify({
                 displayName: site.displayName,
                 leaderUserId: site.leaderUserId,
+                leaderUserId2: site.siteKey === 'site_1' ? (site.leaderUserId2 || '') : undefined,
                 chatId: site.chatId,
                 mergeWithSheet: site.mergeWithSheet,
                 reminderTimes,
@@ -3223,12 +3256,14 @@
         async triggerSimCommand() {
           if (!this.simText.trim()) return;
           try {
+            const isReporter2 = this.simSiteKey === 'site_1_r2';
             const res = await fetch('/api/patrol/simulate-command', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 text: this.simText,
-                siteKey: this.simSiteKey,
+                siteKey: isReporter2 ? 'site_1' : this.simSiteKey,
+                reporterSlot: isReporter2 ? 2 : 1,
               })
             });
             const data = await res.json();
@@ -3238,6 +3273,8 @@
                 this.showToast(`Phản hồi: ${r.error}`, 'error');
               } else if (r.ignoredReason) {
                 this.showToast(`Bỏ qua lệnh: ${r.ignoredReason}`, 'warning');
+              } else if (r.waitingForOtherReporter) {
+                this.showToast('Đã nhận lịch người này. Đang chờ người còn lại ở Trụ sở 1...', 'info');
               } else if (r.waitingForOtherSite) {
                 this.showToast(`Đã nhận lịch ${r.siteKey}! Đang chờ site còn lại...`, 'info');
               } else {
@@ -3270,6 +3307,27 @@
           } catch (e) {
             this.showToast(e.message, 'error');
           }
+        },
+
+        site1ReporterView() {
+          const site = (this.patrolSites || []).find((s) => s.siteKey === 'site_1');
+          const ids = [];
+          if (site && site.leaderUserId) ids.push(site.leaderUserId);
+          if (site && site.leaderUserId2 && site.leaderUserId2 !== site.leaderUserId) ids.push(site.leaderUserId2);
+          if (ids.length < 2) return [];
+          return ids.map((userId, idx) => {
+            const row = (this.patrolReporterStatuses || []).find(
+              (r) => r.siteKey === 'site_1' && r.reporterUserId === userId
+            );
+            return {
+              userId,
+              label: 'Người ' + (idx + 1),
+              submitted: Boolean(row && row.submitted),
+              noPatrol: Boolean(row && row.submitted && row.hasPatrol === false),
+              reminderCount: (row && row.reminderCount) || 0,
+              members: ((row && row.selectedMembers) || []).join(', '),
+            };
+          });
         },
 
         formatTime(iso) {
