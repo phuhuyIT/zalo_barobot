@@ -10,6 +10,7 @@ import { getDatabase, safeJsonParse } from '../store';
 import {
   PatrolDailyStatus,
   PatrolMember,
+  PatrolReporterStatus,
   PatrolSiteConfig,
   PatrolShift,
   PatrolSummaryDailyStatus,
@@ -45,6 +46,7 @@ export function initPatrolTables(database: Database.Database): void {
       site_key TEXT PRIMARY KEY,
       display_name TEXT NOT NULL,
       leader_user_id TEXT NOT NULL DEFAULT '',
+      leader_user_id_2 TEXT NOT NULL DEFAULT '',
       chat_id TEXT NOT NULL DEFAULT '',
       merge_with_sheet INTEGER NOT NULL DEFAULT 0,
       reminder_times TEXT NOT NULL DEFAULT '["06:30","06:35","06:40"]',
@@ -54,6 +56,14 @@ export function initPatrolTables(database: Database.Database): void {
       updated_at TEXT NOT NULL
     );
   `);
+
+  // Cơ sở dữ liệu đã tạo trước khi có người báo cáo thứ hai của Trụ sở 1.
+  const siteConfigCols = database.prepare(`PRAGMA table_info(patrol_site_configs)`).all() as { name: string }[];
+  if (!siteConfigCols.some((c) => c.name === 'leader_user_id_2')) {
+    database.exec(
+      `ALTER TABLE patrol_site_configs ADD COLUMN leader_user_id_2 TEXT NOT NULL DEFAULT ''`
+    );
+  }
 
   // Seed default site configs nếu bảng rỗng
   seedDefaultSiteConfigs(database);
@@ -119,7 +129,33 @@ export function initPatrolTables(database: Database.Database): void {
     }
   }
 
-  // 3. Bảng theo dõi trạng thái gửi báo cáo tổng hợp cho Trung đội trưởng
+  // 3. Từng người báo cáo của Trụ sở 1 (chờ đủ 2 người rồi mới ghép thành một lịch site)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS patrol_reporter_status (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      site_key TEXT NOT NULL,
+      reporter_user_id TEXT NOT NULL,
+      group_id TEXT NOT NULL DEFAULT '',
+      sender_id TEXT NOT NULL DEFAULT '',
+      submitted INTEGER NOT NULL DEFAULT 0,
+      has_patrol INTEGER NOT NULL DEFAULT 1,
+      is_multi_shift INTEGER NOT NULL DEFAULT 0,
+      selected_members TEXT,
+      shifts TEXT DEFAULT '[]',
+      raw_message TEXT,
+      message_id TEXT,
+      received_at TEXT,
+      reminder_count INTEGER NOT NULL DEFAULT 0,
+      last_reminder_at TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(date, site_key, reporter_user_id)
+    );
+  `);
+
+  // 4. Bảng theo dõi trạng thái gửi báo cáo tổng hợp cho Trung đội trưởng
   database.exec(`
     CREATE TABLE IF NOT EXISTS patrol_summary_status (
       date TEXT PRIMARY KEY,
@@ -132,7 +168,7 @@ export function initPatrolTables(database: Database.Database): void {
     );
   `);
 
-  // 4. Bảng danh sách thành viên Tiểu đội 1 (cho phép xem/sửa trên Web UI)
+  // 5. Bảng danh sách thành viên Tiểu đội 1 (cho phép xem/sửa trên Web UI)
   database.exec(`
     CREATE TABLE IF NOT EXISTS patrol_members (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +195,11 @@ function seedDefaultSiteConfigs(database: Database.Database): void {
     process.env.SQUAD_1_LEADER_USER_ID ||
     ''
   ).trim();
+  const site1Leader2 = (
+    process.env.SITE_1_LEADER_2_USER_ID ||
+    process.env.TIUDOI_1_LEADER_2_USER_ID ||
+    ''
+  ).trim();
   const site1Group = (process.env.PATROL_GROUP_ID || process.env.PATROL_CHAT_ID || '').trim();
 
   const site2Leader = (
@@ -173,9 +214,9 @@ function seedDefaultSiteConfigs(database: Database.Database): void {
     .get();
   if (!existing1) {
     database.prepare(`
-      INSERT INTO patrol_site_configs (site_key, display_name, leader_user_id, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at)
-      VALUES ('site_1', 'Trụ sở 1 (Tân Phước Khánh)', ?, ?, 1, ?, 3, 1, ?, ?)
-    `).run(site1Leader, site1Group, defaultTimes, now, now);
+      INSERT INTO patrol_site_configs (site_key, display_name, leader_user_id, leader_user_id_2, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at)
+      VALUES ('site_1', 'Trụ sở 1 (Tân Phước Khánh)', ?, ?, ?, 1, ?, 3, 1, ?, ?)
+    `).run(site1Leader, site1Leader2, site1Group, defaultTimes, now, now);
   }
 
   const existing2 = database
@@ -183,8 +224,8 @@ function seedDefaultSiteConfigs(database: Database.Database): void {
     .get();
   if (!existing2) {
     database.prepare(`
-      INSERT INTO patrol_site_configs (site_key, display_name, leader_user_id, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at)
-      VALUES ('site_2', 'Trụ sở 2 (Thạnh Hội)', ?, ?, 0, ?, 3, 1, ?, ?)
+      INSERT INTO patrol_site_configs (site_key, display_name, leader_user_id, leader_user_id_2, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at)
+      VALUES ('site_2', 'Trụ sở 2 (Thạnh Hội)', ?, '', ?, 0, ?, 3, 1, ?, ?)
     `).run(site2Leader, site2Group, defaultTimes, now, now);
   }
 
@@ -260,13 +301,14 @@ export function getPatrolSiteConfigs(database?: Database.Database): PatrolSiteCo
   const d = getPatrolDb(database);
   try {
     const rows = d
-      .prepare(`SELECT site_key, display_name, leader_user_id, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at FROM patrol_site_configs ORDER BY site_key ASC`)
+      .prepare(`SELECT site_key, display_name, leader_user_id, leader_user_id_2, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at FROM patrol_site_configs ORDER BY site_key ASC`)
       .all() as any[];
 
     return rows.map((r) => ({
       siteKey: r.site_key,
       displayName: r.display_name,
       leaderUserId: r.leader_user_id || '',
+      leaderUserId2: r.leader_user_id_2 || '',
       chatId: r.chat_id || '',
       mergeWithSheet: Boolean(r.merge_with_sheet),
       reminderTimes: safeJsonParse<string[]>(r.reminder_times, ['06:30', '06:35', '06:40']),
@@ -291,7 +333,7 @@ export function getPatrolSiteConfig(
   const d = getPatrolDb(database);
   const row = d
     .prepare(
-      `SELECT site_key, display_name, leader_user_id, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at
+      `SELECT site_key, display_name, leader_user_id, leader_user_id_2, chat_id, merge_with_sheet, reminder_times, max_reminders, enabled, created_at, updated_at
        FROM patrol_site_configs WHERE site_key = ?`
     )
     .get(siteKey) as any;
@@ -302,6 +344,7 @@ export function getPatrolSiteConfig(
     siteKey: row.site_key,
     displayName: row.display_name,
     leaderUserId: row.leader_user_id || '',
+    leaderUserId2: row.leader_user_id_2 || '',
     chatId: row.chat_id || '',
     mergeWithSheet: Boolean(row.merge_with_sheet),
     reminderTimes: safeJsonParse<string[]>(row.reminder_times, ['06:30', '06:35', '06:40']),
@@ -325,6 +368,7 @@ export function savePatrolSiteConfig(
 
   const displayName = config.displayName ?? existing?.displayName ?? config.siteKey;
   const leaderUserId = config.leaderUserId !== undefined ? config.leaderUserId.trim() : (existing?.leaderUserId || '');
+  const leaderUserId2 = config.leaderUserId2 !== undefined ? config.leaderUserId2.trim() : (existing?.leaderUserId2 || '');
   const chatId = config.chatId !== undefined ? config.chatId.trim() : (existing?.chatId || '');
   const mergeWithSheet = config.mergeWithSheet !== undefined ? (config.mergeWithSheet ? 1 : 0) : (existing?.mergeWithSheet ? 1 : 0);
   const reminderTimes = JSON.stringify(config.reminderTimes ?? existing?.reminderTimes ?? ['06:30', '06:35', '06:40']);
@@ -336,6 +380,7 @@ export function savePatrolSiteConfig(
       UPDATE patrol_site_configs
       SET display_name = ?,
           leader_user_id = ?,
+          leader_user_id_2 = ?,
           chat_id = ?,
           merge_with_sheet = ?,
           reminder_times = ?,
@@ -346,6 +391,7 @@ export function savePatrolSiteConfig(
     `).run(
       displayName,
       leaderUserId,
+      leaderUserId2,
       chatId,
       mergeWithSheet,
       reminderTimes,
@@ -357,13 +403,14 @@ export function savePatrolSiteConfig(
   } else {
     d.prepare(`
       INSERT INTO patrol_site_configs (
-        site_key, display_name, leader_user_id, chat_id, merge_with_sheet,
+        site_key, display_name, leader_user_id, leader_user_id_2, chat_id, merge_with_sheet,
         reminder_times, max_reminders, enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       config.siteKey,
       displayName,
       leaderUserId,
+      leaderUserId2,
       chatId,
       mergeWithSheet,
       reminderTimes,
@@ -785,6 +832,238 @@ export function deletePatrolMember(id: number, database?: Database.Database): bo
   return res.changes > 0;
 }
 
+function mapReporterRow(row: any): PatrolReporterStatus {
+  const members: string[] = safeJsonParse<string[]>(row.selected_members, []);
+  const shifts: PatrolShift[] = safeJsonParse<PatrolShift[]>(row.shifts, []);
+  return {
+    id: row.id,
+    date: row.date,
+    siteKey: row.site_key,
+    reporterUserId: row.reporter_user_id,
+    groupId: row.group_id || '',
+    senderId: row.sender_id || '',
+    submitted: Boolean(row.submitted),
+    hasPatrol: row.has_patrol !== undefined ? Boolean(row.has_patrol) : true,
+    isMultiShift: Boolean(row.is_multi_shift),
+    selectedMembers: members,
+    shifts: shifts.length > 0 ? shifts : (members.length > 0 ? [{ shiftNumber: 1, shiftLabel: 'Ca 1', members }] : []),
+    rawMessage: row.raw_message || undefined,
+    messageId: row.message_id || undefined,
+    receivedAt: row.received_at || undefined,
+    reminderCount: row.reminder_count || 0,
+    lastReminderAt: row.last_reminder_at || null,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+const REPORTER_COLUMNS = `id, date, site_key, reporter_user_id, group_id, sender_id, submitted,
+  has_patrol, is_multi_shift, selected_members, shifts, raw_message, message_id, received_at,
+  reminder_count, last_reminder_at, status, created_at, updated_at`;
+
+/**
+ * Trạng thái nộp lịch của một người báo cáo trong ngày.
+ */
+export function getPatrolReporterStatus(
+  date: string,
+  siteKey: string,
+  reporterUserId: string,
+  database?: Database.Database
+): PatrolReporterStatus | null {
+  const d = getPatrolDb(database);
+  const row = d
+    .prepare(
+      `SELECT ${REPORTER_COLUMNS}
+       FROM patrol_reporter_status
+       WHERE date = ? AND site_key = ? AND reporter_user_id = ?`
+    )
+    .get(date, siteKey, reporterUserId) as any;
+  return row ? mapReporterRow(row) : null;
+}
+
+/**
+ * Mọi người báo cáo đã có dòng trạng thái trong ngày. Có thể lọc theo site.
+ */
+export function listPatrolReporterStatuses(
+  date: string,
+  database?: Database.Database,
+  siteKey?: string
+): PatrolReporterStatus[] {
+  const d = getPatrolDb(database);
+  const rows = (siteKey
+    ? d
+        .prepare(
+          `SELECT ${REPORTER_COLUMNS}
+           FROM patrol_reporter_status
+           WHERE date = ? AND site_key = ?
+           ORDER BY reporter_user_id ASC`
+        )
+        .all(date, siteKey)
+    : d
+        .prepare(
+          `SELECT ${REPORTER_COLUMNS}
+           FROM patrol_reporter_status
+           WHERE date = ?
+           ORDER BY site_key ASC, reporter_user_id ASC`
+        )
+        .all(date)) as any[];
+  return rows.map(mapReporterRow);
+}
+
+/**
+ * Lưu phần lịch một người báo cáo gửi. Giữ nguyên số lần nhắc của người đó.
+ */
+export function savePatrolReporterSubmission(
+  params: {
+    date: string;
+    siteKey: string;
+    reporterUserId: string;
+    groupId: string;
+    senderId: string;
+    selectedMembers: string[];
+    shifts?: PatrolShift[];
+    hasPatrol?: boolean;
+    isMultiShift?: boolean;
+    rawMessage?: string;
+    messageId?: string;
+    receivedAt?: string;
+  },
+  database?: Database.Database
+): PatrolReporterStatus {
+  const d = getPatrolDb(database);
+  const now = new Date().toISOString();
+  const receivedAt = params.receivedAt || now;
+  const hasPatrol = params.hasPatrol !== undefined ? (params.hasPatrol ? 1 : 0) : 1;
+  const isMultiShift = params.isMultiShift ? 1 : 0;
+  const statusStr = hasPatrol ? 'submitted' : 'no_patrol';
+
+  let shifts = params.shifts || [];
+  if (shifts.length === 0 && params.selectedMembers.length > 0) {
+    shifts = [{ shiftNumber: 1, shiftLabel: 'Ca 1', members: params.selectedMembers }];
+  }
+  let selectedMembers = params.selectedMembers;
+  if (selectedMembers.length === 0 && shifts.length > 0) {
+    selectedMembers = shifts.flatMap((s) => s.members);
+  }
+
+  const existing = getPatrolReporterStatus(params.date, params.siteKey, params.reporterUserId, d);
+  if (existing) {
+    d.prepare(
+      `UPDATE patrol_reporter_status
+       SET group_id = ?,
+           sender_id = ?,
+           submitted = 1,
+           has_patrol = ?,
+           is_multi_shift = ?,
+           selected_members = ?,
+           shifts = ?,
+           raw_message = ?,
+           message_id = ?,
+           received_at = ?,
+           status = ?,
+           updated_at = ?
+       WHERE date = ? AND site_key = ? AND reporter_user_id = ?`
+    ).run(
+      params.groupId,
+      params.senderId,
+      hasPatrol,
+      isMultiShift,
+      JSON.stringify(selectedMembers),
+      JSON.stringify(shifts),
+      params.rawMessage || null,
+      params.messageId || null,
+      receivedAt,
+      statusStr,
+      now,
+      params.date,
+      params.siteKey,
+      params.reporterUserId
+    );
+  } else {
+    d.prepare(
+      `INSERT INTO patrol_reporter_status (
+         date, site_key, reporter_user_id, group_id, sender_id, submitted,
+         has_patrol, is_multi_shift, selected_members, shifts, raw_message, message_id, received_at,
+         reminder_count, last_reminder_at, status, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)`
+    ).run(
+      params.date,
+      params.siteKey,
+      params.reporterUserId,
+      params.groupId,
+      params.senderId,
+      hasPatrol,
+      isMultiShift,
+      JSON.stringify(selectedMembers),
+      JSON.stringify(shifts),
+      params.rawMessage || null,
+      params.messageId || null,
+      receivedAt,
+      statusStr,
+      now,
+      now
+    );
+  }
+
+  return getPatrolReporterStatus(params.date, params.siteKey, params.reporterUserId, d)!;
+}
+
+/**
+ * Cập nhật số lần nhắc của một người báo cáo.
+ */
+export function updatePatrolReporterReminder(
+  params: {
+    date: string;
+    siteKey: string;
+    reporterUserId: string;
+    groupId: string;
+    reminderCount: number;
+    lastReminderAt: string;
+  },
+  database?: Database.Database
+): PatrolReporterStatus {
+  const d = getPatrolDb(database);
+  const now = new Date().toISOString();
+  const existing = getPatrolReporterStatus(params.date, params.siteKey, params.reporterUserId, d);
+
+  if (existing) {
+    d.prepare(
+      `UPDATE patrol_reporter_status
+       SET reminder_count = ?,
+           last_reminder_at = ?,
+           updated_at = ?
+       WHERE date = ? AND site_key = ? AND reporter_user_id = ?`
+    ).run(
+      params.reminderCount,
+      params.lastReminderAt,
+      now,
+      params.date,
+      params.siteKey,
+      params.reporterUserId
+    );
+  } else {
+    d.prepare(
+      `INSERT INTO patrol_reporter_status (
+         date, site_key, reporter_user_id, group_id, sender_id, submitted,
+         has_patrol, is_multi_shift, selected_members, shifts, reminder_count, last_reminder_at,
+         status, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, '', 0, 1, 0, '[]', '[]', ?, ?, 'pending', ?, ?)`
+    ).run(
+      params.date,
+      params.siteKey,
+      params.reporterUserId,
+      params.groupId,
+      params.reminderCount,
+      params.lastReminderAt,
+      now,
+      now
+    );
+  }
+
+  return getPatrolReporterStatus(params.date, params.siteKey, params.reporterUserId, d)!;
+}
+
 /**
  * Đặt lại (reset/xóa) trạng thái tuần tra và số lần nhắc nhở để phục vụ kiểm thử.
  */
@@ -799,16 +1078,21 @@ export function resetPatrolDailyStatus(
 
   if (date && siteKey) {
     const info = d.prepare(`DELETE FROM patrol_daily_status WHERE date = ? AND site_key = ?`).run(date, siteKey);
-    deletedDaily = info.changes;
+    const infoRep = d
+      .prepare(`DELETE FROM patrol_reporter_status WHERE date = ? AND site_key = ?`)
+      .run(date, siteKey);
+    deletedDaily = info.changes + infoRep.changes;
   } else if (date) {
     const info1 = d.prepare(`DELETE FROM patrol_daily_status WHERE date = ?`).run(date);
+    const infoRep = d.prepare(`DELETE FROM patrol_reporter_status WHERE date = ?`).run(date);
     const info2 = d.prepare(`DELETE FROM patrol_summary_status WHERE date = ?`).run(date);
-    deletedDaily = info1.changes;
+    deletedDaily = info1.changes + infoRep.changes;
     deletedSummary = info2.changes;
   } else {
     const info1 = d.prepare(`DELETE FROM patrol_daily_status`).run();
+    const infoRep = d.prepare(`DELETE FROM patrol_reporter_status`).run();
     const info2 = d.prepare(`DELETE FROM patrol_summary_status`).run();
-    deletedDaily = info1.changes;
+    deletedDaily = info1.changes + infoRep.changes;
     deletedSummary = info2.changes;
   }
 

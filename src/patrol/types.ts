@@ -15,6 +15,8 @@ export interface PatrolSiteConfig {
   siteKey: string;
   displayName: string;
   leaderUserId: string;
+  /** Trụ sở 1: người báo cáo thứ hai. Trụ sở 2 không dùng trường này. */
+  leaderUserId2?: string;
   chatId?: string;
   mergeWithSheet: boolean;
   reminderTimes: string[];
@@ -41,6 +43,29 @@ export interface PatrolDailyStatus {
   hasPatrol: boolean; // false nếu báo nghỉ/không có ca tuần (tuantra 0 / tuantra nghi / tuantra none)
   selectedMembers: string[]; // Danh sách tên các thành viên được chọn (hoặc tất cả thành viên gộp)
   shifts: PatrolShift[]; // Danh sách các ca tuần tra trong ngày
+  rawMessage?: string;
+  messageId?: string;
+  receivedAt?: string;
+  reminderCount: number;
+  lastReminderAt?: string | null;
+  status: 'pending' | 'submitted' | 'no_patrol' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Một người báo cáo của Trụ sở 1 (khi lịch trụ sở đó do 2 người gửi). */
+export interface PatrolReporterStatus {
+  id?: number;
+  date: string;
+  siteKey: string;
+  reporterUserId: string;
+  groupId: string;
+  senderId: string;
+  submitted: boolean;
+  hasPatrol: boolean;
+  isMultiShift: boolean;
+  selectedMembers: string[];
+  shifts: PatrolShift[];
   rawMessage?: string;
   messageId?: string;
   receivedAt?: string;
@@ -89,5 +114,7 @@ export interface PatrolCommandResult {
   shifts?: PatrolShift[];
   summarySent?: boolean;
   waitingForOtherSite?: boolean;
+  /** Trụ sở 1 đã nhận một người, còn chờ người báo cáo kia. */
+  waitingForOtherReporter?: boolean;
   isNoPatrol?: boolean;
 }
