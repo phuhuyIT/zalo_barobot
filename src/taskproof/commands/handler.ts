@@ -160,7 +160,9 @@ export function formatParseReply(inbound: WebhookInbound): string | null {
     case 'tasks':
       return 'Lệnh /tasks hợp lệ.';
     case 'nhac':
-      return `Lệnh /nhac hợp lệ. Mã: ${parsed.shortCode}`;
+      return parsed.shortCode
+        ? `Lệnh /nhac hợp lệ. Mã: ${parsed.shortCode}`
+        : 'Lệnh /nhac hợp lệ. Nhắc mọi task đang mở.';
     case 'dong':
       return `Lệnh /dong hợp lệ. Mã: ${parsed.shortCode}`;
     case 'huy':
@@ -335,13 +337,107 @@ function remindReply(code: string, status: number, json: Record<string, unknown>
   return `Đã nhắc ${missing} người chưa nộp (${code}).`;
 }
 
-async function handleNhac(
+/** Đăng nhập worker một lần. false = đã trả lời admin, không nhắc tiếp. */
+async function prepareNhacWorker(
+  deps: TaskproofCommandDeps,
+  chatId: string,
+  retryHint: string
+): Promise<boolean> {
+  const ensureListening = deps.ensureListening ?? (() => postEnsureListening());
+  let listen: EnsureListeningResponse;
+  try {
+    listen = await ensureListening();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[TaskProof] /nhac ensure-listening lỗi:', msg);
+    await deps.sendMessage(
+      chatId,
+      'Worker không chạy. /gui vẫn dùng được. Thử lại /nhac sau.'
+    );
+    return false;
+  }
+
+  if (listen.status >= 400) {
+    await deps.sendMessage(
+      chatId,
+      `Không nhắc được. ${loginHint(listen)} ${retryHint}`
+    );
+    return false;
+  }
+  return true;
+}
+
+function isOpenTaskStatus(status: string): boolean {
+  return status === 'collecting' || status === 'overdue';
+}
+
+/** /nhac không mã: nhắc lần lượt mọi task đang thu hoặc quá hạn. */
+async function handleNhacAll(
   inbound: WebhookInbound,
-  parsed: { shortCode: string },
   deps: TaskproofCommandDeps
 ): Promise<void> {
+  const list = deps.listTasks ?? defaultListTasks;
+  const open = list().filter((row) => isOpenTaskStatus(row.status));
+  if (open.length === 0) {
+    await deps.sendMessage(inbound.chatId, 'Không có task đang thu hoặc quá hạn.');
+    return;
+  }
+
+  const linked = open.filter((row) => row.zca_group_id);
+  if (linked.length === 0) {
+    const lines = open.map(
+      (row) => `• Nhóm chưa liên kết. Gõ /lienket trong nhóm đó rồi /nhac ${row.short_code}.`
+    );
+    await deps.sendMessage(
+      inbound.chatId,
+      [`Không nhắc được ${open.length} task — nhóm chưa liên kết.`, ...lines].join('\n')
+    );
+    return;
+  }
+
+  const ready = await prepareNhacWorker(
+    deps,
+    inbound.chatId,
+    'Gõ /nhac lại sau khi đăng nhập.'
+  );
+  if (!ready) return;
+
+  const remind = deps.remind ?? postRemind;
+  const lines: string[] = [];
+  for (const task of open) {
+    if (!task.zca_group_id) {
+      lines.push(
+        `• Nhóm chưa liên kết. Gõ /lienket trong nhóm đó rồi /nhac ${task.short_code}.`
+      );
+      continue;
+    }
+    try {
+      const result = await remind(task.id);
+      lines.push(`• ${remindReply(task.short_code, result.status, result.json)}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[TaskProof] /nhac remind lỗi:', msg);
+      lines.push(`• Không gọi được worker để nhắc ${task.short_code}.`);
+    }
+  }
+
+  await deps.sendMessage(
+    inbound.chatId,
+    [`Nhắc ${open.length} task đang mở:`, ...lines].join('\n')
+  );
+}
+
+async function handleNhac(
+  inbound: WebhookInbound,
+  parsed: { shortCode: string | null },
+  deps: TaskproofCommandDeps
+): Promise<void> {
+  if (!parsed.shortCode) {
+    await handleNhacAll(inbound, deps);
+    return;
+  }
+
   const lookupTask = deps.lookupTask ?? defaultLookupTask;
-  const ensureListening = deps.ensureListening ?? (() => postEnsureListening());
   const remind = deps.remind ?? postRemind;
   const code = parsed.shortCode;
 
@@ -353,7 +449,7 @@ async function handleNhac(
     );
     return;
   }
-  if (task.status !== 'collecting' && task.status !== 'overdue') {
+  if (!isOpenTaskStatus(task.status)) {
     await deps.sendMessage(inbound.chatId, `Task ${code} đã đóng hoặc hủy, không nhắc.`);
     return;
   }
@@ -365,26 +461,12 @@ async function handleNhac(
     return;
   }
 
-  let listen: EnsureListeningResponse;
-  try {
-    listen = await ensureListening();
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[TaskProof] /nhac ensure-listening lỗi:', msg);
-    await deps.sendMessage(
-      inbound.chatId,
-      'Worker không chạy. /gui vẫn dùng được. Thử lại /nhac sau.'
-    );
-    return;
-  }
-
-  if (listen.status >= 400) {
-    await deps.sendMessage(
-      inbound.chatId,
-      `Không nhắc được. ${loginHint(listen)} Gõ /nhac ${code} lại sau khi đăng nhập.`
-    );
-    return;
-  }
+  const ready = await prepareNhacWorker(
+    deps,
+    inbound.chatId,
+    `Gõ /nhac ${code} lại sau khi đăng nhập.`
+  );
+  if (!ready) return;
 
   let result: { status: number; json: Record<string, unknown> };
   try {

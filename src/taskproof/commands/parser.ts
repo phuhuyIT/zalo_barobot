@@ -2,6 +2,7 @@
  * parser.ts
  *
  * Phân tích /task /tasks /nhac /lienket /dong /huy /quet.
+ * /nhac không mã = nhắc mọi task đang thu hoặc quá hạn.
  * Thứ tự field tùy ý; hạn chót theo tường Asia/Ho_Chi_Minh, lưu UTC epoch ms.
  * short_code phải đúng 6 [A-Z0-9] — không nhận UUID.
  */
@@ -328,15 +329,13 @@ function parseTaskFields(rest: string, inbound: WebhookInbound): ParseCommandRes
   };
 }
 
-function parseShortCodeCommand(
+function parseExactShortCode(
   command: 'nhac' | 'dong' | 'huy',
   rest: string
-): ParseCommandResult {
+): { ok: true; shortCode: string } | { ok: false; error: string } {
   if (!rest) {
     return {
       ok: false,
-      found: true,
-      command,
       error: `Thiếu mã task. Dùng \`/${command} ABC123\` (đúng 6 ký tự A–Z/0–9, không dùng UUID).`,
     };
   }
@@ -344,16 +343,12 @@ function parseShortCodeCommand(
   if (rest.split(/\s+/).filter(Boolean).length > 1) {
     return {
       ok: false,
-      found: true,
-      command,
       error: `/${command} chỉ nhận đúng một mã 6 ký tự.`,
     };
   }
   if (isUuid(token)) {
     return {
       ok: false,
-      found: true,
-      command,
       error: 'Không dùng UUID. Mã task là đúng 6 ký tự [A-Z0-9], không phải đoạn đầu UUID.',
     };
   }
@@ -361,12 +356,33 @@ function parseShortCodeCommand(
   if (!shortCode) {
     return {
       ok: false,
-      found: true,
-      command,
       error: 'Mã task phải đúng 6 ký tự [A-Z0-9] (ví dụ ABC123). Không khớp prefix UUID.',
     };
   }
-  return { ok: true, found: true, command, shortCode };
+  return { ok: true, shortCode };
+}
+
+/** /nhac = mọi task đang mở. /nhac ABC123 = một task. */
+function parseNhac(rest: string): ParseCommandResult {
+  if (!rest) {
+    return { ok: true, found: true, command: 'nhac', shortCode: null };
+  }
+  const parsed = parseExactShortCode('nhac', rest);
+  if (!parsed.ok) {
+    return { ok: false, found: true, command: 'nhac', error: parsed.error };
+  }
+  return { ok: true, found: true, command: 'nhac', shortCode: parsed.shortCode };
+}
+
+function parseShortCodeCommand(
+  command: 'dong' | 'huy',
+  rest: string
+): ParseCommandResult {
+  const parsed = parseExactShortCode(command, rest);
+  if (!parsed.ok) {
+    return { ok: false, found: true, command, error: parsed.error };
+  }
+  return { ok: true, found: true, command, shortCode: parsed.shortCode };
 }
 
 function parseQuet(rest: string): ParseCommandResult {
@@ -460,6 +476,7 @@ export function parseTaskproofCommand(inbound: WebhookInbound): ParseCommandResu
       }
       return { ok: true, found: true, command: 'tasks' };
     case 'nhac':
+      return parseNhac(detected.rest);
     case 'dong':
     case 'huy':
       return parseShortCodeCommand(detected.command, detected.rest);

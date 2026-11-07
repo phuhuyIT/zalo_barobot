@@ -45,7 +45,8 @@ export interface ParsedTaskFields {
 export type ParseCommandResult =
   | { ok: true; found: true; command: 'task'; fields: ParsedTaskFields }
   | { ok: true; found: true; command: 'tasks' }
-  | { ok: true; found: true; command: 'nhac' | 'dong' | 'huy'; shortCode: string }
+  | { ok: true; found: true; command: 'nhac'; shortCode: string | null }
+  | { ok: true; found: true; command: 'dong' | 'huy'; shortCode: string }
   | { ok: true; found: true; command: 'quet'; shortCode: string; count: number }
   | { ok: true; found: true; command: 'lienket'; method: 'A'; zcaGroupId: null }
   | { ok: true; found: true; command: 'lienket'; method: 'B'; zcaGroupId: string }

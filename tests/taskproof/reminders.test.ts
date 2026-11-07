@@ -7,6 +7,7 @@ import { configureSqliteConnection, initTables } from '../../src/store';
 import { initTaskproofTables } from '../../src/taskproof/records/store';
 import { getTaskproofSetting, setTaskproofSetting } from '../../src/taskproof/records/settings';
 import { handleTaskproofCommand } from '../../src/taskproof/commands';
+import { TaskListRow } from '../../src/taskproof/records/tasks';
 import { extractWebhookInbound } from '../../src/taskproof/commands/payload';
 import { WorkerRuntime } from '../../src/taskproof/worker/runtime';
 import { saveSession } from '../../src/taskproof/worker/session';
@@ -41,6 +42,28 @@ function inboundFrom(body: unknown) {
 }
 
 const ADMIN = 'admin_dm';
+
+function openListRow(
+  partial: Pick<TaskListRow, 'id' | 'short_code'> &
+    Partial<Pick<TaskListRow, 'status' | 'zca_group_id'>>
+): TaskListRow {
+  return {
+    official_chat_id: 'off',
+    report_group_id: 'rep',
+    link: 'https://facebook.com/example/posts/1',
+    reference_text: '',
+    required_count: 1,
+    deadline: 0,
+    created_at: 0,
+    remind_count: 0,
+    reminded_at: null,
+    reported_at: null,
+    submitted_count: 0,
+    status: 'collecting',
+    zca_group_id: 'zgr-1',
+    ...partial,
+  };
+}
 
 function adminText(text: string) {
   const inbound = extractWebhookInbound({
@@ -723,6 +746,119 @@ describe('task-proof reminders (Step 7)', () => {
       const handled = await handleTaskproofCommand(groupText('/gui'), { sendMessage });
       expect(handled).toBe(false);
       expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('reminds every open task when /nhac has no code', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const ensureListening = vi.fn().mockResolvedValue({ status: 200, state: 'listening', raw: {} });
+      const remind = vi.fn(async (taskId: string) => ({
+        status: 200,
+        json: {
+          reminded: true,
+          kind: 'mentions',
+          missing_count: taskId === 'task-1' ? 2 : 4,
+        },
+      }));
+      const handled = await handleTaskproofCommand(adminText('/nhac'), {
+        sendMessage,
+        getAdminChatId: () => ADMIN,
+        ensureListening,
+        remind,
+        listTasks: () => [
+          openListRow({ id: 'task-1', short_code: 'ABC123', zca_group_id: 'zgr-1' }),
+          openListRow({ id: 'task-2', short_code: 'DEF456', status: 'overdue', zca_group_id: 'zgr-2' }),
+        ],
+      });
+      expect(handled).toBe(true);
+      expect(ensureListening).toHaveBeenCalledOnce();
+      expect(remind).toHaveBeenCalledTimes(2);
+      expect(remind).toHaveBeenNthCalledWith(1, 'task-1');
+      expect(remind).toHaveBeenNthCalledWith(2, 'task-2');
+      expect(sendMessage).toHaveBeenCalledOnce();
+      const body = String(sendMessage.mock.calls[0][1]);
+      expect(body).toMatch(/Nhắc 2 task đang mở/);
+      expect(body).toMatch(/ABC123/);
+      expect(body).toMatch(/DEF456/);
+    });
+
+    it('does not wake the worker when /nhac has no open tasks', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const ensureListening = vi.fn();
+      const remind = vi.fn();
+      await handleTaskproofCommand(adminText('/nhac'), {
+        sendMessage,
+        getAdminChatId: () => ADMIN,
+        ensureListening,
+        remind,
+        listTasks: () => [],
+      });
+      expect(ensureListening).not.toHaveBeenCalled();
+      expect(remind).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls[0][1]).toMatch(/Không có task đang thu hoặc quá hạn/);
+    });
+
+    it('does not wake the worker when every open task is unlinked', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const ensureListening = vi.fn();
+      const remind = vi.fn();
+      await handleTaskproofCommand(adminText('/nhac'), {
+        sendMessage,
+        getAdminChatId: () => ADMIN,
+        ensureListening,
+        remind,
+        listTasks: () => [
+          openListRow({ id: 'task-1', short_code: 'ABC123', zca_group_id: null }),
+        ],
+      });
+      expect(ensureListening).not.toHaveBeenCalled();
+      expect(remind).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls[0][1]).toMatch(/chưa liên kết/i);
+    });
+
+    it('skips unlinked tasks and still reminds the linked ones', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const remind = vi.fn().mockResolvedValue({
+        status: 200,
+        json: { reminded: true, kind: 'mentions', missing_count: 1 },
+      });
+      await handleTaskproofCommand(adminText('/nhac'), {
+        sendMessage,
+        getAdminChatId: () => ADMIN,
+        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+        remind,
+        listTasks: () => [
+          openListRow({ id: 'task-1', short_code: 'ABC123', zca_group_id: null }),
+          openListRow({ id: 'task-2', short_code: 'DEF456', zca_group_id: 'zgr-2' }),
+        ],
+      });
+      expect(remind).toHaveBeenCalledTimes(1);
+      expect(remind).toHaveBeenCalledWith('task-2');
+      const body = String(sendMessage.mock.calls[0][1]);
+      expect(body).toMatch(/lienket/i);
+      expect(body).toMatch(/ABC123/);
+      expect(body).toMatch(/DEF456/);
+    });
+
+    it('keeps reminding the other open tasks when one remind call fails', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({});
+      const remind = vi.fn(async (taskId: string) => {
+        if (taskId === 'task-1') throw new Error('ECONNRESET');
+        return { status: 200, json: { reminded: true, kind: 'mentions', missing_count: 1 } };
+      });
+      await handleTaskproofCommand(adminText('/nhac'), {
+        sendMessage,
+        getAdminChatId: () => ADMIN,
+        ensureListening: async () => ({ status: 200, state: 'listening', raw: {} }),
+        remind,
+        listTasks: () => [
+          openListRow({ id: 'task-1', short_code: 'ABC123', zca_group_id: 'zgr-1' }),
+          openListRow({ id: 'task-2', short_code: 'DEF456', zca_group_id: 'zgr-2' }),
+        ],
+      });
+      expect(remind).toHaveBeenCalledTimes(2);
+      const body = String(sendMessage.mock.calls[0][1]);
+      expect(body).toMatch(/Không gọi được worker để nhắc ABC123/);
+      expect(body).toMatch(/DEF456/);
     });
 
     it('does not fail silently when the worker is down', async () => {

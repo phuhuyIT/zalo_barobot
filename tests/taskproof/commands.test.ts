@@ -465,6 +465,14 @@ Link: https://www.facebook.com/share/v/1FS7f9MknZ/`,
       }
     });
 
+    it('accepts bare /nhac as remind-all and still requires a code for /dong and /huy', () => {
+      const nhac = parseTaskproofCommand(textMessage('/nhac'));
+      expect(nhac).toMatchObject({ ok: true, command: 'nhac', shortCode: null });
+      expect(parseTaskproofCommand(textMessage('/dong')).ok).toBe(false);
+      expect(parseTaskproofCommand(textMessage('/huy')).ok).toBe(false);
+      expect(parseTaskproofCommand(textMessage('/nhac ABC123 extra')).ok).toBe(false);
+    });
+
     it('rejects UUID and extra tokens', () => {
       const uuid = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
       const parsed = parseTaskproofCommand(textMessage(`/nhac ${uuid}`));
