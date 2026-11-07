@@ -279,5 +279,28 @@ describe('Web API Endpoints (F12 & F13)', () => {
       expect(sitesData.success).toBe(true);
       expect(sitesData.platoonLeaderChatId).toBe('leader_chat_999');
     });
+
+    it('saves a second reporter for headquarters 1', async () => {
+      const putRes = await fetch(`${baseUrl}/api/patrol/sites/site_1`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leaderUserId: 'hq1_person_a', leaderUserId2: 'hq1_person_b' }),
+      });
+      expect(putRes.status).toBe(200);
+      const putData = await putRes.json();
+      expect(putData.site.leaderUserId).toBe('hq1_person_a');
+      expect(putData.site.leaderUserId2).toBe('hq1_person_b');
+
+      const sitesRes = await fetch(`${baseUrl}/api/patrol/sites`);
+      const sitesData = await sitesRes.json();
+      const site1 = sitesData.sites.find((s: { siteKey: string }) => s.siteKey === 'site_1');
+      const site2 = sitesData.sites.find((s: { siteKey: string }) => s.siteKey === 'site_2');
+      expect(site1.leaderUserId2).toBe('hq1_person_b');
+      expect(site2.leaderUserId2 || '').toBe('');
+
+      const statusRes = await fetch(`${baseUrl}/api/patrol/status`);
+      const statusData = await statusRes.json();
+      expect(Array.isArray(statusData.reporterStatuses)).toBe(true);
+    });
   });
 });

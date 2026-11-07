@@ -16,6 +16,9 @@ import {
   groupPatrolTasksIntoShifts,
   resetPatrolDailyStatus,
   getPlatoonLeaderChatId,
+  getPatrolReporterStatus,
+  getSiteReporterIds,
+  combineHeadquartersReports,
 } from '../src/patrol';
 import { ZaloClient } from '../src/core/zaloClient';
 import * as storeModule from '../src/store';
@@ -586,6 +589,8 @@ describe('Two-Site Patrol Feature Tests (Mục 1 - 7)', () => {
       mockDb
     );
 
+    delete process.env.SITE_1_LEADER_2_USER_ID;
+    delete process.env.TIUDOI_1_LEADER_2_USER_ID;
     process.env.TIUDOI_1_LEADER_USER_ID = squad1LeaderId;
     process.env.PATROL_GROUP_ID = squad1GroupId;
     process.env.SITE_2_LEADER_USER_ID = squad2LeaderId;
@@ -1146,6 +1151,194 @@ describe('Two-Site Patrol Feature Tests (Mục 1 - 7)', () => {
       );
 
       expect(getPlatoonLeaderChatId(mockDb)).toBe('chat_id_from_sqlite_ui');
+    });
+  });
+
+  describe('Headquarters 1 reported by two people', () => {
+    const secondLeaderId = 'user_leader_squad_1b';
+
+    beforeEach(() => {
+      savePatrolSiteConfig(
+        {
+          siteKey: 'site_1',
+          displayName: 'Trụ sở 1 (Tân Phước Khánh):',
+          leaderUserId: squad1LeaderId,
+          leaderUserId2: secondLeaderId,
+          chatId: squad1GroupId,
+          mergeWithSheet: true,
+          reminderTimes: ['06:30', '06:35', '06:40'],
+          maxReminders: 3,
+          enabled: true,
+        },
+        mockDb
+      );
+    });
+
+    it('keeps headquarters 2 on a single reporter', () => {
+      const site2 = getPatrolSiteConfig('site_2', mockDb)!;
+      savePatrolSiteConfig({ siteKey: 'site_2', leaderUserId2: 'should_be_ignored' }, mockDb);
+      const reloaded = getPatrolSiteConfig('site_2', mockDb)!;
+      expect(reloaded.leaderUserId2).toBe('should_be_ignored');
+      expect(getSiteReporterIds(reloaded)).toEqual([site2.leaderUserId]);
+      expect(getSiteReporterIds(getPatrolSiteConfig('site_1', mockDb)!)).toEqual([
+        squad1LeaderId,
+        secondLeaderId,
+      ]);
+    });
+
+    it('waits for both headquarters 1 reporters, merges them with the sheet, then the platoon summary', async () => {
+      const mockZalo = new ZaloClient('dummy_token');
+      const sendSpy = vi.spyOn(mockZalo, 'sendMessage').mockResolvedValue({ messageId: 'm_two', raw: {} });
+      const today = formatDateDMY(new Date());
+      const sheetTasks = [{ taskName: 'Đi tuần', assignee: 'Phạm Hoàng Phúc' }];
+
+      const first = await handlePatrolCommand(
+        { text: 'tuantra Nguyen Van A', chatId: squad1GroupId, senderId: squad1LeaderId, messageId: 'hq1_a' },
+        { zaloClient: mockZalo, database: mockDb, skipSheetFetchForTesting: true, mockMySquadTasks: sheetTasks }
+      );
+      expect(first.success).toBe(true);
+      expect(first.waitingForOtherReporter).toBe(true);
+      expect(first.summarySent).toBe(false);
+      expect(getPatrolDailyStatus(today, 'site_1', mockDb)?.submitted).toBeFalsy();
+      expect(getPatrolReporterStatus(today, 'site_1', squad1LeaderId, mockDb)?.submitted).toBe(true);
+      expect(sendSpy).not.toHaveBeenCalledWith(platoonLeaderId, expect.anything());
+
+      const second = await handlePatrolCommand(
+        { text: 'tuantra Tran Van B', chatId: squad1GroupId, senderId: secondLeaderId, messageId: 'hq1_b' },
+        { zaloClient: mockZalo, database: mockDb, skipSheetFetchForTesting: true, mockMySquadTasks: sheetTasks }
+      );
+      expect(second.success).toBe(true);
+      expect(second.waitingForOtherReporter).toBeFalsy();
+      expect(second.waitingForOtherSite).toBe(true);
+      expect(second.summarySent).toBe(false);
+      expect(second.shifts?.[0].members).toEqual(['Nguyễn Văn A', 'Trần Văn B', 'Phạm Hoàng Phúc']);
+      expect(sendSpy).not.toHaveBeenCalledWith(platoonLeaderId, expect.anything());
+
+      const site2 = await handlePatrolCommand(
+        { text: 'tuantra Hoang Van D', chatId: squad2GroupId, senderId: squad2LeaderId, messageId: 'hq2' },
+        { zaloClient: mockZalo, database: mockDb, skipSheetFetchForTesting: true }
+      );
+      expect(site2.summarySent).toBe(true);
+      const content = getPatrolSummaryStatus(today, mockDb)?.lastContent || '';
+      expect(content).toContain('Nguyễn Văn A, Trần Văn B, Phạm Hoàng Phúc.');
+      expect(content).toContain('Hoàng Văn D.');
+      expect(content).toContain('Trụ sở 2 (Thạnh Hội):');
+    });
+
+    it('merges multi-shift reports from both people with the sheet by shift', async () => {
+      const mockZalo = new ZaloClient('dummy_token');
+      vi.spyOn(mockZalo, 'sendMessage').mockResolvedValue({ messageId: 'm_multi', raw: {} });
+
+      await handlePatrolCommand(
+        {
+          text: 'tuantra Ca 1: Nguyen Van A Ca 2: Tran Van B',
+          chatId: squad1GroupId,
+          senderId: squad1LeaderId,
+        },
+        {
+          zaloClient: mockZalo,
+          database: mockDb,
+          skipSheetFetchForTesting: true,
+          mockMySquadTasks: [
+            { taskName: 'Đi tuần', assignee: 'Phạm Hoàng Phúc', subTask: 'Ca 1' },
+            { taskName: 'Đi tuần', assignee: 'Lê Văn C', subTask: 'Ca 2' },
+          ],
+        }
+      );
+      const second = await handlePatrolCommand(
+        {
+          text: 'tuantra Ca 1: Le Van C Ca 2: Hoang Van D',
+          chatId: squad1GroupId,
+          senderId: secondLeaderId,
+        },
+        {
+          zaloClient: mockZalo,
+          database: mockDb,
+          skipSheetFetchForTesting: true,
+          mockMySquadTasks: [
+            { taskName: 'Đi tuần', assignee: 'Phạm Hoàng Phúc', subTask: 'Ca 1' },
+            { taskName: 'Đi tuần', assignee: 'Lê Văn C', subTask: 'Ca 2' },
+          ],
+        }
+      );
+
+      expect(second.success).toBe(true);
+      expect(second.shifts?.[0].members).toEqual(['Nguyễn Văn A', 'Lê Văn C', 'Phạm Hoàng Phúc']);
+      expect(second.shifts?.[1].members).toEqual(['Trần Văn B', 'Hoàng Văn D', 'Lê Văn C']);
+    });
+
+    it('does not send a summary when the two headquarters 1 reports disagree', async () => {
+      const mockZalo = new ZaloClient('dummy_token');
+      const sendSpy = vi.spyOn(mockZalo, 'sendMessage').mockResolvedValue({ messageId: 'm_bad', raw: {} });
+
+      await handlePatrolCommand(
+        { text: 'tuantra Nguyen Van A', chatId: squad1GroupId, senderId: squad1LeaderId },
+        { zaloClient: mockZalo, database: mockDb, skipSheetFetchForTesting: true }
+      );
+      const second = await handlePatrolCommand(
+        {
+          text: 'tuantra Ca 1: Tran Van B Ca 2: Le Van C',
+          chatId: squad1GroupId,
+          senderId: secondLeaderId,
+        },
+        { zaloClient: mockZalo, database: mockDb, skipSheetFetchForTesting: true }
+      );
+
+      expect(second.success).toBe(false);
+      expect(second.error).toContain('không khớp');
+      expect(sendSpy).toHaveBeenCalledWith(adminChatId, expect.stringContaining('CẢNH BÁO LỆCH LỊCH'));
+      expect(sendSpy).not.toHaveBeenCalledWith(platoonLeaderId, expect.anything());
+      expect(getPatrolDailyStatus(formatDateDMY(new Date()), 'site_1', mockDb)?.submitted).toBeFalsy();
+    });
+
+    it('reminds only the headquarters 1 reporter who has not submitted', async () => {
+      savePatrolSiteConfig({ siteKey: 'site_2', enabled: false }, mockDb);
+      const mockZalo = new ZaloClient('dummy_token');
+      const sendSpy = vi.spyOn(mockZalo, 'sendMessage').mockResolvedValue({ messageId: 'm_rem', raw: {} });
+
+      const firstSlot = await runPatrolReminders(new Date(), {
+        overrideTimeHM: '06:30',
+        zaloClient: mockZalo,
+        database: mockDb,
+      });
+      expect(firstSlot.triggered).toBe(true);
+      expect(sendSpy).toHaveBeenCalledWith(squad1LeaderId, expect.stringContaining('Nhắc nhở nộp lịch'));
+      expect(sendSpy).toHaveBeenCalledWith(secondLeaderId, expect.stringContaining('Nhắc nhở nộp lịch'));
+      sendSpy.mockClear();
+
+      await handlePatrolCommand(
+        { text: 'tuantra Nguyen Van A', chatId: squad1GroupId, senderId: squad1LeaderId },
+        { zaloClient: mockZalo, database: mockDb, skipSheetFetchForTesting: true }
+      );
+
+      const secondSlot = await runPatrolReminders(new Date(), {
+        overrideTimeHM: '06:35',
+        zaloClient: mockZalo,
+        database: mockDb,
+      });
+      expect(secondSlot.triggered).toBe(true);
+      expect(sendSpy).toHaveBeenCalledWith(secondLeaderId, expect.stringContaining('(Lần 2/'));
+      expect(sendSpy).not.toHaveBeenCalledWith(squad1LeaderId, expect.anything());
+    });
+
+    it('rejects a third sender for headquarters 1', async () => {
+      const mockZalo = new ZaloClient('dummy_token');
+      const result = await handlePatrolCommand(
+        { text: 'tuantra Nguyen Van A', chatId: squad1GroupId, senderId: 'someone_else' },
+        { zaloClient: mockZalo, database: mockDb, skipSheetFetchForTesting: true }
+      );
+      expect(result.ignoredReason).toBe('unauthorized_sender');
+    });
+
+    it('combines two single-shift name lists in reporter order', () => {
+      const combined = combineHeadquartersReports([
+        { hasPatrol: true, isMultiShift: false, members: ['Nguyễn Văn A'], shifts: [] },
+        { hasPatrol: true, isMultiShift: false, members: ['Trần Văn B'], shifts: [] },
+      ]);
+      expect(combined.ok).toBe(true);
+      if (combined.ok) {
+        expect(combined.members).toEqual(['Nguyễn Văn A', 'Trần Văn B']);
+      }
     });
   });
 });
