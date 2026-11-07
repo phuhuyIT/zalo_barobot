@@ -16,3 +16,4 @@ tessdata/
 tests/eval_datasets/
 __pycache__/
 *.pyc
+.venv/
