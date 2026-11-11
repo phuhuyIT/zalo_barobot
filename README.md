@@ -22,15 +22,15 @@ Hệ thống tự động hóa đọc lịch trực cổng, phân công nhiệm 
 ## 1. Tính năng chính
 
 - **F1 - Tự động gửi lịch hàng ngày**: Lên lịch tự động theo giờ cấu hình cho từng tiểu đội:
-  - **Tiểu đội 2 (chính)**: Tự động gửi lịch của **ngày mai** vào lúc **21:00 tối hôm trước**.
-  - **Tiểu đội culi (ca đêm)**: Tự động gửi lịch ca đêm chuẩn bị tới vào lúc **05:30 sáng**.
+  - **Tiểu đội 2 (chính)**: Tự động gửi lịch của **ngày mai** vào lúc **20:00 tối hôm trước**.
+  - **Tiểu đội culi (ca đêm)**: Tự động gửi lịch ca đêm vào lúc **19:30** cho đêm hôm đó.
 - **F2 - Gửi lại theo yêu cầu qua Web**: Admin bấm nút gửi riêng từng lịch từ Web Dashboard có xác thực.
 - **F3 - Gửi lại qua lệnh chat Zalo (`/gui`)**: Thành viên trong nhóm chat chỉ cần gõ `/gui`, bot sẽ gửi ngay lịch liên quan đến đúng nhóm đó.
 - **F4 - Xóa tin nhắn cũ (Best-effort)**: Tự động cố gắng xóa tin nhắn lịch cũ trước khi gửi tin mới để nhóm không bị trôi/rác tin nhắn.
 - **F5 - Lịch tranh thủ**: Gửi danh sách người đi tranh thủ và người mất lượt của tuần tương ứng theo yêu cầu.
 - **F6 - Nhắc nhở Admin**: 
-  - Nhắc trước 1 tiếng: Báo Admin kiểm tra Google Sheet trước giờ bot tự gửi (ví dụ lúc 20:00 tối).
-  - Cảnh báo quá hạn: Nếu quá giờ mà lịch chưa được gửi thành công, bot sẽ gửi tin nhắn báo động cho Admin (ví dụ lúc 21:10).
+  - Nhắc trước 1 tiếng: Báo Admin kiểm tra Google Sheet trước giờ bot tự gửi (ví dụ lúc 19:00 với lịch 20:00).
+  - Cảnh báo quá hạn: Nếu quá giờ mà lịch chưa được gửi thành công, bot sẽ gửi tin nhắn báo động cho Admin (ví dụ lúc 20:10).
 - **F7 - Đa dạng định dạng người nhận**: Trích xuất riêng các ca đi tuần từ bảng lịch chung để gửi tóm tắt cho Trung đội trưởng.
 - **F8 - Mở rộng linh hoạt**: Thêm tiểu đội, bảng tính hoặc người nhận mới hoàn toàn qua file `config/schedules.yaml`, không sửa code lõi.
 - **F9 - Cấu hình Runtime trên Web không cần redeploy**: Đổi tên tab Google Sheet (khi chuyển doanh trại/tháng mới), bật/tắt gửi lịch ngày mai, cài đặt giờ tự động gửi với gợi ý nhanh và gán nhóm nhận trực tiếp trên giao diện web. Giao diện được tối ưu hóa chuyên sâu:
@@ -167,7 +167,7 @@ Hệ thống cần quyền đọc bảng tính Google Sheets thông qua **Google
 4. Đổi tên file vừa tải về thành `service-account.json` và lưu vào thư mục gốc của dự án:
    `/workspaces/zalo_barobot/service-account.json`
 
-### Bước 3: Lấy Google Sheet ID và cấp quyền xem
+### Bước 3: Lấy Google Sheet ID và cấp quyền sửa
 1. Mở file Google Sheet lịch trực trên trình duyệt, URL có dạng:
    ```text
    https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit#gid=0
@@ -175,7 +175,7 @@ Hệ thống cần quyền đọc bảng tính Google Sheets thông qua **Google
    Dãy ký tự giữa `/d/` và `/edit` chính là `GOOGLE_SHEET_ID`:
    `1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms`
 2. Mở Google Sheet $\rightarrow$ Bấm nút **Chia sẻ (Share)** ở góc trên bên phải.
-3. Dán email của Service Account (tìm thấy ở dòng `"client_email"` trong file `service-account.json`) vào và cấp quyền **Người xem (Viewer)**.
+3. Dán email của Service Account (tìm thấy ở dòng `"client_email"` trong file `service-account.json`) vào và cấp quyền **Người chỉnh sửa (Editor)**. Lệnh `doi` ghi tên vào đúng một ô. Quyền Người xem không ghi được.
 4. Cập nhật vào file `.env`:
    ```env
    GOOGLE_SHEET_ID=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms
