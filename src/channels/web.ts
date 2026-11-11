@@ -46,6 +46,13 @@ import {
   getPatrolGroupId,
   getPlatoonLeaderChatId,
 } from '../patrol';
+import {
+  buildPartnerNotice,
+  ExternalDutyConfigError,
+  getExternalDutyConfig,
+  saveExternalDutyConfig,
+  sendPartnerAlertNow,
+} from '../externalDuty';
 
 let schedulerRefreshCallback: (() => void) | null = null;
 
@@ -624,6 +631,107 @@ webRouter.get('/api/patrol/status', (req: Request, res: Response) => {
       summaryStatus,
       platoonLeaderChatId,
     });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
+  }
+});
+
+/**
+ * GET /api/external-duty - Cấu hình tiểu đội đối tác và nội dung nhắc sắp gửi.
+ */
+webRouter.get('/api/external-duty', async (req: Request, res: Response) => {
+  try {
+    const config = getExternalDutyConfig();
+    let previewText = '';
+    let previewHtml = '';
+    let previewError = '';
+    try {
+      const notice = await buildPartnerNotice(new Date());
+      previewText = notice.text;
+      previewHtml = notice.previewHtml;
+    } catch (err: unknown) {
+      console.error('[ExternalDuty] Không tạo được bản xem trước:', err);
+      previewError = 'Không tạo được nội dung nhắc.';
+    }
+    res.json({
+      success: true,
+      config: {
+        ...config,
+        extraEditorIdsText: config.extraEditorIds.join('\n'),
+        reminderTimesInput: config.reminderTimes.join(', '),
+      },
+      previewText,
+      previewHtml,
+      previewError,
+    });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
+  }
+});
+
+/**
+ * PUT /api/external-duty - Lưu user id, nhóm đối tác, alias và giờ nhắc.
+ */
+webRouter.put('/api/external-duty', (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const extraRaw = body.extraEditorIds ?? body.extraEditorIdsText ?? '';
+    const extraEditorIds = Array.isArray(extraRaw)
+      ? extraRaw.map((id: unknown) => String(id).trim()).filter(Boolean)
+      : String(extraRaw)
+          .split(/[\n,]/)
+          .map((id) => id.trim())
+          .filter(Boolean);
+    const reminderRaw = body.reminderTimes ?? body.reminderTimesInput ?? '';
+    const reminderTimes = Array.isArray(reminderRaw)
+      ? reminderRaw.map((time: unknown) => String(time).trim()).filter(Boolean)
+      : String(reminderRaw)
+          .split(',')
+          .map((time) => time.trim())
+          .filter(Boolean);
+    const maxReminders = Number(body.maxReminders);
+    const saved = saveExternalDutyConfig({
+      partnerLeaderUserId: body.partnerLeaderUserId !== undefined ? String(body.partnerLeaderUserId) : undefined,
+      extraEditorIds,
+      partnerChatId: body.partnerChatId !== undefined ? String(body.partnerChatId) : undefined,
+      aliasMain: body.aliasMain !== undefined ? String(body.aliasMain) : undefined,
+      aliasCuli: body.aliasCuli !== undefined ? String(body.aliasCuli) : undefined,
+      reminderTimes: reminderTimes.length > 0 ? reminderTimes : undefined,
+      maxReminders: body.maxReminders !== undefined && body.maxReminders !== '' ? maxReminders : undefined,
+    });
+    if (saved.partnerChatId) {
+      saveRecipient({
+        key: 'squad_partner',
+        display_name: 'Tiểu đội đối tác',
+        chat_id: saved.partnerChatId,
+      });
+    }
+    res.json({ success: true, config: saved });
+  } catch (error: unknown) {
+    if (error instanceof ExternalDutyConfigError) {
+      res.status(400).json({ success: false, error: error.message });
+      return;
+    }
+    handleRouteError(res, error);
+  }
+});
+
+/**
+ * POST /api/external-duty/test-alert - Gửi thử nội dung nhắc tới tiểu đội trưởng đối tác.
+ */
+webRouter.post('/api/external-duty/test-alert', async (req: Request, res: Response) => {
+  try {
+    const result = await sendPartnerAlertNow();
+    if (!result.sent) {
+      const message =
+        result.reason === 'no_leader'
+          ? 'Chưa có User ID tiểu đội trưởng đối tác.'
+          : result.reason === 'cooldown'
+            ? 'Vừa gửi nhắc thử. Đợi một lát rồi thử lại.'
+            : 'Không gửi được nhắc. Thử lại sau.';
+      return res.status(400).json({ success: false, error: message, result });
+    }
+    res.json({ success: true, result });
   } catch (error: unknown) {
     handleRouteError(res, error);
   }

@@ -59,6 +59,7 @@ export function loadConfig(configPath?: string): AppConfig {
       squad_main: 'Tiểu đội 2',
       squad_culi: 'Tiểu đội culi',
       platoon_leader: 'Trung đội trưởng',
+      squad_partner: 'Tiểu đội đối tác',
     };
     const seedList = Object.entries(resolvedRecipients).map(([key, chatId]) => ({
       key,

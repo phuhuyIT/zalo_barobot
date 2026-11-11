@@ -17,6 +17,7 @@ import { getDatabase, hasSentToday, saveLastMessage } from '../store';
 import { ZaloClient } from '../core/zaloClient';
 import { formatDateDMY, resolveLookupDate, getVietnamTimeParts } from '../sheets/dateUtils';
 import { runPatrolReminders } from '../patrol';
+import { runExternalDutyReminders } from '../externalDuty';
 import { getInternalApiKey } from '../taskproof/env';
 import { notifyIfWorkerDownWithOpenTasks } from '../taskproof/http/health';
 import { readInternalKey, timingSafeCompare } from '../taskproof/http/internalAuth';
@@ -253,7 +254,18 @@ async function runDueJobsOnce(now: Date): Promise<{
     }
   }
 
-  // 3. Kiểm tra nhắc nhở nộp lịch đi tuần Tiểu đội 1 (06:30, 06:35, 06:40)
+  // 3. Nhắc tiểu đội trưởng đối tác gửi người trực trước 18:00
+  try {
+    const dutyRes = await runExternalDutyReminders(now);
+    if (dutyRes.triggered) {
+      remindersRun.push(`external_duty_reminder_${dutyRes.slotTime}`);
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[Scheduler] ❌ Lỗi nhắc phân công trực liên tiểu đội:', message);
+  }
+
+  // 4. Kiểm tra nhắc nhở nộp lịch đi tuần Tiểu đội 1 (06:30, 06:35, 06:40)
   try {
     const patrolRes = await runPatrolReminders(now);
     if (patrolRes.triggered) {

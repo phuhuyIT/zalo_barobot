@@ -18,6 +18,7 @@ recipients:
   squad_main: "$SQUAD_MAIN_CHAT_ID"
   squad_culi: "$SQUAD_CULI_CHAT_ID"
   platoon_leader: "$PLATOON_LEADER_CHAT_ID"
+  squad_partner: "$SQUAD_PARTNER_CHAT_ID"
 
 schedules:
   - key: main_duty
@@ -26,7 +27,7 @@ schedules:
     type: gate_duty
     recipients:
       - squad_main
-    auto_send_time: "21:00"     # Gửi lúc 21:00 tối hôm trước
+    auto_send_time: "20:00"     # Gửi lúc 20:00 lịch ngày mai
     enabled: true
 
   - key: culi_duty
@@ -35,7 +36,7 @@ schedules:
     type: gate_duty
     recipients:
       - squad_culi
-    auto_send_time: "05:30"
+    auto_send_time: "19:30"     # Gửi lúc 19:30 lịch đêm nay
     enabled: true
 
   - key: patrol_summary
@@ -69,8 +70,8 @@ schedules:
 
 reminders:
   - schedule_key: main_duty
-    remind_before_send_minutes: 60  # Nhắc Admin lúc 20:00 (trước giờ gửi 1 tiếng)
-    remind_if_not_sent_by: "21:10"  # Cảnh báo nếu qua 21:10 chưa gửi thành công
+    remind_before_send_minutes: 60  # Nhắc Admin lúc 19:00 (trước giờ gửi 1 tiếng)
+    remind_if_not_sent_by: "20:10"  # Cảnh báo nếu qua 20:10 chưa gửi thành công
   - schedule_key: culi_duty
-    remind_before_send_minutes: 60
-    remind_if_not_sent_by: "05:40"
+    remind_before_send_minutes: 60  # Nhắc Admin lúc 18:30
+    remind_if_not_sent_by: "19:40"

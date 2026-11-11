@@ -13,6 +13,13 @@ export interface SendMessageResult {
   raw: Record<string, unknown>;
 }
 
+/** Đoạn định dạng trên text thô. start/len tính theo UTF-16, giống chỉ số chuỗi JavaScript. */
+export interface ZaloTextStyle {
+  start: number;
+  len: number;
+  st: string[];
+}
+
 export interface SendPhotoResult {
   messageId: string;
   raw: Record<string, unknown>;
@@ -39,7 +46,11 @@ export class ZaloClient {
   /**
    * Gửi tin nhắn văn bản đến chat_id (nhóm hoặc cá nhân).
    */
-  async sendMessage(chatId: string, text: string): Promise<SendMessageResult> {
+  async sendMessage(
+    chatId: string,
+    text: string,
+    options?: { textStyles?: ZaloTextStyle[] }
+  ): Promise<SendMessageResult> {
     if (!this.token) {
       throw new Error('ZALO_BOT_TOKEN chưa được cấu hình.');
     }
@@ -48,6 +59,9 @@ export class ZaloClient {
       const response = await this.client.post('/sendMessage', {
         chat_id: chatId,
         text: text,
+        ...(options?.textStyles && options.textStyles.length > 0
+          ? { text_styles: options.textStyles }
+          : {}),
       });
 
       const data = response.data;

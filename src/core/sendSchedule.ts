@@ -19,6 +19,9 @@ import {
   getRuntimeConfigOverride,
 } from '../store';
 import { ScheduleConfig, SquadConfig } from '../types';
+import { readSheetTab } from '../sheets/sheetsClient';
+import { isExternalDutyEnabled, resolvePartnerChatId } from '../externalDuty/repository';
+import { loadReports, prepareDutyFromRows } from '../externalDuty/prepare';
 
 export interface RecipientSendResult {
   recipientKey: string;
@@ -35,6 +38,17 @@ export interface SendScheduleResult {
   label: string;
   lookupDate: string;
   results: RecipientSendResult[];
+  held?: boolean;
+  holdReason?: string;
+}
+
+export interface BuiltScheduleMessage {
+  text: string;
+  lookupDate: string;
+  effectiveTabName: string;
+  held?: boolean;
+  holdReason?: string;
+  includePartner?: boolean;
 }
 
 export interface SendScheduleOptions {
@@ -124,7 +138,7 @@ export function getEffectiveScheduleConfig(scheduleKey: string): {
 export async function buildScheduleMessage(
   scheduleKey: string,
   targetDate?: string
-): Promise<{ text: string; lookupDate: string; effectiveTabName: string }> {
+): Promise<BuiltScheduleMessage> {
   const { schedule, squad, effectiveTabName, effectiveSendNextDay } = getEffectiveScheduleConfig(scheduleKey);
 
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
@@ -172,6 +186,43 @@ export async function buildScheduleMessage(
   } else if (schedule.type === 'leave_roster_stats') {
     const leaveStatsData = await fetchLeaveStats(spreadsheetId, effectiveTabName);
     text = formatMessage(schedule.type, leaveStatsData, lookupDate);
+  } else if (
+    (scheduleKey === 'main_duty' || scheduleKey === 'culi_duty') &&
+    isExternalDutyEnabled()
+  ) {
+    const headerStyle = squad?.header_style || 'two_row_merged';
+    const rows = await readSheetTab(spreadsheetId, effectiveTabName);
+    const squadKey = scheduleKey === 'culi_duty' ? 'culi' : 'main';
+    const prepared = prepareDutyFromRows({
+      squad: squadKey,
+      headerStyle,
+      rows,
+      lookupDate,
+      reports: loadReports(lookupDate, squadKey),
+      partnerChatId: resolvePartnerChatId(),
+      isOvernight: Boolean(squad?.overnight),
+    });
+    if (prepared.held) {
+      return {
+        text: prepared.holdReason,
+        lookupDate,
+        effectiveTabName,
+        held: true,
+        holdReason: prepared.holdReason,
+        includePartner: false,
+      };
+    }
+    if (!prepared.duty || prepared.duty.tasks.length === 0) {
+      throw new Error(`Không có dữ liệu lịch trực cổng cho ngày ${lookupDate}`);
+    }
+    text = formatMessage(schedule.type, prepared.duty, lookupDate);
+    return {
+      text,
+      lookupDate,
+      effectiveTabName,
+      held: false,
+      includePartner: prepared.includePartner,
+    };
   } else {
     const headerStyle = squad?.header_style || 'two_row_merged';
     const dutyData = await fetchDutySchedule(spreadsheetId, effectiveTabName, headerStyle, lookupDate);
@@ -199,12 +250,26 @@ export async function sendSchedule(
   const zalo = options.zaloClient || new ZaloClient();
 
   // 1. Xây dựng tin nhắn
-  const { text, lookupDate } = await buildScheduleMessage(scheduleKey, options.targetDate);
+  const built = await buildScheduleMessage(scheduleKey, options.targetDate);
+  const { text, lookupDate } = built;
+
+  if (built.held) {
+    await warnExternalHold(zalo, scheduleKey, lookupDate, built.holdReason || 'Lịch đang chờ người trực.');
+    return {
+      scheduleKey,
+      label: schedule.label,
+      lookupDate,
+      results: [],
+      held: true,
+      holdReason: built.holdReason,
+    };
+  }
 
   // 2. Xác định danh sách recipient cần gửi
-  const recipientKeys = options.recipientKey
-    ? [options.recipientKey]
-    : effectiveRecipients;
+  let recipientKeys = options.recipientKey ? [options.recipientKey] : [...effectiveRecipients];
+  if (!options.recipientKey && built.includePartner && !recipientKeys.includes('squad_partner')) {
+    recipientKeys = [...recipientKeys, 'squad_partner'];
+  }
 
   const results: RecipientSendResult[] = [];
 
@@ -302,4 +367,23 @@ export async function sendSchedule(
     lookupDate,
     results,
   };
+}
+
+async function warnExternalHold(
+  zalo: ZaloClient,
+  scheduleKey: string,
+  lookupDate: string,
+  reason: string
+): Promise<void> {
+  const adminId = getRecipientChatId('admin');
+  if (!adminId || adminId === 'admin') return;
+  const key = `external_hold_${scheduleKey}`;
+  if (hasSentToday(key, adminId, lookupDate)) return;
+  try {
+    await zalo.sendMessage(adminId, `⚠️ ${reason}`);
+    saveLastMessage(key, adminId, `hold_${Date.now()}`, lookupDate);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[sendSchedule] Không gửi được cảnh báo giữ lịch:', message);
+  }
 }

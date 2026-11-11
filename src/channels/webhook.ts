@@ -15,6 +15,7 @@ import { getConfig, getRecipientChatId } from '../config';
 import { sendSchedule, getEffectiveScheduleConfig } from '../core';
 import { ZaloClient } from '../core/zaloClient';
 import { handlePatrolCommand } from '../patrol';
+import { handleDoiCommand } from '../externalDuty';
 import {
   extractWebhookInbound,
   handleTaskproofCommand,
@@ -173,6 +174,21 @@ webhookRouter.post('/webhook/zalo', async (req: Request, res: Response) => {
         console.error('[Webhook] Lỗi gửi phản hồi /id:', err.message);
       }
       return;
+    }
+
+    // 2a0. Xếp hoặc đổi ca: a2 ca1 <tên>, rồi đúng / không
+    try {
+      const doiRes = await handleDoiCommand({ text, chatId, senderId, messageId });
+      if (doiRes.handled) {
+        appendWebhookLog(
+          `DUTY COMMAND: senderId="${senderId}" handled=${doiRes.handled} success=${doiRes.success} reason="${doiRes.ignoredReason || ''}"`
+        );
+        return;
+      }
+    } catch (doiErr: unknown) {
+      const msg = doiErr instanceof Error ? doiErr.message : String(doiErr);
+      appendWebhookLog(`DUTY ERROR: ${msg}`);
+      console.error('[Webhook] Lỗi xử lý lệnh xếp ca:', doiErr);
     }
 
     // 2a. Kiểm tra lệnh đi tuần: tuantra <tên 1> [tên 2] (kể cả có @mention bot hoặc /tuantra)
