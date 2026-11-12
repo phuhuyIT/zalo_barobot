@@ -458,6 +458,12 @@
 
     .console-error .console-body { color: #fda4af; }
 
+    input.overview-date {
+      width: auto;
+      margin-top: 0;
+      color-scheme: dark;
+    }
+
     table.sched-table { width: 100%; min-width: 920px; border-collapse: collapse; }
     table.sched-table th { white-space: nowrap; }
     .sched-table th {
@@ -591,6 +597,7 @@
       .page-actions { width: 100%; }
       .page-actions .btn,
       .page-actions button { flex: 1 1 auto; min-width: 0; }
+      input.overview-date { width: 100%; }
 
       .only-narrow { display: inline; color: #A1A1AA; }
 
@@ -703,7 +710,7 @@
     <nav class="seg" aria-label="Chức năng">
       <button type="button" @click="selectTab('dashboard')" :aria-current="activeTab === 'dashboard' ? 'page' : false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/></svg>
-        <span>Lịch trực</span>
+        <span>Tổng quan</span>
       </button>
       <button type="button" @click="selectTab('patrol')" :aria-current="activeTab === 'patrol' ? 'page' : false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.2"/></svg>
@@ -754,6 +761,52 @@
   <main class="workspace">
 
     <div x-show="activeTab === 'dashboard'" x-cloak x-transition:enter="transition-opacity duration-150 ease-out" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100">
+      <div class="page-head">
+        <p class="lede">
+          Lịch Tiểu đội 2, Tiểu đội culi và đi tuần ngày
+          <span class="tabular-nums" x-text="isoToDmy(overviewDate)"></span>.
+        </p>
+        <div class="page-actions">
+          <button
+            type="button"
+            class="btn"
+            :class="overviewDate === vietnamTodayIso() ? 'btn-primary' : ''"
+            @click="setOverviewDate(vietnamTodayIso())"
+          >Hôm nay</button>
+          <button
+            type="button"
+            class="btn"
+            :class="overviewDate === addDaysIso(vietnamTodayIso(), 1) ? 'btn-primary' : ''"
+            @click="setOverviewDate(addDaysIso(vietnamTodayIso(), 1))"
+          >Ngày mai</button>
+          <input
+            type="date"
+            class="overview-date"
+            x-model="overviewDate"
+            @change="setOverviewDate($event.target.value)"
+            aria-label="Chọn ngày xem lịch"
+          />
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4" style="margin-bottom: 22px;">
+        <template x-for="card in overviewItems" :key="card.key">
+          <section class="panel" style="padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+            <div>
+              <h2 class="text-base font-semibold text-zinc-100" x-text="card.title"></h2>
+              <p class="text-xs text-zinc-400" style="margin: 2px 0 0;" x-text="card.note"></p>
+            </div>
+            <div class="console" :class="card.error ? 'console-error' : ''">
+              <div class="console-bar">
+                <span class="status-dot" :class="card.error ? 'is-err' : (card.text ? 'is-on' : '')" aria-hidden="true"></span>
+                <span x-text="card.loading ? 'Đang đọc sheet…' : 'Nội dung gửi'"></span>
+              </div>
+              <div class="console-body" x-text="card.error || card.text || (card.loading ? '' : 'Chưa có nội dung.')"></div>
+            </div>
+          </section>
+        </template>
+      </div>
+
       <div class="page-head">
         <p class="lede">
           <span x-text="activeSchedulesCount"></span> lịch đang tự gửi, trong
@@ -1199,7 +1252,7 @@
               </p>
 
               <template x-if="sc.type === 'leave_roster' || sc.type === 'leave_roster_stats'">
-                <p class="text-sm text-zinc-400">Lịch này gửi tay, từ Lịch trực hoặc Tranh thủ. Không có giờ tự gửi.</p>
+                <p class="text-sm text-zinc-400">Lịch này gửi tay, từ Tổng quan hoặc Tranh thủ. Không có giờ tự gửi.</p>
               </template>
 
               <template x-if="sc.type !== 'leave_roster' && sc.type !== 'leave_roster_stats'">
@@ -2337,6 +2390,15 @@
 
   <!-- APP STATE SCRIPT -->
   <script>
+    function vietnamTodayIso() {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+    }
+
     function app() {
       return {
         activeTab: 'dashboard',
@@ -2424,8 +2486,77 @@
         taskproofTasks: [],
         newGroupMap: { official_chat_id: '', zca_group_id: '', display_name: '' },
 
+        overviewDate: vietnamTodayIso(),
+        overviewItems: [
+          { key: 'main_duty', title: 'Tiểu đội 2', note: 'Lịch trực cổng', text: '', error: '', loading: false },
+          { key: 'culi_duty', title: 'Tiểu đội culi', note: 'Lịch trực cổng đêm', text: '', error: '', loading: false },
+          { key: 'patrol_summary', title: 'Đi tuần', note: 'Lịch đi tuần Tiểu đội 2', text: '', error: '', loading: false },
+        ],
+
         init() {
           this.fetchSchedules();
+          this.loadOverview();
+        },
+
+        vietnamTodayIso() {
+          return vietnamTodayIso();
+        },
+
+        addDaysIso(iso, days) {
+          const [year, month, day] = String(iso || '').split('-').map(Number);
+          if (!year || !month || !day) return '';
+          const date = new Date(Date.UTC(year, month - 1, day));
+          date.setUTCDate(date.getUTCDate() + days);
+          const nextYear = date.getUTCFullYear();
+          const nextMonth = String(date.getUTCMonth() + 1).padStart(2, '0');
+          const nextDay = String(date.getUTCDate()).padStart(2, '0');
+          return `${nextYear}-${nextMonth}-${nextDay}`;
+        },
+
+        isoToDmy(iso) {
+          const match = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+          if (!match) return '';
+          return `${match[3]}/${match[2]}/${match[1]}`;
+        },
+
+        setOverviewDate(iso) {
+          if (!iso || iso === this.overviewDate) {
+            this.loadOverview();
+            return;
+          }
+          this.overviewDate = iso;
+          this.loadOverview();
+        },
+
+        async loadOverview() {
+          const targetDate = this.isoToDmy(this.overviewDate);
+          if (!targetDate) return;
+          this.overviewItems.forEach((card) => {
+            card.loading = true;
+            card.error = '';
+          });
+          await Promise.all(this.overviewItems.map(async (card) => {
+            try {
+              const res = await fetch('/api/schedules/' + card.key + '/preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ targetDate }),
+              });
+              const data = await res.json();
+              if (data.success) {
+                card.text = data.text || '';
+                card.error = '';
+              } else {
+                card.text = '';
+                card.error = data.error || 'Không đọc được lịch';
+              }
+            } catch (e) {
+              card.text = '';
+              card.error = e.message || 'Không đọc được lịch';
+            } finally {
+              card.loading = false;
+            }
+          }));
         },
 
         scheduleSummary(sc) {
@@ -2480,7 +2611,7 @@
 
         pageName() {
           const names = {
-            dashboard: 'Lịch trực',
+            dashboard: 'Tổng quan',
             patrol: 'Tuần tra',
             'leave-stats': 'Tranh thủ',
             taskproof: 'Minh chứng',
@@ -2510,6 +2641,7 @@
           this.mobileMenuOpen = false;
           if (tab === 'dashboard') {
             this.fetchSchedules();
+            this.loadOverview();
           } else if (tab === 'leave-stats') {
             this.fetchLeaveStats();
           } else if (tab === 'recipients') {
@@ -2529,6 +2661,7 @@
         refreshCurrentTab() {
           if (this.activeTab === 'dashboard') {
             this.fetchSchedules();
+            this.loadOverview();
           } else if (this.activeTab === 'leave-stats') {
             this.fetchLeaveStats();
           } else if (this.activeTab === 'recipients') {
