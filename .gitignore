@@ -17,3 +17,5 @@ tests/eval_datasets/
 __pycache__/
 *.pyc
 .venv/
+.grok
+.agents
