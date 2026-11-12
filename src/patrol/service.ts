@@ -30,6 +30,8 @@ export interface SitePatrolDisplayData {
   hasPatrol: boolean;
   isMultiShift?: boolean;
   shifts: PatrolShift[];
+  /** Khi trụ sở chưa nộp. Không dùng cho tin nhắn đã gửi. */
+  pendingLabel?: string;
 }
 
 /**
@@ -132,6 +134,11 @@ export function formatTwoSitesPatrolMessage(
     }
     lines.push(title);
 
+    if (site.pendingLabel) {
+      lines.push(site.pendingLabel);
+      continue;
+    }
+
     if (!site.hasPatrol || !site.shifts || site.shifts.length === 0) {
       lines.push('(Hôm nay không có ca tuần tra)');
       continue;
@@ -151,6 +158,67 @@ export function formatTwoSitesPatrolMessage(
     }
   }
 
+  return lines.join('\n');
+}
+
+/**
+ * Lịch đi tuần cả ngày cho thẻ Tổng quan: hai trụ sở đã nộp, cộng cột Đi tuần trên sheet khi Trụ sở 1 chưa nộp.
+ */
+export async function buildPatrolOverviewMessage(
+  targetDate: string,
+  options?: {
+    database?: Database.Database;
+    sheetTasks?: { taskName: string; assignee: string; subTask?: string }[];
+    skipSheetFetch?: boolean;
+  }
+): Promise<string> {
+  const sites = getPatrolSiteConfigs(options?.database).filter((site) => site.enabled);
+  const daily = getAllPatrolDailyStatusForDate(targetDate, options?.database);
+  const sitesData: SitePatrolDisplayData[] = sites.map((site) => {
+    const status = daily.find((row) => row.siteKey === site.siteKey);
+    if (!status?.submitted) {
+      return {
+        siteKey: site.siteKey,
+        displayName: site.displayName,
+        hasPatrol: false,
+        shifts: [],
+        pendingLabel: 'Chưa nộp',
+      };
+    }
+    return {
+      siteKey: site.siteKey,
+      displayName: site.displayName,
+      hasPatrol: status.hasPatrol,
+      isMultiShift: status.shifts.length > 1,
+      shifts: status.shifts,
+    };
+  });
+
+  const lines = [formatTwoSitesPatrolMessage(targetDate, sitesData)];
+  const site1 = daily.find((row) => row.siteKey === 'site_1');
+  if (site1?.submitted) return lines[0];
+
+  let tasks = options?.sheetTasks;
+  if (!tasks && !options?.skipSheetFetch) {
+    try {
+      tasks = await fetchMySquadPatrolTasks(targetDate);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[Patrol] Không đọc được cột Đi tuần cho Tổng quan:', message);
+      tasks = [];
+      lines.push('', 'Tiểu đội 2:', 'Không đọc được cột Đi tuần trên sheet.');
+      return lines.join('\n');
+    }
+  }
+
+  lines.push('', 'Tiểu đội 2:');
+  if (!tasks || tasks.length === 0) {
+    lines.push('Không có tên đi tuần trên sheet.');
+  } else {
+    for (const task of tasks) {
+      lines.push(`- ${task.taskName}: ${task.assignee}`);
+    }
+  }
   return lines.join('\n');
 }
 

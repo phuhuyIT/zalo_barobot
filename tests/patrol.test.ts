@@ -19,6 +19,7 @@ import {
   getPatrolReporterStatus,
   getSiteReporterIds,
   combineHeadquartersReports,
+  buildPatrolOverviewMessage,
 } from '../src/patrol';
 import { ZaloClient } from '../src/core/zaloClient';
 import * as storeModule from '../src/store';
@@ -1342,5 +1343,84 @@ describe('Two-Site Patrol Feature Tests (Mục 1 - 7)', () => {
         expect(combined.members).toEqual(['Nguyễn Văn A', 'Trần Văn B']);
       }
     });
+  });
+});
+
+describe('patrol overview for the Tổng quan card', () => {
+  let mockDb: Database.Database;
+
+  beforeEach(() => {
+    mockDb = new Database(':memory:');
+    getPatrolSiteConfigs(mockDb);
+  });
+
+  afterEach(() => {
+    mockDb.close();
+  });
+
+  it('lists both sites and the sheet patrol column before anyone reports', async () => {
+    const text = await buildPatrolOverviewMessage('12/11/2026', {
+      database: mockDb,
+      skipSheetFetch: true,
+      sheetTasks: [
+        { taskName: 'Đi tuần', assignee: 'Từ Đại Vỹ' },
+        { taskName: 'Đi tuần - Ca 2', assignee: 'Lê Hoàng Vũ', subTask: 'Ca 2' },
+      ],
+    });
+    expect(text).toContain('LỊCH TUẦN TRA (12/11/2026)');
+    expect(text).toContain('Trụ sở 1 (Tân Phước Khánh):');
+    expect(text).toContain('Trụ sở 2 (Thạnh Hội):');
+    expect(text).toContain('Chưa nộp');
+    expect(text).toContain('- Đi tuần: Từ Đại Vỹ');
+    expect(text).toContain('- Đi tuần - Ca 2: Lê Hoàng Vũ');
+  });
+
+  it('shows a submitted site in full and keeps the sheet only while trụ sở 1 is open', async () => {
+    savePatrolSubmission(
+      {
+        date: '12/11/2026',
+        siteKey: 'site_2',
+        groupId: 'group_2',
+        senderId: 'leader_2',
+        leaderUserId: 'leader_2',
+        selectedMembers: ['Phạm Hữu Luân', 'Lê Hoàng Vũ'],
+        shifts: [
+          { shiftNumber: 1, shiftLabel: 'Ca 1', members: ['Phạm Hữu Luân'] },
+          { shiftNumber: 2, shiftLabel: 'Ca 2', members: ['Lê Hoàng Vũ'] },
+        ],
+        hasPatrol: true,
+      },
+      mockDb
+    );
+    const waiting = await buildPatrolOverviewMessage('12/11/2026', {
+      database: mockDb,
+      skipSheetFetch: true,
+      sheetTasks: [{ taskName: 'Đi tuần', assignee: 'Từ Đại Vỹ' }],
+    });
+    expect(waiting).toContain('Ca 1: Phạm Hữu Luân.');
+    expect(waiting).toContain('Ca 2: Lê Hoàng Vũ.');
+    expect(waiting).toContain('Từ Đại Vỹ');
+
+    savePatrolSubmission(
+      {
+        date: '12/11/2026',
+        siteKey: 'site_1',
+        groupId: 'group_1',
+        senderId: 'leader_1',
+        leaderUserId: 'leader_1',
+        selectedMembers: ['Nguyễn Minh Thuận', 'Từ Đại Vỹ'],
+        shifts: [{ shiftNumber: 1, shiftLabel: 'Ca 1', members: ['Nguyễn Minh Thuận', 'Từ Đại Vỹ'] }],
+        hasPatrol: true,
+      },
+      mockDb
+    );
+    const ready = await buildPatrolOverviewMessage('12/11/2026', {
+      database: mockDb,
+      skipSheetFetch: true,
+      sheetTasks: [{ taskName: 'Đi tuần', assignee: 'Không được hiện' }],
+    });
+    expect(ready).toContain('- Nguyễn Minh Thuận, Từ Đại Vỹ.');
+    expect(ready).not.toContain('Không được hiện');
+    expect(ready).not.toContain('Chưa nộp');
   });
 });

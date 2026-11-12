@@ -799,7 +799,7 @@
             <div class="console" :class="card.error ? 'console-error' : ''">
               <div class="console-bar">
                 <span class="status-dot" :class="card.error ? 'is-err' : (card.text ? 'is-on' : '')" aria-hidden="true"></span>
-                <span x-text="card.loading ? 'Đang đọc sheet…' : 'Nội dung gửi'"></span>
+                <span x-text="card.loading ? 'Đang đọc…' : (card.bar || 'Nội dung gửi')"></span>
               </div>
               <div class="console-body" x-text="card.error || card.text || (card.loading ? '' : 'Chưa có nội dung.')"></div>
             </div>
@@ -2490,7 +2490,7 @@
         overviewItems: [
           { key: 'main_duty', title: 'Tiểu đội 2', note: 'Lịch trực cổng', text: '', error: '', loading: false },
           { key: 'culi_duty', title: 'Tiểu đội culi', note: 'Lịch trực cổng đêm', text: '', error: '', loading: false },
-          { key: 'patrol_summary', title: 'Đi tuần', note: 'Lịch đi tuần Tiểu đội 2', text: '', error: '', loading: false },
+          { key: 'patrol_summary', title: 'Đi tuần', note: 'Hai trụ sở và cột Đi tuần', bar: 'Lịch trong ngày', text: '', error: '', loading: false },
         ],
 
         init() {
@@ -2537,7 +2537,9 @@
           });
           await Promise.all(this.overviewItems.map(async (card) => {
             try {
-              const res = await fetch('/api/schedules/' + card.key + '/preview', {
+              const res = card.key === 'patrol_summary'
+                ? await fetch('/api/patrol/overview?date=' + encodeURIComponent(targetDate))
+                : await fetch('/api/schedules/' + card.key + '/preview', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ targetDate }),

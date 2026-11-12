@@ -45,6 +45,7 @@ import {
   getSquad1LeaderUserId,
   getPatrolGroupId,
   getPlatoonLeaderChatId,
+  buildPatrolOverviewMessage,
 } from '../patrol';
 import {
   buildPartnerNotice,
@@ -595,6 +596,23 @@ webRouter.put('/api/patrol/sites/:siteKey', (req: Request, res: Response) => {
     });
 
     res.json({ success: true, site: updated });
+  } catch (error: unknown) {
+    handleRouteError(res, error);
+  }
+});
+
+/**
+ * GET /api/patrol/overview?date=DD/MM/YYYY - Lịch đi tuần cả ngày cho thẻ Tổng quan.
+ */
+webRouter.get('/api/patrol/overview', async (req: Request, res: Response) => {
+  try {
+    const date = String(req.query.date || getVietnamTimeParts().dateDMY);
+    if (!/^\d{2}\/\d{2}\/\d{4}$/.test(date)) {
+      res.status(400).json({ success: false, error: 'Ngày phải là DD/MM/YYYY.' });
+      return;
+    }
+    const text = await buildPatrolOverviewMessage(date);
+    res.json({ success: true, date, text });
   } catch (error: unknown) {
     handleRouteError(res, error);
   }
