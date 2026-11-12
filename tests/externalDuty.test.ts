@@ -77,6 +77,33 @@ describe('doi parser and sheet slots', () => {
     });
   });
 
+  it('replaces an alias with the standard roster name and rejects an unknown person', () => {
+    const roster = [
+      { id: 1, fullName: 'Lê Hoàng Vũ', aliases: ['Vu', 'Vũ', 'Hoàng Vũ'], createdAt: '' },
+      { id: 2, fullName: 'Phạm Hữu Luân', aliases: ['Luan', 'Luân'], createdAt: '' },
+    ];
+    const parsed = parseDoiMessage('a2 ca2 vu, Luan', config, roster);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.lines[0].names).toEqual(['Lê Hoàng Vũ', 'Phạm Hữu Luân']);
+
+    const missing = parseDoiMessage('a2 ca3 Nguoi Khong Co', config, roster);
+    expect(missing.ok).toBe(false);
+    if (missing.ok) return;
+    expect(missing.error).toContain('Không tìm thấy thành viên');
+    expect(missing.error).toContain('nguoi khong co');
+
+    const spaced = parseDoiMessage('culi ca4 Vu Luan', config, roster);
+    expect(spaced.ok).toBe(true);
+    if (!spaced.ok) return;
+    expect(spaced.lines[0].names).toEqual(['Phạm Hữu Luân', 'Lê Hoàng Vũ']);
+
+    const cleared = parseDoiMessage('a2 ca1 0', config, roster);
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.lines[0].cleared).toBe(true);
+  });
+
   it('rejects an unknown squad and an empty name list', () => {
     expect(parseDoiMessage('td3 ca1 A', config).ok).toBe(false);
     expect(parseDoiMessage('a2 ca1', config).ok).toBe(false);
@@ -306,7 +333,7 @@ describe('doi command, reminder, and send hold', () => {
 
     const saved = await handleDoiCommand(
       {
-        text: 'a2 ca3 Nguyễn Văn A\nculi ca4 Trần Văn B\na2 ca2 Lê Hoàng Vũ, Phạm Hữu Luân',
+        text: 'a2 ca3 Vu\nculi ca4 Loc\na2 ca2 Vu, Luan',
         chatId: 'leader_1',
         senderId: 'leader_1',
         messageId: 'msg_1',
@@ -319,15 +346,15 @@ describe('doi command, reminder, and send hold', () => {
     expect(saved.reply).toContain('Sẽ gửi lúc 19:30');
     const writes = vi.mocked(sheetsClient.updateSheetCell).mock.calls;
     expect(writes).toEqual([
-      ['sheet', 'Tab_Main', 3, 4, 'Nguyễn Văn A'],
-      ['sheet', 'Tab_Culi', 2, 4, 'Trần Văn B'],
+      ['sheet', 'Tab_Main', 3, 4, 'Lê Hoàng Vũ'],
+      ['sheet', 'Tab_Culi', 2, 4, 'Bùi Thanh Lộc'],
     ]);
     expect(listExternalDutyReports('02/09/2026', 'main', mockDb).map((row) => row.shiftLabel)).toEqual([
       'Ca 3 (11h30 - 13h30)',
     ]);
     expect(saved.reply).toContain('Bạn đổi ca 2 a2 từ Nguyễn Kiến Quốc sang Lê Hoàng Vũ, Phạm Hữu Luân phải không');
-    expect(listExternalDutyReports('01/09/2026', 'culi', mockDb)[0].names).toEqual(['Trần Văn B']);
-    expect(saved.reply).toContain('Ca 3 (11h30 - 13h30): Nguyễn Văn A');
+    expect(listExternalDutyReports('01/09/2026', 'culi', mockDb)[0].names).toEqual(['Bùi Thanh Lộc']);
+    expect(saved.reply).toContain('Ca 3 (11h30 - 13h30): Lê Hoàng Vũ');
     expect(saved.reply).toContain('Đã ghi vào Google Sheet');
   });
 
@@ -335,7 +362,7 @@ describe('doi command, reminder, and send hold', () => {
     const zalo = new ZaloClient('token');
     vi.spyOn(zalo, 'sendMessage').mockResolvedValue({ messageId: 'm1', raw: {} });
     const result = await handleDoiCommand(
-      { text: 'a2 ca9 Nguyễn Văn A', chatId: 'leader_1', senderId: 'leader_1' },
+      { text: 'a2 ca9 Lê Hoàng Vũ', chatId: 'leader_1', senderId: 'leader_1' },
       {
         now: new Date(2026, 8, 1, 15, 0),
         database: mockDb,
@@ -350,12 +377,31 @@ describe('doi command, reminder, and send hold', () => {
     expect(sheetsClient.updateSheetCell).not.toHaveBeenCalled();
   });
 
+  it('does not write a name that is missing from the unit roster', async () => {
+    const zalo = new ZaloClient('token');
+    vi.spyOn(zalo, 'sendMessage').mockResolvedValue({ messageId: 'm1', raw: {} });
+    const result = await handleDoiCommand(
+      { text: 'a2 ca3 Nguoi Khong Co', chatId: 'leader_1', senderId: 'leader_1' },
+      {
+        now: new Date(2026, 8, 1, 15, 0),
+        database: mockDb,
+        zaloClient: zalo,
+        rowsBySquad: { main: mainSheet },
+        skipSend: true,
+      }
+    );
+    expect(result.success).toBe(false);
+    expect(result.reply).toContain('Không tìm thấy thành viên');
+    expect(sheetsClient.updateSheetCell).not.toHaveBeenCalled();
+    expect(listExternalDutyReports('02/09/2026', 'main', mockDb)).toHaveLength(0);
+  });
+
   it('does not store or send when Google refuses the write', async () => {
     vi.mocked(sheetsClient.updateSheetCell).mockRejectedValue(toSheetWriteError({ code: 403 }, 'Tab_Main', 'E4'));
     const zalo = new ZaloClient('token');
     const sendSpy = vi.spyOn(zalo, 'sendMessage').mockResolvedValue({ messageId: 'm1', raw: {} });
     const result = await handleDoiCommand(
-      { text: 'a2 ca3 Nguyễn Văn A', chatId: 'leader_1', senderId: 'leader_1', messageId: 'deny_1' },
+      { text: 'a2 ca3 Lê Hoàng Vũ', chatId: 'leader_1', senderId: 'leader_1', messageId: 'deny_1' },
       {
         now: new Date(2026, 8, 1, 20, 20),
         database: mockDb,
@@ -390,7 +436,7 @@ describe('doi command, reminder, and send hold', () => {
 
     sendSpy.mockClear();
     const late = await handleDoiCommand(
-      { text: 'a2 ca3 Nguyễn Văn A', chatId: 'leader_1', senderId: 'leader_1', messageId: 'late_1' },
+      { text: 'a2 ca3 Lê Hoàng Vũ', chatId: 'leader_1', senderId: 'leader_1', messageId: 'late_1' },
       {
         now: new Date(2026, 8, 1, 20, 20),
         database: mockDb,
@@ -400,7 +446,7 @@ describe('doi command, reminder, and send hold', () => {
     );
     expect(late.sentScheduleKeys).toContain('main_duty');
     const bodies = sendSpy.mock.calls.map((call) => String(call[1]));
-    expect(bodies.some((body) => body.includes('Nguyễn Văn A'))).toBe(true);
+    expect(bodies.some((body) => body.includes('Lê Hoàng Vũ'))).toBe(true);
     const chats = sendSpy.mock.calls.map((call) => String(call[0]));
     expect(chats).toContain('chat_main');
     expect(chats).toContain('partner_chat');
@@ -472,7 +518,7 @@ describe('doi command, reminder, and send hold', () => {
     const zalo = new ZaloClient('token');
     vi.spyOn(zalo, 'sendMessage').mockResolvedValue({ messageId: 'm', raw: {} });
     const asked = await handleDoiCommand(
-      { text: 'a2 ca2 Nguyễn Chí Khang', chatId: 'editor_2', senderId: 'editor_2', messageId: 'ask_1' },
+      { text: 'a2 ca2 Luân', chatId: 'editor_2', senderId: 'editor_2', messageId: 'ask_1' },
       {
         now: new Date(2026, 8, 1, 15, 0),
         database: mockDb,
@@ -481,7 +527,7 @@ describe('doi command, reminder, and send hold', () => {
         skipSend: true,
       }
     );
-    expect(asked.reply).toContain('Bạn đổi ca 2 a2 từ Nguyễn Kiến Quốc sang Nguyễn Chí Khang phải không');
+    expect(asked.reply).toContain('Bạn đổi ca 2 a2 từ Nguyễn Kiến Quốc sang Phạm Hữu Luân phải không');
     expect(sheetsClient.updateSheetCell).not.toHaveBeenCalled();
 
     const declined = await handleDoiCommand(
@@ -492,15 +538,15 @@ describe('doi command, reminder, and send hold', () => {
     expect(sheetsClient.updateSheetCell).not.toHaveBeenCalled();
 
     await handleDoiCommand(
-      { text: 'a2 ca2 Nguyễn Chí Khang', chatId: 'editor_2', senderId: 'editor_2', messageId: 'ask_2' },
+      { text: 'a2 ca2 Luân', chatId: 'editor_2', senderId: 'editor_2', messageId: 'ask_2' },
       { now: new Date(2026, 8, 1, 15, 2), database: mockDb, zaloClient: zalo, rowsBySquad: { main: mainSheet }, skipSend: true }
     );
     const accepted = await handleDoiCommand(
       { text: 'đúng', chatId: 'editor_2', senderId: 'editor_2', messageId: 'yes_1' },
       { now: new Date(2026, 8, 1, 15, 3), database: mockDb, zaloClient: zalo, rowsBySquad: { main: mainSheet }, skipSend: true }
     );
-    expect(accepted.reply).toContain('Đã đổi ca 2 a2 từ Nguyễn Kiến Quốc sang Nguyễn Chí Khang');
-    expect(sheetsClient.updateSheetCell).toHaveBeenCalledWith('sheet', 'Tab_Main', 3, 3, 'Nguyễn Chí Khang');
+    expect(accepted.reply).toContain('Đã đổi ca 2 a2 từ Nguyễn Kiến Quốc sang Phạm Hữu Luân');
+    expect(sheetsClient.updateSheetCell).toHaveBeenCalledWith('sheet', 'Tab_Main', 3, 3, 'Phạm Hữu Luân');
   });
 
   it('does not write a confirmation onto a cell that changed, and keeps that change pending', async () => {
@@ -508,7 +554,7 @@ describe('doi command, reminder, and send hold', () => {
     vi.spyOn(zalo, 'sendMessage').mockResolvedValue({ messageId: 'm', raw: {} });
     const now = new Date(2026, 8, 1, 15, 0);
     await handleDoiCommand(
-      { text: 'a2 ca2 Nguyễn Chí Khang', chatId: 'leader_1', senderId: 'leader_1', messageId: 'ask_move' },
+      { text: 'a2 ca2 Luân', chatId: 'leader_1', senderId: 'leader_1', messageId: 'ask_move' },
       { now, database: mockDb, zaloClient: zalo, rowsBySquad: { main: mainSheet }, skipSend: true }
     );
     const changed = mainSheet.map((row) => [...row]);
@@ -528,7 +574,7 @@ describe('doi command, reminder, and send hold', () => {
     vi.spyOn(zalo, 'sendMessage').mockResolvedValue({ messageId: 'm', raw: {} });
     const now = new Date(2026, 8, 1, 15, 0);
     await handleDoiCommand(
-      { text: 'a2 ca2 Nguyễn Chí Khang', chatId: 'leader_1', senderId: 'leader_1', messageId: 'ask_shift' },
+      { text: 'a2 ca2 Luân', chatId: 'leader_1', senderId: 'leader_1', messageId: 'ask_shift' },
       { now, database: mockDb, zaloClient: zalo, rowsBySquad: { main: mainSheet }, skipSend: true }
     );
     const shifted = mainSheet.map((row) => [...row]);
@@ -537,7 +583,7 @@ describe('doi command, reminder, and send hold', () => {
       { text: 'đúng', chatId: 'leader_1', senderId: 'leader_1', messageId: 'yes_shift' },
       { now, database: mockDb, zaloClient: zalo, rowsBySquad: { main: shifted }, skipSend: true }
     );
-    expect(sheetsClient.updateSheetCell).toHaveBeenCalledWith('sheet', 'Tab_Main', 4, 3, 'Nguyễn Chí Khang');
+    expect(sheetsClient.updateSheetCell).toHaveBeenCalledWith('sheet', 'Tab_Main', 4, 3, 'Phạm Hữu Luân');
     expect(getPendingChanges('leader_1', 'leader_1', mockDb)).toHaveLength(0);
     expect(accepted.success).toBe(true);
   });
@@ -548,7 +594,7 @@ describe('doi command, reminder, and send hold', () => {
     const now = new Date(2026, 8, 1, 15, 0);
     await handleDoiCommand(
       {
-        text: 'a2 ca1 Người Mới\na2 ca2 Nguyễn Chí Khang',
+        text: 'a2 ca1 Hoang Phuc\na2 ca2 Luan',
         chatId: 'leader_1',
         senderId: 'leader_1',
         messageId: 'ask_batch',
@@ -567,7 +613,9 @@ describe('doi command, reminder, and send hold', () => {
     expect(accepted.reply).not.toContain('ya29');
     const pending = getPendingChanges('leader_1', 'leader_1', mockDb);
     expect(pending.map((item) => item.caNumber)).toEqual([2]);
-    expect(listExternalDutyReports('02/09/2026', 'main', mockDb).map((row) => row.names[0])).toEqual(['Người Mới']);
+    expect(listExternalDutyReports('02/09/2026', 'main', mockDb).map((row) => row.names[0])).toEqual([
+      'Phạm Hoàng Phúc',
+    ]);
   });
 
   it('does not call a sheet read failure fully assigned', async () => {

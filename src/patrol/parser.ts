@@ -202,15 +202,17 @@ export function parsePatrolCommand(
   return parseNamesForShift(rest, roster, effectiveMaxMembers);
 }
 
+export interface RosterNameMatch {
+  names: string[];
+  unresolved: string[];
+}
+
 /**
- * Xử lý khi ĐÃ CÓ danh sách thành viên Tiểu đội 1 (khớp tên và chuẩn hóa tên chuẩn).
+ * Khớp một đoạn tên với quân số Ban CHQS.
+ * Có dấu phẩy, `+`, `và` thì từng cụm phải khớp đúng tên chuẩn hoặc biệt danh.
+ * Không có dấu phân cách thì ưu tiên cụm dài nhất. Kết quả là tên chuẩn.
  */
-function parseWithRoster(
-  input: string,
-  roster: PatrolMember[],
-  maxMembers?: number
-): ParsePatrolCommandResult {
-  // Kiểm tra xem có dấu phân cách tường minh (+, ,, \n, ;, ' và ', ' and ') không
+export function matchRosterNames(input: string, roster: PatrolMember[]): RosterNameMatch {
   const hasExplicitDelimiter = /[+,\n;]|\s+(?:v[aà]o?|and)\s+/i.test(input);
 
   if (hasExplicitDelimiter) {
@@ -237,22 +239,9 @@ function parseWithRoster(
       }
     }
 
-    if (unresolvedNames.length > 0) {
-      return {
-        isValid: false,
-        commandFound: true,
-        members: [],
-        unresolvedNames,
-        error: `Không tìm thấy thành viên: ${unresolvedNames.join(', ')}`,
-      };
-    }
-
-    return validateMemberCount(matchedMembers, maxMembers);
+    return { names: matchedMembers, unresolved: unresolvedNames };
   }
 
-  // Nếu không có dấu phân cách tường minh (ví dụ: "tuantra Nguyen Van A Tran Van B" hoặc "tuantra A B C")
-  // Thu thập tất cả các ứng viên (tên đầy đủ và biệt danh) và sắp xếp từ chuỗi DÀI NHẤT đến NGẮN NHẤT
-  // để luôn ưu tiên khớp cụm tên dài, chính xác trước khi khớp biệt danh ngắn.
   const candidates: Array<{ candidate: string; member: PatrolMember }> = [];
   for (const member of roster) {
     const normName = normalizeVietnamese(member.fullName);
@@ -270,15 +259,12 @@ function parseWithRoster(
   let remainingNormalized = normalizeVietnamese(input);
   const matchedMembers: string[] = [];
 
-  // Tìm kiếm các ứng viên trong chuỗi còn lại
   for (const { candidate, member } of candidates) {
-    // Tìm vị trí với ranh giới từ để tránh khớp nhầm chuỗi con
     const regex = new RegExp(`(?:^|\\s)${escapeRegExp(candidate)}(?:\\s|$)`, 'i');
     if (regex.test(remainingNormalized)) {
       if (!matchedMembers.includes(member.fullName)) {
         matchedMembers.push(member.fullName);
       }
-      // Xóa cụm từ này khỏi chuỗi còn lại theo ranh giới từ
       remainingNormalized = remainingNormalized
         .replace(new RegExp(`(?:^|\\s)${escapeRegExp(candidate)}(?=\\s|$)`, 'gi'), ' ')
         .replace(/\s+/g, ' ')
@@ -286,18 +272,32 @@ function parseWithRoster(
     }
   }
 
-  // Nếu còn từ nào không khớp với bất kỳ ai trong roster
   if (remainingNormalized.length > 0) {
+    return { names: [], unresolved: [remainingNormalized] };
+  }
+  return { names: matchedMembers, unresolved: [] };
+}
+
+/**
+ * Xử lý khi ĐÃ CÓ danh sách thành viên Tiểu đội 1 (khớp tên và chuẩn hóa tên chuẩn).
+ */
+function parseWithRoster(
+  input: string,
+  roster: PatrolMember[],
+  maxMembers?: number
+): ParsePatrolCommandResult {
+  const matched = matchRosterNames(input, roster);
+  if (matched.unresolved.length > 0) {
     return {
       isValid: false,
       commandFound: true,
       members: [],
-      unresolvedNames: [remainingNormalized],
-      error: `Không tìm thấy thành viên: ${remainingNormalized}`,
+      unresolvedNames: matched.unresolved,
+      error: `Không tìm thấy thành viên: ${matched.unresolved.join(', ')}`,
     };
   }
 
-  return validateMemberCount(matchedMembers, maxMembers);
+  return validateMemberCount(matched.names, maxMembers);
 }
 
 /**

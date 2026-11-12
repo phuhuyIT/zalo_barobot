@@ -1,8 +1,11 @@
 /**
  * Cú pháp: `a2 ca1 Nguyễn Văn A` hoặc `culi ca4 Trần Văn B`.
  * Nhiều người cách nhau bằng dấu phẩy. Không có chữ doi, không có dấu hai chấm.
+ * Tên được khớp với quân số Ban CHQS rồi lưu bằng tên chuẩn.
  */
 
+import { matchRosterNames } from '../patrol/parser';
+import { PatrolMember } from '../patrol/types';
 import { DoiLine, ExternalDutyConfig, ExternalSquad } from './types';
 import { foldText } from './columns';
 
@@ -45,7 +48,11 @@ export function parseConfirmWord(text: string): 'yes' | 'no' | null {
   return null;
 }
 
-export function parseDoiMessage(text: string, config: ExternalDutyConfig): ParseDoiSuccess | ParseDoiFailure {
+export function parseDoiMessage(
+  text: string,
+  config: ExternalDutyConfig,
+  roster: PatrolMember[] = []
+): ParseDoiSuccess | ParseDoiFailure {
   const aliasPattern = [config.aliasMain, config.aliasCuli]
     .map((alias) => alias.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .filter(Boolean)
@@ -77,13 +84,30 @@ export function parseDoiMessage(text: string, config: ExternalDutyConfig): Parse
     ) {
       return { ok: false, error: 'Tên quá dài hoặc quá nhiều người trong một ca.' };
     }
+    let names = people.names;
+    if (!people.cleared && roster.length > 0) {
+      const matched = matchRosterNames(match[3], roster);
+      if (matched.unresolved.length > 0) {
+        return { ok: false, error: `Không tìm thấy thành viên: ${matched.unresolved.join(', ')}` };
+      }
+      if (matched.names.length === 0) {
+        return {
+          ok: false,
+          error: `Thiếu tên.\nVí dụ: ${config.aliasMain} ca1 Nguyễn Văn A`,
+        };
+      }
+      if (matched.names.length > MAX_NAMES_PER_SHIFT) {
+        return { ok: false, error: 'Tên quá dài hoặc quá nhiều người trong một ca.' };
+      }
+      names = matched.names;
+    }
     if (lines.length >= MAX_COMMAND_LINES) {
       return { ok: false, error: 'Quá nhiều dòng lệnh.' };
     }
     lines.push({
       squad,
       shiftQuery: `ca ${match[2]}`,
-      names: people.names,
+      names,
       cleared: people.cleared,
     });
   }

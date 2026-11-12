@@ -8,6 +8,7 @@ import { getEffectiveScheduleConfig } from '../core/sendSchedule';
 import { ZaloClient, ZaloTextStyle } from '../core/zaloClient';
 import { readSheetTab, updateSheetCell } from '../sheets/sheetsClient';
 import { getVietnamTimeParts } from '../sheets/dateUtils';
+import { getPatrolMembers } from '../patrol/repository';
 import { columnHeaders, findChoColumns, isChoCell, matchShiftColumn, readShiftColumns } from './columns';
 import { parseConfirmWord, parseDoiMessage } from './parser';
 import { dutyDateForSquad, minutesOf, sendTimeForSquad } from './prepare';
@@ -135,7 +136,7 @@ export async function handleDoiCommand(
   const text = (payload.text || '').trim();
   const config = getExternalDutyConfig(options.database);
   const confirm = parseConfirmWord(text);
-  const parsed = confirm ? null : parseDoiMessage(text, config);
+  const parsed = confirm ? null : parseDoiMessage(text, config, getPatrolMembers(options.database));
   if (!confirm && parsed && !parsed.ok && parsed.notCommand) {
     return { handled: false, success: false };
   }
