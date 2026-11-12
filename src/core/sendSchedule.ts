@@ -139,7 +139,8 @@ export async function buildScheduleMessage(
   scheduleKey: string,
   targetDate?: string
 ): Promise<BuiltScheduleMessage> {
-  const { schedule, squad, effectiveTabName, effectiveSendNextDay } = getEffectiveScheduleConfig(scheduleKey);
+  const { schedule, squad, effectiveTabName, effectiveSendNextDay, effectiveRecipients } =
+    getEffectiveScheduleConfig(scheduleKey);
 
   const spreadsheetId = process.env.GOOGLE_SHEET_ID;
   if (!spreadsheetId) {
@@ -193,13 +194,15 @@ export async function buildScheduleMessage(
     const headerStyle = squad?.header_style || 'two_row_merged';
     const rows = await readSheetTab(spreadsheetId, effectiveTabName);
     const squadKey = scheduleKey === 'culi_duty' ? 'culi' : 'main';
+    const wantsPartner = effectiveRecipients.includes('squad_partner');
     const prepared = prepareDutyFromRows({
       squad: squadKey,
       headerStyle,
       rows,
       lookupDate,
       reports: loadReports(lookupDate, squadKey),
-      partnerChatId: resolvePartnerChatId(),
+      // partnerChatId chỉ để chặn gửi khi lịch có nhóm đối tác mà chưa có Chat ID.
+      partnerChatId: wantsPartner ? resolvePartnerChatId() : 'not-required',
       isOvernight: Boolean(squad?.overnight),
     });
     if (prepared.held) {
@@ -221,7 +224,6 @@ export async function buildScheduleMessage(
       lookupDate,
       effectiveTabName,
       held: false,
-      includePartner: prepared.includePartner,
     };
   } else {
     const headerStyle = squad?.header_style || 'two_row_merged';
@@ -265,11 +267,8 @@ export async function sendSchedule(
     };
   }
 
-  // 2. Xác định danh sách recipient cần gửi
-  let recipientKeys = options.recipientKey ? [options.recipientKey] : [...effectiveRecipients];
-  if (!options.recipientKey && built.includePartner && !recipientKeys.includes('squad_partner')) {
-    recipientKeys = [...recipientKeys, 'squad_partner'];
-  }
+  // 2. Chỉ gửi đúng các nhóm đã lưu trên lịch. Không tự thêm nhóm đối tác.
+  const recipientKeys = options.recipientKey ? [options.recipientKey] : [...effectiveRecipients];
 
   const results: RecipientSendResult[] = [];
 

@@ -18,6 +18,7 @@ import {
   getPendingChanges,
   listExternalDutyReports,
   saveExternalDutyConfig,
+  saveExternalDutyReport,
 } from '../src/externalDuty/repository';
 import { toSheetWriteError } from '../src/sheets/sheetsClient';
 
@@ -416,7 +417,7 @@ describe('doi command, reminder, and send hold', () => {
     expect(sendSpy.mock.calls.some((call) => String(call[1]).includes('📢'))).toBe(false);
   });
 
-  it('does not send at 20:00 without Ca 3, then sends both groups after the late report', async () => {
+  it('does not send at 20:00 without Ca 3, then sends only the configured main group after the late report', async () => {
     vi.spyOn(sheetsClient, 'readSheetTab').mockImplementation(async (_id: string, tab: string) => {
       return tab === 'Tab_Culi' ? culiSheet : mainSheet;
     });
@@ -449,7 +450,7 @@ describe('doi command, reminder, and send hold', () => {
     expect(bodies.some((body) => body.includes('Lê Hoàng Vũ'))).toBe(true);
     const chats = sendSpy.mock.calls.map((call) => String(call[0]));
     expect(chats).toContain('chat_main');
-    expect(chats).toContain('partner_chat');
+    expect(chats).not.toContain('partner_chat');
   });
 
   it('fills the empty culi cell at 19:30 and leaves a full culi day to the culi group only', async () => {
@@ -466,6 +467,46 @@ describe('doi command, reminder, and send hold', () => {
     expect(sent.held).toBeFalsy();
     expect(sent.results.map((row) => row.recipientKey)).toEqual(['squad_culi']);
     expect(sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends culi to the partner group only while that group stays on the schedule', async () => {
+    const filled = culiSheet.map((row) => [...row]);
+    filled[2][4] = 'Hồ Nguyễn Thanh Tùng';
+    vi.spyOn(sheetsClient, 'readSheetTab').mockResolvedValue(filled);
+    saveExternalDutyReport(
+      {
+        date: '01/09/2026',
+        squad: 'culi',
+        shiftKey: 'Ca 4',
+        shiftLabel: 'Ca 4',
+        names: ['Hồ Nguyễn Thanh Tùng'],
+        cleared: false,
+        rawMessage: 'culi ca4',
+        messageId: 'rep_1',
+        senderId: 'leader_1',
+      },
+      mockDb
+    );
+    const zalo = new ZaloClient('token');
+    const sendSpy = vi.spyOn(zalo, 'sendMessage').mockResolvedValue({ messageId: 'c2', raw: {} });
+
+    storeModule.saveRuntimeConfigOverride('culi_duty', { recipients: ['squad_culi', 'squad_partner'] }, mockDb);
+    const both = await sendSchedule('culi_duty', {
+      targetDate: '01/09/2026',
+      zaloClient: zalo,
+      isAutomated: false,
+    });
+    expect(both.results.map((row) => row.recipientKey).sort()).toEqual(['squad_culi', 'squad_partner']);
+
+    sendSpy.mockClear();
+    storeModule.saveRuntimeConfigOverride('culi_duty', { recipients: ['squad_culi'] }, mockDb);
+    const only = await sendSchedule('culi_duty', {
+      targetDate: '01/09/2026',
+      zaloClient: zalo,
+      isAutomated: false,
+    });
+    expect(only.results.map((row) => row.recipientKey)).toEqual(['squad_culi']);
+    expect(sendSpy.mock.calls.map((call) => String(call[0]))).toEqual(['chat_culi']);
   });
 
   it('reminds the partner leader at 17:00 with copyable doi lines', async () => {
